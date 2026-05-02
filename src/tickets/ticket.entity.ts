@@ -2,10 +2,12 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { User } from '../users/user.entity';
 import { Message } from './message.entity';
 
 export enum TicketStatus {
@@ -39,6 +41,9 @@ export class Ticket {
 
   @Column({ default: TicketStatus.Open })
   status!: TicketStatus;
+
+  @ManyToOne(() => User, { nullable: true })
+  owner?: User;
 
   @OneToMany(() => Message, (message) => message.ticket)
   messages!: Message[];

@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Put,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -26,19 +27,18 @@ export class TicketsController {
   constructor(private readonly ticketsService: TicketsService) {}
 
   @Post()
-  createTicket(@Body() body: CreateTicketDto) {
-    return this.ticketsService.createTicket(body);
+  createTicket(@Body() body: CreateTicketDto, @Req() req: any) {
+    return this.ticketsService.createTicket(body, req.user.sub);
   }
 
   @Get()
-  @Roles(UserRole.ADMIN)
-  getTickets() {
-    return this.ticketsService.getTickets();
+  getTickets(@Req() req: any) {
+    return this.ticketsService.getTickets(req.user);
   }
 
   @Get(':id')
-  getTicket(@Param('id', ParseIntPipe) id: number) {
-    return this.ticketsService.getTicket(id);
+  getTicket(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.ticketsService.getTicket(id, req.user);
   }
 
   @Put(':id')
@@ -54,8 +54,9 @@ export class TicketsController {
   addMessage(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: CreateMessageDto,
+    @Req() req: any,
   ) {
-    return this.ticketsService.addMessage(id, body);
+    return this.ticketsService.addMessage(id, body, req.user);
   }
 
   @Patch(':id/status')
