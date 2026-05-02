@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, MoreThan } from 'typeorm';
 import { CreateMessageDto } from './create-message.dto';
 import { CreateTicketDto } from './create-ticket.dto';
 import { Message, MessageChannel, MessageType } from './message.entity';
@@ -14,6 +14,7 @@ import { CustomerFact } from './customer-fact.entity';
 import { CustomerEvent } from './customer-event.entity';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { TaxonomyTag } from '../taxonomy/taxonomy-tag.entity';
+import { Product } from '../products/product.entity';
 
 @Injectable()
 export class TicketsService {
@@ -30,6 +31,8 @@ export class TicketsService {
     private readonly eventRepository: Repository<CustomerEvent>,
     @InjectRepository(TaxonomyTag)
     private readonly taxonomyTagRepository: Repository<TaxonomyTag>,
+    @InjectRepository(Product)
+    private readonly productRepository: Repository<Product>,
     private readonly intelligenceService: CustomerIntelligenceService,
   ) {}
 
@@ -125,6 +128,61 @@ export class TicketsService {
     }, {});
 
     return { customer, summary, facts, recentEvents, matchedTaxonomy };
+  }
+
+  async getCustomerRecommendations(id: number) {
+    const customer = await this.customerRepository.findOne({ where: { id } });
+    if (!customer) throw new NotFoundException(`Customer ${id} not found`);
+
+    const facts = await this.factRepository.find({ where: { customer: { id } } });
+    const factValues = new Set(facts.map((f) => f.value));
+
+    const products = await this.productRepository.find({
+      where: {
+        quantity: MoreThan(0),
+        isActive: true,
+        isDiscontinued: false,
+      },
+      relations: { tags: true },
+    });
+
+    const recommendations = products
+      .map((product) => {
+        let score = 0;
+        const reasons: string[] = [];
+        const matched = new Set<string>();
+
+        for (const tag of product.tags || []) {
+          if (!tag.normalizedKey) continue;
+
+          if (factValues.has(tag.normalizedKey) && !matched.has(tag.normalizedKey)) {
+            matched.add(tag.normalizedKey);
+
+            if (tag.normalizedKey === 'price_sensitive') {
+              score += 10;
+            } else {
+              score += 25;
+            }
+
+            reasons.push(`Matched customer fact ${tag.normalizedKey}`);
+          }
+        }
+
+        return {
+          product,
+          score,
+          reasons,
+          warnings: [],
+        };
+      })
+      .filter((r) => r.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    return {
+      customerId: id,
+      facts,
+      recommendations,
+    };
   }
 
   async createTicket(data: CreateTicketDto, user: User) {
