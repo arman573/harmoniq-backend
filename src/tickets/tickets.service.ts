@@ -57,6 +57,25 @@ export class TicketsService {
     }
   }
 
+  getCustomers() {
+    return this.customerRepository.find({
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async getCustomer(id: number) {
+    const customer = await this.customerRepository.findOne({
+      where: { id },
+      relations: { tickets: true },
+    });
+
+    if (!customer) {
+      throw new NotFoundException(`Customer ${id} not found`);
+    }
+
+    return customer;
+  }
+
   async getCustomerProfile(id: number) {
     const customer = await this.customerRepository.findOne({ where: { id } });
 
