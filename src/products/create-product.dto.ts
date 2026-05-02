@@ -1,0 +1,116 @@
+import {
+  IsArray,
+  IsBoolean,
+  IsNumber,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class CreateProductSpecDto {
+  @IsString()
+  name!: string;
+
+  @IsString()
+  @IsOptional()
+  value?: string;
+
+  @IsString()
+  @IsOptional()
+  normalizedKey?: string;
+
+  @IsString()
+  @IsOptional()
+  source?: string;
+}
+
+export class CreateProductTagDto {
+  @IsString()
+  name!: string;
+
+  @IsString()
+  @IsOptional()
+  normalizedKey?: string;
+
+  @IsString()
+  @IsOptional()
+  sourceCategory?: string;
+
+  @IsString()
+  @IsOptional()
+  domain?: string;
+
+  @IsString()
+  @IsOptional()
+  kind?: string;
+}
+
+export class CreateProductDto {
+  @IsString()
+  @IsOptional()
+  externalId?: string;
+
+  @IsString()
+  @IsOptional()
+  sku?: string;
+
+  @IsString()
+  @IsOptional()
+  articleNumber?: string;
+
+  @IsString()
+  name!: string;
+
+  @IsString()
+  @IsOptional()
+  brand?: string;
+
+  @IsString()
+  @IsOptional()
+  categoryName?: string;
+
+  @IsString()
+  @IsOptional()
+  categoryPath?: string;
+
+  @IsString()
+  @IsOptional()
+  mainCategory?: string;
+
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @IsNumber()
+  @IsOptional()
+  price?: number;
+
+  @IsNumber()
+  @IsOptional()
+  quantity?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  isDiscontinued?: boolean;
+
+  @IsString()
+  @IsOptional()
+  source?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateProductSpecDto)
+  @IsOptional()
+  specs?: CreateProductSpecDto[];
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateProductTagDto)
+  @IsOptional()
+  tags?: CreateProductTagDto[];
+}
