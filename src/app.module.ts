@@ -1,12 +1,15 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
+import { Customer } from './tickets/customer.entity';
+import { CustomerEvent } from './tickets/customer-event.entity';
+import { CustomerFact } from './tickets/customer-fact.entity';
+import { CustomerProfile } from './tickets/customer-profile.entity';
 import { Message } from './tickets/message.entity';
 import { Ticket } from './tickets/ticket.entity';
 import { TicketsModule } from './tickets/tickets.module';
 import { User } from './users/user.entity';
 import { UsersModule } from './users/users.module';
-import { Customer } from './tickets/customer.entity';
 
 @Module({
   imports: [
@@ -17,7 +20,15 @@ import { Customer } from './tickets/customer.entity';
       username: 'harmoniq',
       password: 'password',
       database: 'harmoniq',
-      entities: [User, Ticket, Message, Customer],
+      entities: [
+        User,
+        Ticket,
+        Message,
+        Customer,
+        CustomerProfile,
+        CustomerFact,
+        CustomerEvent,
+      ],
       synchronize: true,
     }),
     AuthModule,
