@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { Message } from './message.entity';
 import { User } from '../users/user.entity';
+import { Customer } from './customer.entity';
 
 export enum TicketStatus {
   Open = 'open',
@@ -35,6 +36,12 @@ export class Ticket {
 
   @ManyToOne(() => User, { nullable: false, onDelete: 'CASCADE' })
   owner!: User;
+
+  @ManyToOne(() => Customer, (customer) => customer.tickets, {
+    nullable: false,
+    onDelete: 'CASCADE',
+  })
+  customer!: Customer;
 
   @Column({ default: TicketChannel.Manual })
   channel!: TicketChannel;
