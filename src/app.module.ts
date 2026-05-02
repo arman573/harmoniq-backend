@@ -14,6 +14,7 @@ import { TaxonomyCategory } from './taxonomy/taxonomy-category.entity';
 import { TaxonomySpec } from './taxonomy/taxonomy-spec.entity';
 import { TaxonomyTag } from './taxonomy/taxonomy-tag.entity';
 import { TaxonomySuggestion } from './taxonomy/taxonomy-suggestion.entity';
+import { TaxonomyModule } from './taxonomy/taxonomy.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { TaxonomySuggestion } from './taxonomy/taxonomy-suggestion.entity';
     AuthModule,
     TicketsModule,
     UsersModule,
+    TaxonomyModule,
   ],
 })
 export class AppModule {}
