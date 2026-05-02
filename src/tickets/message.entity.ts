@@ -14,6 +14,12 @@ export enum MessageType {
   SYSTEM = 'system',
 }
 
+export enum MessageChannel {
+  CHAT = 'chat',
+  EMAIL = 'email',
+  SYSTEM = 'system',
+}
+
 @Entity()
 export class Message {
   @PrimaryGeneratedColumn()
@@ -40,6 +46,13 @@ export class Message {
     default: MessageType.MESSAGE,
   })
   type!: MessageType;
+
+  @Column({
+    type: 'enum',
+    enum: MessageChannel,
+    default: MessageChannel.CHAT,
+  })
+  channel!: MessageChannel;
 
   @Column({ type: 'text' })
   content!: string;
