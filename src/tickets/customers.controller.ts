@@ -7,6 +7,16 @@ import { TicketsService } from './tickets.service';
 export class CustomersController {
   constructor(private readonly ticketsService: TicketsService) {}
 
+  @Get()
+  getCustomers() {
+    return this.ticketsService.getCustomers();
+  }
+
+  @Get(':id')
+  getCustomer(@Param('id', ParseIntPipe) id: number) {
+    return this.ticketsService.getCustomer(id);
+  }
+
   @Get(':id/profile')
   getProfile(@Param('id', ParseIntPipe) id: number) {
     return this.ticketsService.getCustomerProfile(id);
