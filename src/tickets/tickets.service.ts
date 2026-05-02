@@ -8,6 +8,9 @@ import { Ticket } from './ticket.entity';
 import { UpdateTicketDto } from './update-ticket.dto';
 import { UpdateTicketStatusDto } from './update-ticket-status.dto';
 import { User, UserRole } from '../users/user.entity';
+import { Customer } from '../customers/customer.entity';
+import { CustomerEvent } from '../intelligence/customer-event.entity';
+import { CustomerFact } from '../intelligence/customer-fact.entity';
 
 @Injectable()
 export class TicketsService {
@@ -16,17 +19,46 @@ export class TicketsService {
     private readonly ticketRepository: Repository<Ticket>,
     @InjectRepository(Message)
     private readonly messageRepository: Repository<Message>,
+    @InjectRepository(Customer)
+    private readonly customerRepository: Repository<Customer>,
+    @InjectRepository(CustomerEvent)
+    private readonly eventRepository: Repository<CustomerEvent>,
+    @InjectRepository(CustomerFact)
+    private readonly factRepository: Repository<CustomerFact>,
   ) {}
 
-  createTicket(data: CreateTicketDto) {
-    const ticket = this.ticketRepository.create(data);
+  async createTicket(data: CreateTicketDto) {
+    let customer = await this.customerRepository.findOne({
+      where: { email: data.customerEmail },
+    });
 
-    return this.ticketRepository.save(ticket);
+    if (!customer) {
+      customer = this.customerRepository.create({ email: data.customerEmail });
+      await this.customerRepository.save(customer);
+    }
+
+    const ticket = this.ticketRepository.create({
+      ...data,
+      customer,
+    });
+
+    const saved = await this.ticketRepository.save(ticket);
+
+    // system event
+    await this.eventRepository.save(
+      this.eventRepository.create({
+        type: 'ticket_created',
+        payload: { ticketId: saved.id },
+        customer,
+      }),
+    );
+
+    return saved;
   }
 
   getTickets() {
     return this.ticketRepository.find({
-      relations: { messages: true },
+      relations: { messages: true, customer: true, owner: true },
       order: { createdAt: 'DESC' },
     });
   }
@@ -34,7 +66,7 @@ export class TicketsService {
   async getTicket(id: number) {
     const ticket = await this.ticketRepository.findOne({
       where: { id },
-      relations: { messages: true },
+      relations: { messages: true, customer: true, owner: true },
     });
 
     if (!ticket) {
@@ -60,7 +92,30 @@ export class TicketsService {
       sender: user.role === UserRole.ADMIN ? 'admin' : 'customer',
     });
 
-    return this.messageRepository.save(message);
+    const saved = await this.messageRepository.save(message);
+
+    if (ticket.customer) {
+      await this.eventRepository.save(
+        this.eventRepository.create({
+          type: 'message',
+          payload: { content: data.content },
+          customer: ticket.customer,
+        }),
+      );
+
+      // naive fact extraction
+      if (data.content.toLowerCase().includes('känslig hud')) {
+        await this.factRepository.save(
+          this.factRepository.create({
+            type: 'skin_type',
+            value: 'sensitive',
+            customer: ticket.customer,
+          }),
+        );
+      }
+    }
+
+    return saved;
   }
 
   async updateTicketStatus(id: number, data: UpdateTicketStatusDto) {
@@ -81,7 +136,10 @@ export class TicketsService {
   }
 
   private async findTicketOrThrow(id: number) {
-    const ticket = await this.ticketRepository.findOneBy({ id });
+    const ticket = await this.ticketRepository.findOne({
+      where: { id },
+      relations: { customer: true },
+    });
 
     if (!ticket) {
       throw new NotFoundException(`Ticket ${id} not found`);
