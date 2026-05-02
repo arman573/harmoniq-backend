@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
+import { Product } from './products/product.entity';
+import { ProductAnalysis } from './products/product-analysis.entity';
+import { ProductSpec } from './products/product-spec.entity';
+import { ProductTag } from './products/product-tag.entity';
 import { Customer } from './tickets/customer.entity';
 import { CustomerEvent } from './tickets/customer-event.entity';
 import { CustomerFact } from './tickets/customer-fact.entity';
@@ -37,6 +41,10 @@ import { TaxonomyModule } from './taxonomy/taxonomy.module';
         TaxonomySpec,
         TaxonomyTag,
         TaxonomySuggestion,
+        Product,
+        ProductSpec,
+        ProductTag,
+        ProductAnalysis,
       ],
       synchronize: true,
     }),
