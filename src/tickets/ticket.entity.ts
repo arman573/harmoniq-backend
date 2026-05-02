@@ -34,14 +34,18 @@ export class Ticket {
   @Column()
   customerEmail!: string;
 
-  @ManyToOne(() => User, { nullable: false, onDelete: 'CASCADE' })
-  owner!: User;
+  // Nullable for legacy tickets created before ownership existed.
+  // New tickets are still created with owner in TicketsService.
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  owner?: User | null;
 
+  // Nullable for legacy tickets created before Customer identity existed.
+  // New tickets are still created with customer in TicketsService.
   @ManyToOne(() => Customer, (customer) => customer.tickets, {
-    nullable: false,
-    onDelete: 'CASCADE',
+    nullable: true,
+    onDelete: 'SET NULL',
   })
-  customer!: Customer;
+  customer?: Customer | null;
 
   @Column({ default: TicketChannel.Manual })
   channel!: TicketChannel;
