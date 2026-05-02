@@ -8,17 +8,23 @@ import {
   Patch,
   Post,
   Put,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { UserRole } from '../users/user.entity';
+import { User, UserRole } from '../users/user.entity';
 import { CreateMessageDto } from './create-message.dto';
 import { CreateTicketDto } from './create-ticket.dto';
 import { TicketsService } from './tickets.service';
 import { UpdateTicketDto } from './update-ticket.dto';
 import { UpdateTicketStatusDto } from './update-ticket-status.dto';
+
+type AuthenticatedRequest = Request & {
+  user: User;
+};
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('tickets')
@@ -54,8 +60,9 @@ export class TicketsController {
   addMessage(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: CreateMessageDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.ticketsService.addMessage(id, body);
+    return this.ticketsService.addMessage(id, body, req.user);
   }
 
   @Patch(':id/status')
