@@ -10,6 +10,10 @@ import { Ticket } from './tickets/ticket.entity';
 import { TicketsModule } from './tickets/tickets.module';
 import { User } from './users/user.entity';
 import { UsersModule } from './users/users.module';
+import { TaxonomyCategory } from './taxonomy/taxonomy-category.entity';
+import { TaxonomySpec } from './taxonomy/taxonomy-spec.entity';
+import { TaxonomyTag } from './taxonomy/taxonomy-tag.entity';
+import { TaxonomySuggestion } from './taxonomy/taxonomy-suggestion.entity';
 
 @Module({
   imports: [
@@ -28,6 +32,10 @@ import { UsersModule } from './users/users.module';
         CustomerProfile,
         CustomerFact,
         CustomerEvent,
+        TaxonomyCategory,
+        TaxonomySpec,
+        TaxonomyTag,
+        TaxonomySuggestion,
       ],
       synchronize: true,
     }),
