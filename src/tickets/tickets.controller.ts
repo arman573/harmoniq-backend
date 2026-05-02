@@ -8,13 +8,16 @@ import {
   Patch,
   Post,
   Put,
+  UseGuards,
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { CreateMessageDto } from './create-message.dto';
 import { CreateTicketDto } from './create-ticket.dto';
 import { TicketsService } from './tickets.service';
 import { UpdateTicketDto } from './update-ticket.dto';
 import { UpdateTicketStatusDto } from './update-ticket-status.dto';
 
+@UseGuards(AuthGuard('jwt'))
 @Controller('tickets')
 export class TicketsController {
   constructor(private readonly ticketsService: TicketsService) {}
