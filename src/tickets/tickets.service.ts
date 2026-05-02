@@ -74,6 +74,13 @@ export class TicketsService {
     return saved;
   }
 
+  async updateTicket(id: number, data: UpdateTicketDto) {
+    const ticket = await this.findTicketOrThrow(id);
+    Object.assign(ticket, data);
+
+    return this.ticketRepository.save(ticket);
+  }
+
   async addMessage(id: number, data: CreateMessageDto, user: User) {
     const ticket = await this.ticketRepository.findOne({
       where: { id },
