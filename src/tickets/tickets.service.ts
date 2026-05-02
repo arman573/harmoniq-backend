@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CreateMessageDto } from './create-message.dto';
@@ -7,6 +7,8 @@ import { Message } from './message.entity';
 import { Ticket } from './ticket.entity';
 import { UpdateTicketDto } from './update-ticket.dto';
 import { UpdateTicketStatusDto } from './update-ticket-status.dto';
+import { User } from '../users/user.entity';
+import { UserRole } from '../users/user.entity';
 
 @Injectable()
 export class TicketsService {
@@ -17,27 +19,49 @@ export class TicketsService {
     private readonly messageRepository: Repository<Message>,
   ) {}
 
-  createTicket(data: CreateTicketDto) {
-    const ticket = this.ticketRepository.create(data);
+  createTicket(data: CreateTicketDto, user: User) {
+    const ticket = this.ticketRepository.create({
+      ...data,
+      owner: user,
+    });
 
     return this.ticketRepository.save(ticket);
   }
 
-  getTickets() {
+  getTickets(user: User) {
+    if (user.role === UserRole.ADMIN) {
+      return this.ticketRepository.find({
+        relations: { messages: true },
+        order: {
+          createdAt: 'DESC',
+          messages: { createdAt: 'ASC' },
+        },
+      });
+    }
+
     return this.ticketRepository.find({
+      where: { owner: { id: user.id } },
       relations: { messages: true },
-      order: { createdAt: 'DESC' },
+      order: {
+        createdAt: 'DESC',
+        messages: { createdAt: 'ASC' },
+      },
     });
   }
 
-  async getTicket(id: number) {
+  async getTicket(id: number, user: User) {
     const ticket = await this.ticketRepository.findOne({
       where: { id },
-      relations: { messages: true },
+      relations: { messages: true, owner: true },
+      order: { messages: { createdAt: 'ASC' } },
     });
 
     if (!ticket) {
       throw new NotFoundException(`Ticket ${id} not found`);
+    }
+
+    if (user.role !== UserRole.ADMIN && ticket.owner.id !== user.id) {
+      throw new ForbiddenException();
     }
 
     return ticket;
@@ -50,11 +74,25 @@ export class TicketsService {
     return this.ticketRepository.save(ticket);
   }
 
-  async addMessage(id: number, data: CreateMessageDto) {
-    const ticket = await this.findTicketOrThrow(id);
+  async addMessage(id: number, data: CreateMessageDto, user: User) {
+    const ticket = await this.ticketRepository.findOne({
+      where: { id },
+      relations: { owner: true },
+    });
+
+    if (!ticket) {
+      throw new NotFoundException();
+    }
+
+    if (user.role !== UserRole.ADMIN && ticket.owner.id !== user.id) {
+      throw new ForbiddenException();
+    }
+
     const message = this.messageRepository.create({
-      ...data,
+      content: data.content,
       ticket,
+      author: user,
+      sender: user.role,
     });
 
     return this.messageRepository.save(message);
