@@ -7,6 +7,7 @@ import { Message } from './message.entity';
 import { Ticket } from './ticket.entity';
 import { UpdateTicketDto } from './update-ticket.dto';
 import { UpdateTicketStatusDto } from './update-ticket-status.dto';
+import { User, UserRole } from '../users/user.entity';
 
 @Injectable()
 export class TicketsService {
@@ -50,11 +51,13 @@ export class TicketsService {
     return this.ticketRepository.save(ticket);
   }
 
-  async addMessage(id: number, data: CreateMessageDto) {
+  async addMessage(id: number, data: CreateMessageDto, user: User) {
     const ticket = await this.findTicketOrThrow(id);
+
     const message = this.messageRepository.create({
-      ...data,
+      content: data.content,
       ticket,
+      sender: user.role === UserRole.ADMIN ? 'admin' : 'customer',
     });
 
     return this.messageRepository.save(message);
