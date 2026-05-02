@@ -11,6 +11,7 @@ import { CustomersController } from './customers.controller';
 import { TicketsService } from './tickets.service';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { TaxonomyTag } from '../taxonomy/taxonomy-tag.entity';
+import { Product } from '../products/product.entity';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { TaxonomyTag } from '../taxonomy/taxonomy-tag.entity';
       CustomerFact,
       CustomerProfile,
       TaxonomyTag,
+      Product,
     ]),
   ],
   controllers: [TicketsController, CustomersController],
