@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { User } from '../users/user.entity';
+import { User, UserRole } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './login.dto';
 import { RegisterDto } from './register.dto';
@@ -33,6 +33,7 @@ export class AuthService {
       name: registerDto.name,
       email: registerDto.email,
       password,
+      role: UserRole.USER,
     });
 
     return this.sanitizeUser(user);
@@ -40,7 +41,7 @@ export class AuthService {
 
   async login(loginDto: LoginDto) {
     const user = await this.validateUser(loginDto.email, loginDto.password);
-    const payload = { sub: user.id, email: user.email };
+    const payload = { sub: user.id, email: user.email, role: user.role };
 
     return {
       access_token: await this.jwtService.signAsync(payload),
