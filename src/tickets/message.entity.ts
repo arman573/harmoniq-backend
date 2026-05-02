@@ -31,12 +31,15 @@ export class Message {
   })
   ticket!: Ticket;
 
-  @ManyToOne(() => User, { nullable: false, onDelete: 'CASCADE' })
-  author!: User;
+  // Nullable for legacy messages created before auth-based authors existed.
+  // New messages are still created with an author in TicketsService.
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  author?: User | null;
 
   @Column({
     type: 'enum',
     enum: UserRole,
+    default: UserRole.USER,
   })
   sender!: UserRole;
 
