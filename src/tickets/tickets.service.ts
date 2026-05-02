@@ -13,6 +13,7 @@ import { Customer } from './customer.entity';
 import { CustomerFact } from './customer-fact.entity';
 import { CustomerEvent } from './customer-event.entity';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
+import { TaxonomyTag } from '../taxonomy/taxonomy-tag.entity';
 
 @Injectable()
 export class TicketsService {
@@ -27,6 +28,8 @@ export class TicketsService {
     private readonly factRepository: Repository<CustomerFact>,
     @InjectRepository(CustomerEvent)
     private readonly eventRepository: Repository<CustomerEvent>,
+    @InjectRepository(TaxonomyTag)
+    private readonly taxonomyTagRepository: Repository<TaxonomyTag>,
     private readonly intelligenceService: CustomerIntelligenceService,
   ) {}
 
@@ -94,13 +97,34 @@ export class TicketsService {
       take: 20,
     });
 
+    const taxonomyTags = await this.taxonomyTagRepository.find();
+
+    const matchedTaxonomy = facts
+      .map((fact) => {
+        const match = taxonomyTags.find(
+          (tag) => tag.normalizedKey === fact.value,
+        );
+
+        if (!match) return null;
+
+        return {
+          factType: fact.type,
+          factValue: fact.value,
+          taxonomyName: match.name,
+          normalizedKey: match.normalizedKey,
+          domain: match.domain,
+          kind: match.kind,
+        };
+      })
+      .filter(Boolean);
+
     const summary = facts.reduce<Record<string, string[]>>((acc, fact) => {
       if (!acc[fact.type]) acc[fact.type] = [];
       if (!acc[fact.type].includes(fact.value)) acc[fact.type].push(fact.value);
       return acc;
     }, {});
 
-    return { customer, summary, facts, recentEvents };
+    return { customer, summary, facts, recentEvents, matchedTaxonomy };
   }
 
   async createTicket(data: CreateTicketDto, user: User) {
