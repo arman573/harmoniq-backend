@@ -43,6 +43,14 @@ export class TicketsService {
     return customer;
   }
 
+  private assertTicketAccess(ticket: Ticket, user: User) {
+    if (user.role === UserRole.ADMIN) return;
+
+    if (!ticket.owner || ticket.owner.id !== user.id) {
+      throw new ForbiddenException();
+    }
+  }
+
   async createTicket(data: CreateTicketDto, user: User) {
     const customer = await this.findOrCreateCustomer(data.customerEmail);
 
@@ -88,10 +96,7 @@ export class TicketsService {
     });
 
     if (!ticket) throw new NotFoundException();
-
-    if (user.role !== UserRole.ADMIN && ticket.owner.id !== user.id) {
-      throw new ForbiddenException();
-    }
+    this.assertTicketAccess(ticket, user);
 
     const message = this.messageRepository.create({
       content: data.content,
@@ -104,16 +109,18 @@ export class TicketsService {
 
     const saved = await this.messageRepository.save(message);
 
-    await this.intelligenceService.createEvent({
-      customer: ticket.customer,
-      type: 'message_sent',
-      payload: { ticketId: ticket.id, messageId: saved.id },
-    });
+    if (ticket.customer) {
+      await this.intelligenceService.createEvent({
+        customer: ticket.customer,
+        type: 'message_sent',
+        payload: { ticketId: ticket.id, messageId: saved.id },
+      });
 
-    await this.intelligenceService.extractFactsFromMessage(
-      ticket.customer,
-      data.content,
-    );
+      await this.intelligenceService.extractFactsFromMessage(
+        ticket.customer,
+        data.content,
+      );
+    }
 
     return saved;
   }
@@ -126,11 +133,13 @@ export class TicketsService {
 
     const updated = await this.ticketRepository.save(ticket);
 
-    await this.intelligenceService.createEvent({
-      customer: ticket.customer,
-      type: 'status_changed',
-      payload: { from: oldStatus, to: data.status },
-    });
+    if (ticket.customer) {
+      await this.intelligenceService.createEvent({
+        customer: ticket.customer,
+        type: 'status_changed',
+        payload: { from: oldStatus, to: data.status },
+      });
+    }
 
     await this.messageRepository.save(
       this.messageRepository.create({
@@ -173,10 +182,7 @@ export class TicketsService {
     });
 
     if (!ticket) throw new NotFoundException();
-
-    if (user.role !== UserRole.ADMIN && ticket.owner.id !== user.id) {
-      throw new ForbiddenException();
-    }
+    this.assertTicketAccess(ticket, user);
 
     return ticket;
   }
