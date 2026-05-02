@@ -2,10 +2,12 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { Customer } from '../customers/customer.entity';
 import { Message } from './message.entity';
 
 export enum TicketStatus {
@@ -30,6 +32,12 @@ export class Ticket {
 
   @Column()
   customerEmail!: string;
+
+  @ManyToOne(() => Customer, (customer) => customer.tickets, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  customer?: Customer | null;
 
   @Column({ default: TicketChannel.Manual })
   channel!: TicketChannel;
