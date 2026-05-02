@@ -2,11 +2,14 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { Message } from './message.entity';
+import { User } from '../users/user.entity';
+import { Customer } from './customer.entity';
 
 export enum TicketStatus {
   Open = 'open',
@@ -30,6 +33,15 @@ export class Ticket {
 
   @Column()
   customerEmail!: string;
+
+  @ManyToOne(() => User, { nullable: false, onDelete: 'CASCADE' })
+  owner!: User;
+
+  @ManyToOne(() => Customer, (customer) => customer.tickets, {
+    nullable: false,
+    onDelete: 'CASCADE',
+  })
+  customer!: Customer;
 
   @Column({ default: TicketChannel.Manual })
   channel!: TicketChannel;
