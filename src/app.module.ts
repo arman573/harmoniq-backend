@@ -7,6 +7,8 @@ import { TicketsModule } from './tickets/tickets.module';
 import { User } from './users/user.entity';
 import { UsersModule } from './users/users.module';
 import { Customer } from './customers/customer.entity';
+import { CustomerEvent } from './intelligence/customer-event.entity';
+import { CustomerFact } from './intelligence/customer-fact.entity';
 
 @Module({
   imports: [
@@ -17,7 +19,7 @@ import { Customer } from './customers/customer.entity';
       username: 'harmoniq',
       password: 'password',
       database: 'harmoniq',
-      entities: [User, Ticket, Message, Customer],
+      entities: [User, Ticket, Message, Customer, CustomerEvent, CustomerFact],
       synchronize: true,
     }),
     AuthModule,
