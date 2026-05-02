@@ -19,6 +19,64 @@ export interface CustomerFactInput {
   confidence?: number;
 }
 
+interface MessageRule {
+  type: string;
+  value: string;
+  keywords: string[];
+  confidence: number;
+}
+
+const MESSAGE_RULES: MessageRule[] = [
+  {
+    type: 'skin_concern',
+    value: 'sensitive_skin',
+    keywords: ['känslig hud', 'sensitive skin', 'ömtålig hud'],
+    confidence: 0.75,
+  },
+  {
+    type: 'preference',
+    value: 'fragrance_free',
+    keywords: ['parfymfri', 'utan parfym', 'fragrance free', 'parfymfria'],
+    confidence: 0.8,
+  },
+  {
+    type: 'skin_concern',
+    value: 'dry_skin',
+    keywords: ['torr hud', 'dry skin', 'väldigt torr', 'flagnar'],
+    confidence: 0.7,
+  },
+  {
+    type: 'skin_concern',
+    value: 'acne_prone',
+    keywords: ['akne', 'acne', 'finnar', 'utbrott'],
+    confidence: 0.7,
+  },
+  {
+    type: 'preference',
+    value: 'price_sensitive',
+    keywords: ['budget', 'billig', 'prisvärd', 'inte för dyr', 'budgetvänlig'],
+    confidence: 0.65,
+  },
+  {
+    type: 'preference',
+    value: 'premium_products',
+    keywords: ['premium', 'lyx', 'exklusiv', 'bästa produkten', 'dyr men bra'],
+    confidence: 0.65,
+  },
+  {
+    type: 'preference',
+    value: 'organic',
+    keywords: ['ekologisk', 'organic', 'naturlig'],
+    confidence: 0.65,
+  },
+  {
+    type: 'preference',
+    value: 'vegan',
+    keywords: ['vegan', 'vegansk'],
+    confidence: 0.65,
+  },
+];
+
 @Injectable()
 export class CustomerIntelligenceService {
   constructor(
@@ -58,47 +116,15 @@ export class CustomerIntelligenceService {
 
   async extractFactsFromMessage(customer: Customer, content: string) {
     const text = content.toLowerCase();
-    const facts: CustomerFactInput[] = [];
-
-    if (text.includes('känslig hud') || text.includes('sensitive skin')) {
-      facts.push({
-        customer,
-        type: 'skin_concern',
-        value: 'sensitive_skin',
-        source: 'message_rule',
-        confidence: 0.75,
-      });
-    }
-
-    if (text.includes('parfymfri') || text.includes('utan parfym')) {
-      facts.push({
-        customer,
-        type: 'preference',
-        value: 'fragrance_free',
-        source: 'message_rule',
-        confidence: 0.8,
-      });
-    }
-
-    if (text.includes('torr hud') || text.includes('dry skin')) {
-      facts.push({
-        customer,
-        type: 'skin_concern',
-        value: 'dry_skin',
-        source: 'message_rule',
-        confidence: 0.7,
-      });
-    }
-
-    if (text.includes('akne') || text.includes('acne')) {
-      facts.push({
-        customer,
-        type: 'skin_concern',
-        value: 'acne',
-        source: 'message_rule',
-        confidence: 0.7,
-      });
-    }
+    const facts = MESSAGE_RULES.filter((rule) =>
+      rule.keywords.some((keyword) => text.includes(keyword)),
+    ).map<CustomerFactInput>((rule) => ({
+      customer,
+      type: rule.type,
+      value: rule.value,
+      source: 'message_rule',
+      confidence: rule.confidence,
+    }));
 
     return Promise.all(facts.map((fact) => this.createFact(fact)));
   }
@@ -124,6 +150,30 @@ export class CustomerIntelligenceService {
         value: 'sensitive_skin',
         source: 'vendre_tag',
         confidence: 0.75,
+      },
+      'torr hud': {
+        type: 'skin_concern',
+        value: 'dry_skin',
+        source: 'vendre_tag',
+        confidence: 0.7,
+      },
+      akne: {
+        type: 'skin_concern',
+        value: 'acne_prone',
+        source: 'vendre_tag',
+        confidence: 0.7,
+      },
+      budget: {
+        type: 'preference',
+        value: 'price_sensitive',
+        source: 'vendre_tag',
+        confidence: 0.65,
+      },
+      premium: {
+        type: 'preference',
+        value: 'premium_products',
+        source: 'vendre_tag',
+        confidence: 0.65,
       },
       ekologisk: {
         type: 'preference',
