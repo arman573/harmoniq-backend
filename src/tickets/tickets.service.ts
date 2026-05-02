@@ -10,6 +10,8 @@ import { UpdateTicketStatusDto } from './update-ticket-status.dto';
 import { User } from '../users/user.entity';
 import { UserRole } from '../users/user.entity';
 import { Customer } from './customer.entity';
+import { CustomerFact } from './customer-fact.entity';
+import { CustomerEvent } from './customer-event.entity';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 
 @Injectable()
@@ -21,6 +23,10 @@ export class TicketsService {
     private readonly messageRepository: Repository<Message>,
     @InjectRepository(Customer)
     private readonly customerRepository: Repository<Customer>,
+    @InjectRepository(CustomerFact)
+    private readonly factRepository: Repository<CustomerFact>,
+    @InjectRepository(CustomerEvent)
+    private readonly eventRepository: Repository<CustomerEvent>,
     private readonly intelligenceService: CustomerIntelligenceService,
   ) {}
 
@@ -49,6 +55,33 @@ export class TicketsService {
     if (!ticket.owner || ticket.owner.id !== user.id) {
       throw new ForbiddenException();
     }
+  }
+
+  async getCustomerProfile(id: number) {
+    const customer = await this.customerRepository.findOne({ where: { id } });
+
+    if (!customer) {
+      throw new NotFoundException(`Customer ${id} not found`);
+    }
+
+    const facts = await this.factRepository.find({
+      where: { customer: { id } },
+      order: { createdAt: 'DESC' },
+    });
+
+    const recentEvents = await this.eventRepository.find({
+      where: { customer: { id } },
+      order: { createdAt: 'DESC' },
+      take: 20,
+    });
+
+    const summary = facts.reduce<Record<string, string[]>>((acc, fact) => {
+      if (!acc[fact.type]) acc[fact.type] = [];
+      if (!acc[fact.type].includes(fact.value)) acc[fact.type].push(fact.value);
+      return acc;
+    }, {});
+
+    return { customer, summary, facts, recentEvents };
   }
 
   async createTicket(data: CreateTicketDto, user: User) {
