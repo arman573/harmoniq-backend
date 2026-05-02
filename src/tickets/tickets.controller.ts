@@ -64,8 +64,9 @@ export class TicketsController {
   updateTicketStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateTicketStatusDto,
+    @Req() req: any,
   ) {
-    return this.ticketsService.updateTicketStatus(id, body);
+    return this.ticketsService.updateTicketStatus(id, body, req.user);
   }
 
   @Delete(':id')
