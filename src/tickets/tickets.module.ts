@@ -7,6 +7,7 @@ import { CustomerEvent } from './customer-event.entity';
 import { CustomerFact } from './customer-fact.entity';
 import { CustomerProfile } from './customer-profile.entity';
 import { TicketsController } from './tickets.controller';
+import { CustomersController } from './customers.controller';
 import { TicketsService } from './tickets.service';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 
@@ -21,7 +22,7 @@ import { CustomerIntelligenceService } from './customer-intelligence.service';
       CustomerProfile,
     ]),
   ],
-  controllers: [TicketsController],
+  controllers: [TicketsController, CustomersController],
   providers: [TicketsService, CustomerIntelligenceService],
 })
 export class TicketsModule {}
