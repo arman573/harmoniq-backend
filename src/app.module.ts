@@ -5,6 +5,7 @@ import { Product } from './products/product.entity';
 import { ProductAnalysis } from './products/product-analysis.entity';
 import { ProductSpec } from './products/product-spec.entity';
 import { ProductTag } from './products/product-tag.entity';
+import { ProductsModule } from './products/products.module';
 import { Customer } from './tickets/customer.entity';
 import { CustomerEvent } from './tickets/customer-event.entity';
 import { CustomerFact } from './tickets/customer-fact.entity';
@@ -52,6 +53,7 @@ import { TaxonomyModule } from './taxonomy/taxonomy.module';
     TicketsModule,
     UsersModule,
     TaxonomyModule,
+    ProductsModule,
   ],
 })
 export class AppModule {}
