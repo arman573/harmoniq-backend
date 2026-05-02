@@ -21,4 +21,9 @@ export class CustomersController {
   getProfile(@Param('id', ParseIntPipe) id: number) {
     return this.ticketsService.getCustomerProfile(id);
   }
+
+  @Get(':id/recommendations')
+  getRecommendations(@Param('id', ParseIntPipe) id: number) {
+    return this.ticketsService.getCustomerRecommendations(id);
+  }
 }
