@@ -15,6 +15,7 @@ import { CustomerEvent } from './customer-event.entity';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { TaxonomyTag } from '../taxonomy/taxonomy-tag.entity';
 import { Product } from '../products/product.entity';
+import { ProductAnalysis } from '../products/product-analysis.entity';
 
 type RecommendationWarning = {
   code: string;
@@ -70,21 +71,7 @@ export class TicketsService {
     }
   }
 
-  private getNumberFromAnalysis(
-    rawAnalysis: Record<string, unknown> | undefined,
-    key: string,
-  ) {
-    if (!rawAnalysis) return null;
-
-    const directValue = rawAnalysis[key];
-    const scores = rawAnalysis.scores;
-    const nestedValue =
-      scores && typeof scores === 'object' && !Array.isArray(scores)
-        ? (scores as Record<string, unknown>)[key]
-        : undefined;
-
-    const value = directValue ?? nestedValue;
-
+  private parseNumber(value: unknown) {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
     if (typeof value === 'string') {
       const parsed = Number(value);
@@ -94,6 +81,25 @@ export class TicketsService {
     return null;
   }
 
+  private getNumberFromAnalysis(analysis: ProductAnalysis, key: string) {
+    const normalizedScore = this.parseNumber(analysis.scores?.[key]);
+    if (normalizedScore !== null) return normalizedScore;
+
+    const rawAnalysis = analysis.rawAnalysis;
+    if (!rawAnalysis) return null;
+
+    const rawScores = rawAnalysis.scores;
+    const rawNestedValue =
+      rawScores && typeof rawScores === 'object' && !Array.isArray(rawScores)
+        ? (rawScores as Record<string, unknown>)[key]
+        : undefined;
+
+    const rawNestedScore = this.parseNumber(rawNestedValue);
+    if (rawNestedScore !== null) return rawNestedScore;
+
+    return this.parseNumber(rawAnalysis[key]);
+  }
+
   private normalizeAnalysisScore(score: number) {
     if (score <= 1) return Math.max(0, Math.min(1, score));
     return Math.max(0, Math.min(100, score)) / 100;
@@ -101,7 +107,7 @@ export class TicketsService {
 
   private getBestAnalysisScore(product: Product, key: string) {
     const scores = (product.analyses || [])
-      .map((analysis) => this.getNumberFromAnalysis(analysis.rawAnalysis, key))
+      .map((analysis) => this.getNumberFromAnalysis(analysis, key))
       .filter((score): score is number => score !== null);
 
     if (!scores.length) return null;
@@ -163,6 +169,18 @@ export class TicketsService {
     const concepts = new Set<string>();
 
     for (const analysis of product.analyses || []) {
+      for (const concept of this.getConceptsFromValue(analysis.warnings)) {
+        concepts.add(concept);
+      }
+
+      for (const concept of this.getConceptsFromValue(analysis.matchedConcepts)) {
+        concepts.add(concept);
+      }
+
+      for (const concept of this.getConceptsFromValue(analysis.notSuitableFor)) {
+        concepts.add(concept);
+      }
+
       const rawAnalysis = analysis.rawAnalysis;
       if (!rawAnalysis) continue;
 
