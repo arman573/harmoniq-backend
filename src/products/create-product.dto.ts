@@ -2,6 +2,7 @@ import {
   IsArray,
   IsBoolean,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   ValidateNested,
@@ -44,6 +45,20 @@ export class CreateProductTagDto {
   @IsString()
   @IsOptional()
   kind?: string;
+}
+
+export class CreateProductAnalysisDto {
+  @IsString()
+  @IsOptional()
+  status?: string;
+
+  @IsString()
+  @IsOptional()
+  analysisSource?: string;
+
+  @IsObject()
+  @IsOptional()
+  rawAnalysis?: Record<string, unknown>;
 }
 
 export class CreateProductDto {
@@ -113,4 +128,10 @@ export class CreateProductDto {
   @Type(() => CreateProductTagDto)
   @IsOptional()
   tags?: CreateProductTagDto[];
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateProductAnalysisDto)
+  @IsOptional()
+  analyses?: CreateProductAnalysisDto[];
 }
