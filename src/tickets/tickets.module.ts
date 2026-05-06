@@ -1,17 +1,18 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { Customer } from '../customers/customer.entity';
+import { CustomersController } from '../customers/customers.controller';
+import { CustomersService } from '../customers/customers.service';
+import { CustomerEvent } from '../intelligence/customer-event.entity';
+import { CustomerFact } from '../intelligence/customer-fact.entity';
+import { Product } from '../products/product.entity';
+import { TaxonomyTag } from '../taxonomy/taxonomy-tag.entity';
+import { CustomerIntelligenceService } from './customer-intelligence.service';
+import { CustomerProfile } from './customer-profile.entity';
 import { Message } from './message.entity';
 import { Ticket } from './ticket.entity';
-import { Customer } from './customer.entity';
-import { CustomerEvent } from './customer-event.entity';
-import { CustomerFact } from './customer-fact.entity';
-import { CustomerProfile } from './customer-profile.entity';
 import { TicketsController } from './tickets.controller';
-import { CustomersController } from './customers.controller';
 import { TicketsService } from './tickets.service';
-import { CustomerIntelligenceService } from './customer-intelligence.service';
-import { TaxonomyTag } from '../taxonomy/taxonomy-tag.entity';
-import { Product } from '../products/product.entity';
 
 @Module({
   imports: [
@@ -27,6 +28,6 @@ import { Product } from '../products/product.entity';
     ]),
   ],
   controllers: [TicketsController, CustomersController],
-  providers: [TicketsService, CustomerIntelligenceService],
+  providers: [TicketsService, CustomersService, CustomerIntelligenceService],
 })
 export class TicketsModule {}

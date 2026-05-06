@@ -12,14 +12,19 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Request } from 'express';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { UserRole } from '../users/user.entity';
+import { User, UserRole } from '../users/user.entity';
 import { CreateMessageDto } from './create-message.dto';
 import { CreateTicketDto } from './create-ticket.dto';
 import { TicketsService } from './tickets.service';
 import { UpdateTicketDto } from './update-ticket.dto';
 import { UpdateTicketStatusDto } from './update-ticket-status.dto';
+
+type AuthenticatedRequest = Request & {
+  user: User;
+};
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('tickets')
@@ -27,17 +32,20 @@ export class TicketsController {
   constructor(private readonly ticketsService: TicketsService) {}
 
   @Post()
-  createTicket(@Body() body: CreateTicketDto, @Req() req: any) {
+  createTicket(@Body() body: CreateTicketDto, @Req() req: AuthenticatedRequest) {
     return this.ticketsService.createTicket(body, req.user);
   }
 
   @Get()
-  getTickets(@Req() req: any) {
+  getTickets(@Req() req: AuthenticatedRequest) {
     return this.ticketsService.getTickets(req.user);
   }
 
   @Get(':id')
-  getTicket(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+  getTicket(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
     return this.ticketsService.getTicket(id, req.user);
   }
 
@@ -54,7 +62,7 @@ export class TicketsController {
   addMessage(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: CreateMessageDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     return this.ticketsService.addMessage(id, body, req.user);
   }
@@ -64,7 +72,7 @@ export class TicketsController {
   updateTicketStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateTicketStatusDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     return this.ticketsService.updateTicketStatus(id, body, req.user);
   }

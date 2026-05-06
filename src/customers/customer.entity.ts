@@ -7,8 +7,8 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { Ticket } from './ticket.entity';
-import { CustomerProfile } from './customer-profile.entity';
+import { CustomerProfile } from '../tickets/customer-profile.entity';
+import { Ticket } from '../tickets/ticket.entity';
 
 @Entity()
 export class Customer {

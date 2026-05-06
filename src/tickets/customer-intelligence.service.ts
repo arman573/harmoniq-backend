@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Customer } from './customer.entity';
-import { CustomerEvent } from './customer-event.entity';
-import { CustomerFact } from './customer-fact.entity';
+import { Customer } from '../customers/customer.entity';
+import { CustomerEvent } from '../intelligence/customer-event.entity';
+import { CustomerFact } from '../intelligence/customer-fact.entity';
 
 export interface CustomerEventInput {
   customer: Customer;

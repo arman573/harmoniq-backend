@@ -1,29 +1,29 @@
 import { Controller, Get, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { TicketsService } from './tickets.service';
+import { CustomersService } from './customers.service';
 
 @UseGuards(AuthGuard('jwt'))
 @Controller('customers')
 export class CustomersController {
-  constructor(private readonly ticketsService: TicketsService) {}
+  constructor(private readonly customersService: CustomersService) {}
 
   @Get()
   getCustomers() {
-    return this.ticketsService.getCustomers();
+    return this.customersService.getCustomers();
   }
 
   @Get(':id')
   getCustomer(@Param('id', ParseIntPipe) id: number) {
-    return this.ticketsService.getCustomer(id);
+    return this.customersService.getCustomer(id);
   }
 
   @Get(':id/profile')
   getProfile(@Param('id', ParseIntPipe) id: number) {
-    return this.ticketsService.getCustomerProfile(id);
+    return this.customersService.getProfile(id);
   }
 
   @Get(':id/recommendations')
   getRecommendations(@Param('id', ParseIntPipe) id: number) {
-    return this.ticketsService.getCustomerRecommendations(id);
+    return this.customersService.getRecommendations(id);
   }
 }

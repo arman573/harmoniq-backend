@@ -1,21 +1,20 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan } from 'typeorm';
+import { MoreThan, Repository } from 'typeorm';
+import { Customer } from '../customers/customer.entity';
+import { CustomerEvent } from '../intelligence/customer-event.entity';
+import { CustomerFact } from '../intelligence/customer-fact.entity';
+import { ProductAnalysis } from '../products/product-analysis.entity';
+import { Product } from '../products/product.entity';
+import { TaxonomyTag } from '../taxonomy/taxonomy-tag.entity';
+import { User, UserRole } from '../users/user.entity';
 import { CreateMessageDto } from './create-message.dto';
 import { CreateTicketDto } from './create-ticket.dto';
+import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { Message, MessageChannel, MessageType } from './message.entity';
 import { Ticket } from './ticket.entity';
 import { UpdateTicketDto } from './update-ticket.dto';
 import { UpdateTicketStatusDto } from './update-ticket-status.dto';
-import { User } from '../users/user.entity';
-import { UserRole } from '../users/user.entity';
-import { Customer } from './customer.entity';
-import { CustomerFact } from './customer-fact.entity';
-import { CustomerEvent } from './customer-event.entity';
-import { CustomerIntelligenceService } from './customer-intelligence.service';
-import { TaxonomyTag } from '../taxonomy/taxonomy-tag.entity';
-import { Product } from '../products/product.entity';
-import { ProductAnalysis } from '../products/product-analysis.entity';
 
 type RecommendationWarning = {
   code: string;
@@ -210,7 +209,10 @@ export class TicketsService {
     return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
   }
 
-  private productHasAnalysisConcept(productConcepts: Set<string>, concept: string) {
+  private productHasAnalysisConcept(
+    productConcepts: Set<string>,
+    concept: string,
+  ) {
     return productConcepts.has(concept);
   }
 
@@ -313,7 +315,7 @@ export class TicketsService {
     if (!customer) throw new NotFoundException(`Customer ${id} not found`);
 
     const facts = await this.factRepository.find({ where: { customer: { id } } });
-    const factValues = new Set(facts.map((f) => f.value));
+    const factValues = new Set<string>(facts.map((f) => f.value));
 
     const products = await this.productRepository.find({
       where: {
@@ -334,7 +336,10 @@ export class TicketsService {
         for (const tag of product.tags || []) {
           if (!tag.normalizedKey) continue;
 
-          if (factValues.has(tag.normalizedKey) && !matched.has(tag.normalizedKey)) {
+          if (
+            factValues.has(tag.normalizedKey) &&
+            !matched.has(tag.normalizedKey)
+          ) {
             matched.add(tag.normalizedKey);
 
             if (tag.normalizedKey === 'price_sensitive') {

@@ -7,7 +7,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { Customer } from './customer.entity';
+import { Customer } from '../customers/customer.entity';
 
 @Entity()
 export class CustomerProfile {

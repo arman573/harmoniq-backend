@@ -7,9 +7,9 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { Message } from './message.entity';
+import { Customer } from '../customers/customer.entity';
 import { User } from '../users/user.entity';
-import { Customer } from './customer.entity';
+import { Message } from './message.entity';
 
 export enum TicketStatus {
   Open = 'open',

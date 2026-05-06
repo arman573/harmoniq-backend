@@ -1,9 +1,13 @@
-import { Controller, Get } from '@nestjs/common';
+import { AppController } from './app.controller';
 
-@Controller()
-export class AppController {
-  @Get()
-  getHello(): string {
-    return 'Hello World!';
-  }
-}
+describe('AppController', () => {
+  let appController: AppController;
+
+  beforeEach(() => {
+    appController = new AppController();
+  });
+
+  it('returns the default greeting', () => {
+    expect(appController.getHello()).toBe('Hello World!');
+  });
+});
