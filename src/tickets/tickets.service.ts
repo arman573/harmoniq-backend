@@ -63,6 +63,74 @@ export class TicketsService {
     }
   }
 
+  private getNumberFromAnalysis(
+    rawAnalysis: Record<string, unknown> | undefined,
+    key: string,
+  ) {
+    if (!rawAnalysis) return null;
+
+    const directValue = rawAnalysis[key];
+    const scores = rawAnalysis.scores;
+    const nestedValue =
+      scores && typeof scores === 'object' && !Array.isArray(scores)
+        ? (scores as Record<string, unknown>)[key]
+        : undefined;
+
+    const value = directValue ?? nestedValue;
+
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+
+    return null;
+  }
+
+  private normalizeAnalysisScore(score: number) {
+    if (score <= 1) return Math.max(0, Math.min(1, score));
+    return Math.max(0, Math.min(100, score)) / 100;
+  }
+
+  private getBestAnalysisScore(product: Product, key: string) {
+    const scores = (product.analyses || [])
+      .map((analysis) => this.getNumberFromAnalysis(analysis.rawAnalysis, key))
+      .filter((score): score is number => score !== null);
+
+    if (!scores.length) return null;
+
+    return Math.max(...scores);
+  }
+
+  private addAnalysisScore(
+    product: Product,
+    factValues: Set<string>,
+    factValue: string,
+    scoreKey: string,
+    maxBoost: number,
+    reasons: string[],
+  ) {
+    if (!factValues.has(factValue)) return 0;
+
+    const analysisScore = this.getBestAnalysisScore(product, scoreKey);
+    if (analysisScore === null) return 0;
+
+    const normalizedScore = this.normalizeAnalysisScore(analysisScore);
+    if (normalizedScore <= 0) return 0;
+
+    const boost = Math.round(maxBoost * normalizedScore);
+    if (boost <= 0) return 0;
+
+    const displayScore =
+      analysisScore <= 1 ? Math.round(analysisScore * 100) : analysisScore;
+
+    reasons.push(
+      `ProductAnalysis ${scoreKey} ${displayScore}/100 for ${factValue} (+${boost})`,
+    );
+
+    return boost;
+  }
+
   getCustomers() {
     return this.customerRepository.find({
       order: { createdAt: 'DESC' },
@@ -143,7 +211,7 @@ export class TicketsService {
         isActive: true,
         isDiscontinued: false,
       },
-      relations: { tags: true },
+      relations: { tags: true, analyses: true },
     });
 
     const recommendations = products
@@ -167,6 +235,31 @@ export class TicketsService {
             reasons.push(`Matched customer fact ${tag.normalizedKey}`);
           }
         }
+
+        score += this.addAnalysisScore(
+          product,
+          factValues,
+          'dry_skin',
+          'hydrationScore',
+          20,
+          reasons,
+        );
+        score += this.addAnalysisScore(
+          product,
+          factValues,
+          'acne_prone',
+          'acneSafetyScore',
+          15,
+          reasons,
+        );
+        score += this.addAnalysisScore(
+          product,
+          factValues,
+          'sensitive_skin',
+          'sensitiveSafetyScore',
+          15,
+          reasons,
+        );
 
         return {
           product,
