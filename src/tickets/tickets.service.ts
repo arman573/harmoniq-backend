@@ -16,6 +16,13 @@ import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { TaxonomyTag } from '../taxonomy/taxonomy-tag.entity';
 import { Product } from '../products/product.entity';
 
+type RecommendationWarning = {
+  code: string;
+  fact: string;
+  penalty: number;
+  message: string;
+};
+
 @Injectable()
 export class TicketsService {
   constructor(
@@ -131,6 +138,91 @@ export class TicketsService {
     return boost;
   }
 
+  private normalizeConcept(value: unknown) {
+    if (typeof value !== 'string') return null;
+    return value.trim().toLowerCase();
+  }
+
+  private getConceptsFromValue(value: unknown) {
+    if (!Array.isArray(value)) return [];
+
+    return value
+      .flatMap((item) => {
+        if (typeof item === 'string') return [item];
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+          const record = item as Record<string, unknown>;
+          return [record.code, record.key, record.normalizedKey, record.value];
+        }
+        return [];
+      })
+      .map((item) => this.normalizeConcept(item))
+      .filter((item): item is string => Boolean(item));
+  }
+
+  private getProductAnalysisConcepts(product: Product) {
+    const concepts = new Set<string>();
+
+    for (const analysis of product.analyses || []) {
+      const rawAnalysis = analysis.rawAnalysis;
+      if (!rawAnalysis) continue;
+
+      for (const key of ['warnings', 'matchedConcepts', 'notSuitableFor']) {
+        for (const concept of this.getConceptsFromValue(rawAnalysis[key])) {
+          concepts.add(concept);
+        }
+      }
+
+      for (const key of [
+        'contains_fragrance',
+        'containsFragrance',
+        'irritants',
+        'contains_irritants',
+        'containsIrritants',
+        'comedogenicRisk',
+        'comedogenic_risk',
+      ]) {
+        if (rawAnalysis[key] === true) concepts.add(this.camelToSnake(key));
+      }
+    }
+
+    return concepts;
+  }
+
+  private camelToSnake(value: string) {
+    return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+  }
+
+  private productHasAnalysisConcept(productConcepts: Set<string>, concept: string) {
+    return productConcepts.has(concept);
+  }
+
+  private addWarningPenalty(
+    productConcepts: Set<string>,
+    factValues: Set<string>,
+    triggerFacts: string[],
+    warningConcepts: string[],
+    penalty: number,
+    message: string,
+    warnings: RecommendationWarning[],
+  ) {
+    const matchedFact = triggerFacts.find((fact) => factValues.has(fact));
+    if (!matchedFact) return 0;
+
+    const matchedWarning = warningConcepts.find((concept) =>
+      this.productHasAnalysisConcept(productConcepts, concept),
+    );
+    if (!matchedWarning) return 0;
+
+    warnings.push({
+      code: matchedWarning,
+      fact: matchedFact,
+      penalty,
+      message,
+    });
+
+    return penalty;
+  }
+
   getCustomers() {
     return this.customerRepository.find({
       order: { createdAt: 'DESC' },
@@ -218,6 +310,7 @@ export class TicketsService {
       .map((product) => {
         let score = 0;
         const reasons: string[] = [];
+        const warnings: RecommendationWarning[] = [];
         const matched = new Set<string>();
 
         for (const tag of product.tags || []) {
@@ -261,11 +354,41 @@ export class TicketsService {
           reasons,
         );
 
+        const productConcepts = this.getProductAnalysisConcepts(product);
+
+        score += this.addWarningPenalty(
+          productConcepts,
+          factValues,
+          ['fragrance_sensitive', 'fragrance_free'],
+          ['contains_fragrance'],
+          -60,
+          'Customer prefers fragrance-free products, but ProductAnalysis indicates fragrance.',
+          warnings,
+        );
+        score += this.addWarningPenalty(
+          productConcepts,
+          factValues,
+          ['sensitive_skin'],
+          ['irritants', 'contains_irritants'],
+          -40,
+          'Customer has sensitive skin, but ProductAnalysis indicates potential irritants.',
+          warnings,
+        );
+        score += this.addWarningPenalty(
+          productConcepts,
+          factValues,
+          ['acne_prone'],
+          ['comedogenic_risk'],
+          -35,
+          'Customer is acne-prone, but ProductAnalysis indicates comedogenic risk.',
+          warnings,
+        );
+
         return {
           product,
           score,
           reasons,
-          warnings: [],
+          warnings,
         };
       })
       .filter((r) => r.score > 0)
