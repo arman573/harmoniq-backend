@@ -56,6 +56,46 @@ export class CreateProductAnalysisDto {
   @IsOptional()
   analysisSource?: string;
 
+  @IsString()
+  @IsOptional()
+  sourceHash?: string;
+
+  @IsString()
+  @IsOptional()
+  inciHash?: string;
+
+  @IsString()
+  @IsOptional()
+  metadataHash?: string;
+
+  @IsNumber()
+  @IsOptional()
+  confidence?: number;
+
+  @IsArray()
+  @IsOptional()
+  suitableFor?: string[];
+
+  @IsArray()
+  @IsOptional()
+  notSuitableFor?: string[];
+
+  @IsArray()
+  @IsOptional()
+  warnings?: string[];
+
+  @IsArray()
+  @IsOptional()
+  matchedConcepts?: string[];
+
+  @IsObject()
+  @IsOptional()
+  scores?: Record<string, number>;
+
+  @IsArray()
+  @IsOptional()
+  ingredients?: string[];
+
   @IsObject()
   @IsOptional()
   rawAnalysis?: Record<string, unknown>;
