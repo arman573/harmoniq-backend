@@ -1,8 +1,8 @@
 {
-  "name": "backend",
+  "name": "harmoniq-customer-core",
   "version": "0.0.1",
-  "description": "",
-  "author": "",
+  "description": "AI-native Beauty Commerce Intelligence Platform",
+  "author": "Arman",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
