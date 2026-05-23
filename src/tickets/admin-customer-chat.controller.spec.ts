@@ -109,6 +109,81 @@ describe('AdminCustomerChatController', () => {
     });
   });
 
+  it('exposes safe admin detail fields without raw debug objects outside the message timeline', async () => {
+    const service = {
+      getConversationDetail: jest.fn(async () => ({
+        conversation: {
+          conversationId: 'chat-1',
+          customerId: 1,
+          status: CustomerChatConversationStatus.Escalated,
+          priority: 'medium',
+          assignedTo: null,
+          lastIntent: 'frustration',
+          lastRoute: 'escalation',
+          escalationRequired: true,
+          reasons: ['customer_frustration_detected'],
+          boundaryType: 'none',
+          integrationStatus: {
+            support: {
+              status: 'placeholder',
+              capability: 'human_support_handoff',
+              integrationStatus: 'not_configured',
+              handled: false,
+              requiresHuman: true,
+            },
+          },
+        },
+        customer: {
+          id: 1,
+          name: 'Ada Customer',
+          email: 'ada@example.com',
+        },
+        messages: [
+          {
+            id: 1,
+            role: 'user',
+            content: 'I am angry',
+            intentType: 'frustration',
+            policyRoute: 'escalation',
+            escalationRequired: true,
+            reasons: ['customer_frustration_detected'],
+            boundaryType: 'none',
+            createdAt: new Date('2026-01-01T00:00:01.000Z'),
+          },
+        ],
+        notes: [],
+      })),
+    } as unknown as AdminCustomerChatService;
+    const controller = new AdminCustomerChatController(service);
+
+    const result = await controller.getConversation('chat-1');
+
+    expect(service.getConversationDetail).toHaveBeenCalledWith('chat-1');
+    expect(result.conversation).toEqual(
+      expect.objectContaining({
+        conversationId: 'chat-1',
+        status: CustomerChatConversationStatus.Escalated,
+        priority: 'medium',
+        lastIntent: 'frustration',
+        lastRoute: 'escalation',
+        escalationRequired: true,
+      }),
+    );
+    expect(result.messages[0]).toEqual(
+      expect.objectContaining({
+        role: 'user',
+        content: 'I am angry',
+        intentType: 'frustration',
+        policyRoute: 'escalation',
+      }),
+    );
+    expect(result.conversation).not.toHaveProperty('metadata');
+    expect(result.conversation).not.toHaveProperty('policyDecision');
+    expect(result.customer).not.toHaveProperty('metadata');
+    expect(result.messages[0]).not.toHaveProperty('metadata');
+    expect(result.messages[0]).not.toHaveProperty('policyDecision');
+  });
+
   it('exposes assignment updates', async () => {
     const service = {
       assignConversation: jest.fn(async () => ({
