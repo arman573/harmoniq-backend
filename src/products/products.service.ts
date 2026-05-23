@@ -46,6 +46,7 @@ export class ProductsService {
           this.analysisRepo.create({
             status: analysis.status || 'completed',
             analysisSource: analysis.analysisSource || 'manual',
+            analysisHash: analysis.analysisHash,
             sourceHash: analysis.sourceHash,
             inciHash: analysis.inciHash,
             metadataHash: analysis.metadataHash,

@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import { CreateMessageDto } from './create-message.dto';
@@ -16,6 +20,14 @@ import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { TaxonomyTag } from '../taxonomy/taxonomy-tag.entity';
 import { Product } from '../products/product.entity';
 import { ProductAnalysis } from '../products/product-analysis.entity';
+import { ExplainabilityService } from '../explainability/explainability.service';
+import { IngredientIntelligenceResult } from '../ingredients/ingredients.service';
+import { buildRecommendationEvidence } from './recommendation-evidence';
+import { calculateRecommendationScoreV5 } from './recommendation-scoring';
+import {
+  buildBeautyProfileSummary,
+  buildUnifiedBeautyProfile,
+} from './unified-beauty-profile';
 
 type RecommendationWarning = {
   code: string;
@@ -42,6 +54,7 @@ export class TicketsService {
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
     private readonly intelligenceService: CustomerIntelligenceService,
+    private readonly explainabilityService: ExplainabilityService,
   ) {}
 
   private normalizeEmail(email: string) {
@@ -173,11 +186,15 @@ export class TicketsService {
         concepts.add(concept);
       }
 
-      for (const concept of this.getConceptsFromValue(analysis.matchedConcepts)) {
+      for (const concept of this.getConceptsFromValue(
+        analysis.matchedConcepts,
+      )) {
         concepts.add(concept);
       }
 
-      for (const concept of this.getConceptsFromValue(analysis.notSuitableFor)) {
+      for (const concept of this.getConceptsFromValue(
+        analysis.notSuitableFor,
+      )) {
         concepts.add(concept);
       }
 
@@ -210,7 +227,10 @@ export class TicketsService {
     return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
   }
 
-  private productHasAnalysisConcept(productConcepts: Set<string>, concept: string) {
+  private productHasAnalysisConcept(
+    productConcepts: Set<string>,
+    concept: string,
+  ) {
     return productConcepts.has(concept);
   }
 
@@ -239,6 +259,36 @@ export class TicketsService {
     });
 
     return penalty;
+  }
+
+  private getLatestProductAnalysis(product: Product) {
+    const analyses = product.analyses || [];
+
+    if (!analyses.length) return undefined;
+
+    return [...analyses].sort((a, b) => {
+      const createdDiff =
+        this.getTimestamp(b.createdAt) - this.getTimestamp(a.createdAt);
+      if (createdDiff) return createdDiff;
+
+      return (b.id ?? 0) - (a.id ?? 0);
+    })[0];
+  }
+
+  private getTimestamp(value: Date | undefined) {
+    return value instanceof Date ? value.getTime() : 0;
+  }
+
+  private getIngredientIntelligence(
+    analysis: ProductAnalysis | undefined,
+  ): IngredientIntelligenceResult | undefined {
+    const value = analysis?.rawAnalysis?.ingredientIntelligence;
+
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return undefined;
+    }
+
+    return value as IngredientIntelligenceResult;
   }
 
   getCustomers() {
@@ -304,15 +354,28 @@ export class TicketsService {
       if (!acc[fact.type].includes(fact.value)) acc[fact.type].push(fact.value);
       return acc;
     }, {});
+    const unifiedBeautyProfile = buildUnifiedBeautyProfile(id, facts);
 
-    return { customer, summary, facts, recentEvents, matchedTaxonomy };
+    return {
+      customer,
+      summary,
+      facts,
+      recentEvents,
+      matchedTaxonomy,
+      unifiedBeautyProfile,
+    };
   }
 
   async getCustomerRecommendations(id: number) {
     const customer = await this.customerRepository.findOne({ where: { id } });
     if (!customer) throw new NotFoundException(`Customer ${id} not found`);
 
-    const facts = await this.factRepository.find({ where: { customer: { id } } });
+    const facts = await this.factRepository.find({
+      where: { customer: { id } },
+    });
+    const unifiedBeautyProfile = buildUnifiedBeautyProfile(id, facts);
+    const beautyProfileSummary =
+      buildBeautyProfileSummary(unifiedBeautyProfile);
     const factValues = new Set(facts.map((f) => f.value));
 
     const products = await this.productRepository.find({
@@ -334,7 +397,10 @@ export class TicketsService {
         for (const tag of product.tags || []) {
           if (!tag.normalizedKey) continue;
 
-          if (factValues.has(tag.normalizedKey) && !matched.has(tag.normalizedKey)) {
+          if (
+            factValues.has(tag.normalizedKey) &&
+            !matched.has(tag.normalizedKey)
+          ) {
             matched.add(tag.normalizedKey);
 
             if (tag.normalizedKey === 'price_sensitive') {
@@ -402,19 +468,73 @@ export class TicketsService {
           warnings,
         );
 
+        const latestAnalysis = this.getLatestProductAnalysis(product);
+        const ingredientIntelligence =
+          this.getIngredientIntelligence(latestAnalysis);
+        const recommendationV5 = calculateRecommendationScoreV5({
+          customerFacts: facts,
+          unifiedBeautyProfile,
+          productTags: product.tags,
+          productAnalysis: latestAnalysis,
+          ingredientIntelligence,
+        });
+        const evidence = buildRecommendationEvidence({
+          customerFacts: facts,
+          productTags: product.tags,
+          productAnalysis: latestAnalysis,
+          ingredientIntelligence,
+          scoreBreakdown: recommendationV5.scoreBreakdown,
+        });
+        const explanation =
+          this.explainabilityService.generateProductExplanation({
+            customerFacts: facts,
+            productTags: product.tags,
+            productAnalysis: latestAnalysis,
+            ingredientIntelligence,
+            scoreBreakdown: recommendationV5.scoreBreakdown,
+            confidence: evidence.confidence,
+            confidenceLevel: evidence.level,
+            evidence,
+          });
+
         return {
           product,
           score,
           reasons,
           warnings,
+          explanation,
+          confidence: evidence.confidence,
+          confidenceLevel: evidence.level,
+          evidence,
+          recommendationScoreV5: recommendationV5.recommendationScoreV5,
+          domains: recommendationV5.domains,
+          profileAlignment: recommendationV5.profileAlignment,
+          scoreBreakdown: recommendationV5.scoreBreakdown,
+          blocked: recommendationV5.blocked,
+          blockers: recommendationV5.blockers,
         };
       })
-      .filter((r) => r.score > 0 || r.warnings.length > 0)
-      .sort((a, b) => b.score - a.score);
+      .filter(
+        (r) =>
+          r.score > 0 ||
+          r.warnings.length > 0 ||
+          r.recommendationScoreV5 !== 0 ||
+          r.blocked,
+      )
+      .sort((a, b) => {
+        if (a.blocked !== b.blocked)
+          return Number(a.blocked) - Number(b.blocked);
+        if (b.recommendationScoreV5 !== a.recommendationScoreV5) {
+          return b.recommendationScoreV5 - a.recommendationScoreV5;
+        }
+
+        return b.score - a.score;
+      });
 
     return {
       customerId: id,
       facts,
+      beautyProfileSummary,
       recommendations,
     };
   }
@@ -493,7 +613,11 @@ export class TicketsService {
     return saved;
   }
 
-  async updateTicketStatus(id: number, data: UpdateTicketStatusDto, user: User) {
+  async updateTicketStatus(
+    id: number,
+    data: UpdateTicketStatusDto,
+    user: User,
+  ) {
     const ticket = await this.findTicketOrThrow(id);
 
     const oldStatus = ticket.status;

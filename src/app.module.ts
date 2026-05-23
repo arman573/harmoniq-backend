@@ -1,12 +1,18 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
+import { Ingredient } from './ingredients/ingredient.entity';
+import { IngredientsModule } from './ingredients/ingredients.module';
 import { Product } from './products/product.entity';
 import { ProductAnalysis } from './products/product-analysis.entity';
 import { ProductSpec } from './products/product-spec.entity';
 import { ProductTag } from './products/product-tag.entity';
 import { ProductsModule } from './products/products.module';
 import { Customer } from './tickets/customer.entity';
+import { CustomerChatConversation } from './tickets/customer-chat-conversation.entity';
+import { CustomerChatInternalNote } from './tickets/customer-chat-internal-note.entity';
+import { CustomerChatMessage } from './tickets/customer-chat-message.entity';
 import { CustomerEvent } from './tickets/customer-event.entity';
 import { CustomerFact } from './tickets/customer-fact.entity';
 import { CustomerProfile } from './tickets/customer-profile.entity';
@@ -23,6 +29,9 @@ import { TaxonomyModule } from './taxonomy/taxonomy.module';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
     TypeOrmModule.forRoot({
       type: 'postgres',
       host: 'localhost',
@@ -35,6 +44,9 @@ import { TaxonomyModule } from './taxonomy/taxonomy.module';
         Ticket,
         Message,
         Customer,
+        CustomerChatConversation,
+        CustomerChatInternalNote,
+        CustomerChatMessage,
         CustomerProfile,
         CustomerFact,
         CustomerEvent,
@@ -46,6 +58,7 @@ import { TaxonomyModule } from './taxonomy/taxonomy.module';
         ProductSpec,
         ProductTag,
         ProductAnalysis,
+        Ingredient,
       ],
       synchronize: true,
     }),
@@ -54,6 +67,7 @@ import { TaxonomyModule } from './taxonomy/taxonomy.module';
     UsersModule,
     TaxonomyModule,
     ProductsModule,
+    IngredientsModule,
   ],
 })
 export class AppModule {}

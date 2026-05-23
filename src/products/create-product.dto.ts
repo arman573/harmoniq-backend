@@ -58,6 +58,10 @@ export class CreateProductAnalysisDto {
 
   @IsString()
   @IsOptional()
+  analysisHash?: string;
+
+  @IsString()
+  @IsOptional()
   sourceHash?: string;
 
   @IsString()

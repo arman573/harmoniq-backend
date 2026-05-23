@@ -13,7 +13,9 @@ export class ProductAnalysis {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Product, (product) => product.analyses, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Product, (product) => product.analyses, {
+    onDelete: 'CASCADE',
+  })
   product!: Product;
 
   @Column({ default: 'pending' })
@@ -21,6 +23,9 @@ export class ProductAnalysis {
 
   @Column({ nullable: true })
   analysisSource?: string;
+
+  @Column({ nullable: true })
+  analysisHash?: string;
 
   @Column({ nullable: true })
   sourceHash?: string;
