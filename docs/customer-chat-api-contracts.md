@@ -499,3 +499,48 @@ Integration status values:
 - `error`
 
 Until a real provider is connected, placeholders must not invent external data and must route unresolved cases to human support.
+
+## Explainability Contract
+
+Explainability is currently a backend contract only. It describes safe reason metadata for customer chat and admin review surfaces, but it does not call AI, score products, analyze ingredients, or invent provider data.
+
+The backend remains the decision owner. Explainability fields must describe backend-owned policy, deterministic intent, customer profile summary, conversation context, support placeholders, recommendation evidence contracts, or manual admin context.
+
+Current status values:
+
+- `not_required`
+- `available`
+- `limited`
+- `insufficient_context`
+
+Reason visibility values:
+
+- `customer_safe`
+- `admin_only`
+
+Contract shape:
+
+```json
+{
+  "status": "available",
+  "decisionOwner": "backend_policy",
+  "aiUsed": false,
+  "reasons": [
+    {
+      "code": "support_intent_detected",
+      "label": "Support intent detected",
+      "source": "deterministic_intent",
+      "visibility": "customer_safe"
+    }
+  ],
+  "limitations": []
+}
+
+```
+
+Rules:
+
+- Do not expose raw `policyDecision`, raw intent objects, internal debug metadata, provider secrets, or raw support/order data.
+- Do not use explainability fields as proof that an external provider, AI model, product service, or recommendation engine was called.
+- Do not invent product, ingredient, order, support, return, refund, claim, or tracking explanations.
+- Keep explainability coupled to explicit backend contracts, not hidden runtime behavior.
