@@ -14,6 +14,9 @@ import { TaxonomySpec } from './taxonomy/taxonomy-spec.entity';
 import { TaxonomySuggestion } from './taxonomy/taxonomy-suggestion.entity';
 import { TaxonomyTag } from './taxonomy/taxonomy-tag.entity';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
+import { CustomerChatConversation } from './tickets/customer-chat-conversation.entity';
+import { CustomerChatInternalNote } from './tickets/customer-chat-internal-note.entity';
+import { CustomerChatMessage } from './tickets/customer-chat-message.entity';
 import { CustomerProfile } from './tickets/customer-profile.entity';
 import { Message } from './tickets/message.entity';
 import { Ticket } from './tickets/ticket.entity';
@@ -35,6 +38,9 @@ import { UsersModule } from './users/users.module';
         Ticket,
         Message,
         Customer,
+        CustomerChatConversation,
+        CustomerChatInternalNote,
+        CustomerChatMessage,
         CustomerProfile,
         CustomerFact,
         CustomerEvent,
