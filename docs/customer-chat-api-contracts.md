@@ -412,6 +412,58 @@ Not exposed:
 
 - Message bodies, raw metadata, raw policy decisions, raw intent objects, internal notes.
 
+## Recommendation Evidence Contract
+
+Purpose: Reserve a small backend-owned contract for future recommendation evidence without implementing scoring in the customer chat layer.
+
+This contract is type-only in the backend today. Customer chat may reference recommendation evidence later when a dedicated recommendation endpoint provides it. Customer chat must not invent evidence, order data, support data, or product analysis data.
+
+Contract shape:
+
+```json
+{
+  "status": "not_available",
+  "summary": {
+    "confidence": 0,
+    "confidenceLevel": "low",
+    "positiveEvidence": [
+      {
+        "code": "matches_dry_skin",
+        "label": "Matches dry skin",
+        "detail": "Product signals align with the customer's dry skin profile.",
+        "source": "customer_fact",
+        "domain": "skin",
+        "confidence": 0.7,
+        "polarity": "positive",
+        "impact": 15
+      }
+    ],
+    "negativeEvidence": [],
+    "neutralEvidence": [],
+    "missingEvidence": ["missing_product_analysis"],
+    "conflicts": []
+  },
+  "note": "Recommendation evidence is not calculated by customer chat."
+}
+```
+
+Allowed evidence sources:
+
+- `customer_fact`
+- `customer_profile`
+- `product_tag`
+- `product_analysis`
+- `rule`
+- `manual`
+
+Rules:
+
+- This contract does not add scoring behavior.
+- This contract does not call OpenAI.
+- This contract does not add product, ingredient, order, return, or support integrations.
+- Evidence should only be returned when a backend recommendation component supplies structured evidence.
+- When evidence is absent, use `status: "not_available"` rather than fabricating data.
+
 ## Placeholder Integration Behavior
 
 Support/order/returns contracts currently report explicit placeholders only.
