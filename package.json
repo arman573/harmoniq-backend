@@ -1,8 +1,8 @@
 {
-  "name": "backend",
+  "name": "harmoniq-customer-core",
   "version": "0.0.1",
-  "description": "",
-  "author": "",
+  "description": "AI-native Beauty Commerce Intelligence Platform",
+  "author": "Arman",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
@@ -30,15 +30,13 @@
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
-    "dotenv": "^17.4.2",
     "openai": "^6.36.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pg": "^8.20.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "typeorm": "^0.3.28",
-    "zod": "^4.4.3"
+    "typeorm": "^0.3.28"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
