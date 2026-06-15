@@ -1,9 +1,13 @@
 import { AppController } from './app.controller';
 
 describe('AppController', () => {
-  it('returns the health greeting', () => {
-    const controller = new AppController();
+  let appController: AppController;
 
-    expect(controller.getHello()).toBe('Hello World!');
+  beforeEach(() => {
+    appController = new AppController();
+  });
+
+  it('returns the default greeting', () => {
+    expect(appController.getHello()).toBe('Hello World!');
   });
 });
