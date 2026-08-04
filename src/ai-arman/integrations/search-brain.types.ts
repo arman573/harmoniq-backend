@@ -17,3 +17,23 @@ export type SearchBrainAutocompleteResponse = {
     label?: string;
     url?: string;
     source?: string;
+    score?: number;
+  };
+  products?: SearchBrainProduct[];
+  debug?: {
+    recommendedAction?: string;
+    sourceStatus?: unknown;
+    notes?: string[];
+  };
+};
+
+export type SearchBrainLookupResult = {
+  ok: boolean;
+  configured: boolean;
+  query: string;
+  durationMs: number;
+  upstreamStatus?: number;
+  products: SearchBrainProduct[];
+  navigationTarget?: SearchBrainAutocompleteResponse['navigationTarget'];
+  error?: string;
+};
