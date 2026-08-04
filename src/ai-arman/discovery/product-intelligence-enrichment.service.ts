@@ -74,6 +74,31 @@ export class ProductIntelligenceEnrichmentService {
         generatedAt: lookup.generatedAt,
         error: lookup.error,
       },
+      verification: lookup.verification
+        ? {
+            enabled: lookup.verification.enabled,
+            attempted: lookup.verification.attempted,
+            required: lookup.verification.required,
+            reason: lookup.verification.reason,
+            model: lookup.verification.model,
+            webSearchUsed: lookup.verification.webSearchUsed,
+            cacheHit: lookup.verification.cacheHit,
+            error: lookup.verification.error,
+            usage: lookup.verification.usage,
+            products: lookup.verification.products.map((product) => ({
+              productId: product.productId,
+              verdict: product.verdict,
+              summary: product.summary,
+              recommendationAction: product.recommendationAction,
+              confidence: this.normalizeConfidence(product.confidence),
+              ingredientFindings: this.strings(product.ingredientFindings),
+              problemSolving: this.strings(product.problemSolving),
+              cautions: this.strings(product.cautions),
+              sources: product.sources,
+              cached: product.cached,
+            })),
+          }
+        : null,
       summary: {
         requested: products.length,
         analyzed: lookup.analyses.length,
@@ -86,8 +111,9 @@ export class ProductIntelligenceEnrichmentService {
         readOnly: true,
         liveProductFactsVerified: false,
         productionActionsEnabled: false,
+        deterministicBlockersAuthoritative: true,
         rule:
-          'A product becomes recommendation-ready only when designation, original INCI, evidence, confidence and engine version are valid.',
+          'A product becomes recommendation-ready only when designation, original INCI, evidence, confidence and engine version are valid. OpenAI may add evidence or blockers but never remove deterministic blockers.',
       },
     };
   }
@@ -122,7 +148,7 @@ export class ProductIntelligenceEnrichmentService {
           ...analysis.inci.conflicts,
           'Price and stock are not yet verified against Vendre.',
         ]),
-        confidence: this.clamp(analysis.inci.confidence),
+        confidence: this.normalizeConfidence(analysis.inci.confidence),
         engineVersion: analysis.inci.engineVersion,
       },
     };
@@ -189,6 +215,11 @@ export class ProductIntelligenceEnrichmentService {
 
   private strings(values: unknown[]): string[] {
     return [...new Set((values || []).map(String).map((value) => value.trim()).filter(Boolean))];
+  }
+
+  private normalizeConfidence(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return this.clamp(value <= 1 ? value * 100 : value);
   }
 
   private clamp(value: number): number {
