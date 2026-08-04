@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { AiArmanService } from './ai-arman.service';
 import { ChatPreviewService } from './chat/chat-preview.service';
 import { ChatPreviewRequest } from './chat/chat-preview.types';
+import { ProductDiscoveryService } from './discovery/product-discovery.service';
 import { RecommendationCandidate } from './recommendation/recommendation.types';
 
 @Controller('ai-arman')
@@ -9,11 +10,17 @@ export class AiArmanController {
   constructor(
     private readonly aiArmanService: AiArmanService,
     private readonly chatPreviewService: ChatPreviewService,
+    private readonly productDiscoveryService: ProductDiscoveryService,
   ) {}
 
   @Get('foundation')
   getFoundationStatus() {
     return this.aiArmanService.getFoundationStatus();
+  }
+
+  @Get('products/discover')
+  discoverProducts(@Query('q') query: string) {
+    return this.productDiscoveryService.discover(query);
   }
 
   @Post('recommendations/preview')
