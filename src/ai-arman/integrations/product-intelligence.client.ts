@@ -7,7 +7,7 @@ import {
   ProductIntelligenceRequestProduct,
 } from './product-intelligence.types';
 
-const DEFAULT_TIMEOUT_MS = 1200;
+const DEFAULT_TIMEOUT_MS = 15000;
 const MAX_PRODUCTS = 25;
 
 @Injectable()
@@ -89,6 +89,7 @@ export class ProductIntelligenceClient {
         analyses: body.analyses,
         engineVersion: body.engineVersion,
         generatedAt: body.generatedAt,
+        verification: body.verification,
       };
     } catch (error) {
       return {
@@ -109,6 +110,6 @@ export class ProductIntelligenceClient {
   private readTimeout(): number {
     const configured = Number(process.env.PRODUCT_INTELLIGENCE_TIMEOUT_MS);
     if (!Number.isFinite(configured)) return DEFAULT_TIMEOUT_MS;
-    return Math.min(3000, Math.max(300, configured));
+    return Math.min(30000, Math.max(1000, configured));
   }
 }
