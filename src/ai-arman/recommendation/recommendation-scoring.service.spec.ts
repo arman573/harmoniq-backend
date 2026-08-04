@@ -34,6 +34,7 @@ describe('RecommendationScoringService', () => {
     const result = service.scoreCandidate(candidate());
 
     expect(result.qualityScore).toBe(85.5);
+    expect(result.rankingScore).toBe(76.95);
     expect(result.tier).toBe('A');
     expect(result.eligible).toBe(true);
   });
@@ -81,6 +82,39 @@ describe('RecommendationScoringService', () => {
     expect(result.rejectionReasons).toContain(
       'hard_blocker:verified_allergen_conflict',
     );
+  });
+
+  it('allows bounded personalization to reorder products inside one tier', () => {
+    const slightlyHigherQuality = candidate({
+      productId: 'higher-quality',
+      personalizationScore: 0,
+      scores: {
+        designation: 82,
+        inciSuitability: 82,
+        category: 75,
+        tags: 70,
+      },
+    });
+
+    const personalized = candidate({
+      productId: 'personalized',
+      personalizationScore: 100,
+      scores: {
+        designation: 80,
+        inciSuitability: 80,
+        category: 74,
+        tags: 70,
+      },
+    });
+
+    const ranked = service.rankCandidates([slightlyHigherQuality, personalized]);
+
+    expect(ranked[0].tier).toBe('B');
+    expect(ranked[1].tier).toBe('B');
+    expect(ranked.map((item) => item.productId)).toEqual([
+      'personalized',
+      'higher-quality',
+    ]);
   });
 
   it('never lets personalization lift a lower tier above a higher tier', () => {
