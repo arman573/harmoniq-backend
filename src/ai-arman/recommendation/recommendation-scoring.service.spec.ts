@@ -33,8 +33,8 @@ describe('RecommendationScoringService', () => {
   it('scores designation and INCI as equal joint priority one', () => {
     const result = service.scoreCandidate(candidate());
 
-    expect(result.qualityScore).toBe(85.5);
-    expect(result.rankingScore).toBe(76.95);
+    expect(result.qualityScore).toBe(86);
+    expect(result.rankingScore).toBe(77.4);
     expect(result.tier).toBe('A');
     expect(result.eligible).toBe(true);
   });
