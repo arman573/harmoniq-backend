@@ -28,6 +28,7 @@ export type RecommendationCandidate = {
 
 export type ScoredRecommendationCandidate = RecommendationCandidate & {
   qualityScore: number;
+  rankingScore: number;
   tier: RecommendationTier;
   eligible: boolean;
   rejectionReasons: string[];
