@@ -33,6 +33,7 @@ export class AiArmanService {
       availableFoundationComponents: {
         deterministicScoring: Boolean(this.recommendationScoring),
         recommendationPreview: true,
+        deterministicChatPreview: true,
         liveProductTools: false,
         orderTools: false,
         caseWriteTools: false,
