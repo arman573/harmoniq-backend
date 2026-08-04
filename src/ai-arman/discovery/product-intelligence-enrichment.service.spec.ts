@@ -73,6 +73,101 @@ describe('ProductIntelligenceEnrichmentService', () => {
     expect(result.recommendations[0].hardBlockers).toEqual([]);
   });
 
+  it('normalizes 0-1 confidence and exposes OpenAI cost and source metadata', async () => {
+    const client = {
+      evaluate: jest.fn().mockResolvedValue({
+        ok: true,
+        configured: true,
+        durationMs: 24,
+        engineVersion: 'product-intelligence-deterministic-v1',
+        generatedAt: '2026-08-04T19:00:00.000Z',
+        verification: {
+          enabled: true,
+          attempted: true,
+          required: false,
+          reason: 'openai_verification_completed',
+          model: 'gpt-5.6-luna',
+          webSearchUsed: true,
+          cacheHit: false,
+          usage: {
+            inputTokens: 1000,
+            cachedInputTokens: 800,
+            outputTokens: 200,
+            totalTokens: 1200,
+          },
+          products: [
+            {
+              productId: '123',
+              verdict: 'supported',
+              summary: 'Fuktbindande stöd är rimligt utifrån INCI.',
+              ingredientFindings: ['Glycerin är en fuktbindare.'],
+              problemSolving: ['Kombinera med balsam i längderna.'],
+              cautions: [],
+              confidence: 0.88,
+              recommendationAction: 'retain',
+              sources: [
+                { title: 'Regulatorisk källa', url: 'https://example.com/source' },
+              ],
+              model: 'gpt-5.6-luna',
+              webSearchUsed: true,
+              cached: false,
+            },
+          ],
+        },
+        analyses: [
+          {
+            productId: '123',
+            designation: {
+              normalized: 'fuktgivande schampo',
+              score: 94,
+              reasons: ['Rätt produkttyp.'],
+            },
+            inci: {
+              original: 'Aqua, Glycerin, Panthenol',
+              suitabilityScore: 91,
+              signals: ['fuktbindare'],
+              conflicts: [],
+              confidence: 0.93,
+              engineVersion: 'product-intelligence-deterministic-v1',
+              analyzedAt: '2026-08-04T19:00:00.000Z',
+            },
+            category: { score: 90, reasons: ['Schampo.'], values: ['schampo'] },
+            tags: { score: 82, reasons: ['Fukt.'], values: ['fukt'] },
+            hardBlockers: [],
+            limitations: [],
+            usage: [],
+            specialFit: [],
+            evidence: [
+              {
+                source: 'ingredient_intelligence',
+                key: 'glycerin',
+                confidence: 0.93,
+              },
+            ],
+          },
+        ],
+      }),
+    } as unknown as ProductIntelligenceClient;
+
+    const service = new ProductIntelligenceEnrichmentService(
+      client,
+      new RecommendationScoringService(),
+    );
+
+    const result = await service.enrich({
+      message: 'Finns det forskning på glycerin för torrt hår?',
+      products: [{ productId: '123', title: 'Testschampo' }],
+    });
+
+    expect(result.recommendations[0].evidence.confidence).toBe(93);
+    expect(result.verification?.products[0].confidence).toBe(88);
+    expect(result.verification?.usage?.cachedInputTokens).toBe(800);
+    expect(result.verification?.products[0].sources[0].url).toBe(
+      'https://example.com/source',
+    );
+    expect(result.safety.deterministicBlockersAuthoritative).toBe(true);
+  });
+
   it('keeps a high-scoring analysis blocked when original INCI is missing', async () => {
     const client = {
       evaluate: jest.fn().mockResolvedValue({
