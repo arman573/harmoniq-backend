@@ -1,13 +1,11 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { AiArmanService } from './ai-arman.service';
 import { ChatPreviewService } from './chat/chat-preview.service';
-import { ChatPreviewRequest } from './chat/chat-preview.types';
+import type { ChatPreviewRequest } from './chat/chat-preview.types';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
-import {
-  ProductIntelligenceEnrichmentService,
-  ProductIntelligencePreviewRequest,
-} from './discovery/product-intelligence-enrichment.service';
-import { RecommendationCandidate } from './recommendation/recommendation.types';
+import { ProductIntelligenceEnrichmentService } from './discovery/product-intelligence-enrichment.service';
+import type { ProductIntelligencePreviewRequest } from './discovery/product-intelligence-enrichment.service';
+import type { RecommendationCandidate } from './recommendation/recommendation.types';
 
 @Controller('ai-arman')
 export class AiArmanController {
