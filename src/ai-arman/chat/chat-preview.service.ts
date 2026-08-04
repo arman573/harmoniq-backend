@@ -7,6 +7,11 @@ import {
   ChatRecommendationCard,
 } from './chat-preview.types';
 
+type ScoredChatCandidate = ReturnType<
+  RecommendationScoringService['scoreCandidate']
+> &
+  ChatPreviewCandidate;
+
 @Injectable()
 export class ChatPreviewService {
   constructor(
@@ -36,15 +41,11 @@ export class ChatPreviewService {
     const ranked = this.recommendationScoring.rankCandidates(candidates);
     const eligible = ranked.filter((candidate) => candidate.eligible);
     const rejected = ranked.filter((candidate) => !candidate.eligible);
-    const top = eligible.slice(0, 3);
+    const top = eligible.slice(0, 3) as ScoredChatCandidate[];
+    const lowestKnownPrice = this.findLowestKnownPrice(top);
 
     const cards = top.map((candidate, index) =>
-      this.toCard(
-        candidate as ReturnType<RecommendationScoringService['scoreCandidate']> &
-          ChatPreviewCandidate,
-        index,
-        top.length,
-      ),
+      this.toCard(candidate, index, lowestKnownPrice),
     );
 
     return {
@@ -76,14 +77,13 @@ export class ChatPreviewService {
   }
 
   private toCard(
-    candidate: ReturnType<RecommendationScoringService['scoreCandidate']> &
-      ChatPreviewCandidate,
+    candidate: ScoredChatCandidate,
     index: number,
-    total: number,
+    lowestKnownPrice: number | null,
   ): ChatRecommendationCard {
     return {
       position: index + 1,
-      label: this.resolveLabel(candidate, index, total),
+      label: this.resolveLabel(candidate, index, lowestKnownPrice),
       productId: candidate.productId,
       title: candidate.title,
       whyItFits: this.unique([
@@ -103,15 +103,15 @@ export class ChatPreviewService {
   }
 
   private resolveLabel(
-    candidate: ChatPreviewCandidate,
+    candidate: ScoredChatCandidate,
     index: number,
-    total: number,
+    lowestKnownPrice: number | null,
   ): string {
     if (index === 0) return 'Bäst matchning';
 
     if (
-      candidate.commercialFacts?.price !== undefined
-      && this.hasLowestKnownPrice(candidate, total)
+      lowestKnownPrice !== null
+      && candidate.commercialFacts?.price === lowestKnownPrice
     ) {
       return 'Bästa prisvärda alternativ';
     }
@@ -119,11 +119,12 @@ export class ChatPreviewService {
     return 'Alternativ för ett särskilt önskemål';
   }
 
-  private hasLowestKnownPrice(
-    candidate: ChatPreviewCandidate,
-    _total: number,
-  ): boolean {
-    return Number.isFinite(candidate.commercialFacts?.price);
+  private findLowestKnownPrice(candidates: ScoredChatCandidate[]): number | null {
+    const prices = candidates
+      .map((candidate) => candidate.commercialFacts?.price)
+      .filter((price): price is number => Number.isFinite(price));
+
+    return prices.length > 0 ? Math.min(...prices) : null;
   }
 
   private composeMessage(
