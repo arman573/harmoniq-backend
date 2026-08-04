@@ -21,6 +21,8 @@ const DEFAULT_GATES: RecommendationGates = {
 };
 
 const MAX_PERSONALIZATION_SCORE = 100;
+const QUALITY_RANKING_WEIGHT = 0.9;
+const PERSONALIZATION_RANKING_WEIGHT = 0.1;
 
 @Injectable()
 export class RecommendationScoringService {
@@ -43,6 +45,16 @@ export class RecommendationScoringService {
         + normalizedScores.inciSuitability * weights.inciSuitability
         + normalizedScores.category * weights.category
         + normalizedScores.tags * weights.tags,
+    );
+
+    const boundedPersonalizationScore = this.clampScore(
+      candidate.personalizationScore ?? 0,
+      MAX_PERSONALIZATION_SCORE,
+    );
+
+    const rankingScore = this.round(
+      qualityScore * QUALITY_RANKING_WEIGHT
+        + boundedPersonalizationScore * PERSONALIZATION_RANKING_WEIGHT,
     );
 
     const rejectionReasons: string[] = [];
@@ -70,13 +82,11 @@ export class RecommendationScoringService {
       ...candidate,
       scores: normalizedScores,
       qualityScore,
+      rankingScore,
       tier,
       eligible,
       rejectionReasons,
-      boundedPersonalizationScore: this.clampScore(
-        candidate.personalizationScore ?? 0,
-        MAX_PERSONALIZATION_SCORE,
-      ),
+      boundedPersonalizationScore,
     };
   }
 
@@ -95,18 +105,12 @@ export class RecommendationScoringService {
           return tierDifference;
         }
 
-        if (right.qualityScore !== left.qualityScore) {
-          return right.qualityScore - left.qualityScore;
+        if (right.rankingScore !== left.rankingScore) {
+          return right.rankingScore - left.rankingScore;
         }
 
-        if (
-          right.boundedPersonalizationScore
-          !== left.boundedPersonalizationScore
-        ) {
-          return (
-            right.boundedPersonalizationScore
-            - left.boundedPersonalizationScore
-          );
+        if (right.qualityScore !== left.qualityScore) {
+          return right.qualityScore - left.qualityScore;
         }
 
         return left.productId.localeCompare(right.productId);
