@@ -3,6 +3,10 @@ import { AiArmanService } from './ai-arman.service';
 import { ChatPreviewService } from './chat/chat-preview.service';
 import { ChatPreviewRequest } from './chat/chat-preview.types';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
+import {
+  ProductIntelligenceEnrichmentService,
+  ProductIntelligencePreviewRequest,
+} from './discovery/product-intelligence-enrichment.service';
 import { RecommendationCandidate } from './recommendation/recommendation.types';
 
 @Controller('ai-arman')
@@ -11,6 +15,7 @@ export class AiArmanController {
     private readonly aiArmanService: AiArmanService,
     private readonly chatPreviewService: ChatPreviewService,
     private readonly productDiscoveryService: ProductDiscoveryService,
+    private readonly productIntelligenceEnrichmentService: ProductIntelligenceEnrichmentService,
   ) {}
 
   @Get('foundation')
@@ -21,6 +26,11 @@ export class AiArmanController {
   @Get('products/discover')
   discoverProducts(@Query('q') query: string) {
     return this.productDiscoveryService.discover(query);
+  }
+
+  @Post('products/intelligence/preview')
+  previewProductIntelligence(@Body() body: ProductIntelligencePreviewRequest) {
+    return this.productIntelligenceEnrichmentService.enrich(body);
   }
 
   @Post('recommendations/preview')
