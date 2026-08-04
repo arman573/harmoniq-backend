@@ -31,6 +31,46 @@ export type ProductIntelligenceBatchRequest = {
   products: ProductIntelligenceRequestProduct[];
 };
 
+export type ProductIntelligenceOpenAiSource = {
+  url: string;
+  title: string;
+};
+
+export type ProductIntelligenceOpenAiProductResearch = {
+  productId: string;
+  verdict: 'supported' | 'mixed' | 'unsupported' | 'uncertain';
+  summary: string;
+  ingredientFindings: string[];
+  problemSolving: string[];
+  cautions: string[];
+  confidence: number;
+  recommendationAction: 'retain' | 'caution' | 'block' | 'insufficient';
+  sources: ProductIntelligenceOpenAiSource[];
+  model: string;
+  webSearchUsed: boolean;
+  cached: boolean;
+};
+
+export type ProductIntelligenceOpenAiUsage = {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+};
+
+export type ProductIntelligenceOpenAiVerification = {
+  enabled: boolean;
+  attempted: boolean;
+  required: boolean;
+  reason: string;
+  model: string;
+  webSearchUsed: boolean;
+  cacheHit: boolean;
+  products: ProductIntelligenceOpenAiProductResearch[];
+  usage?: ProductIntelligenceOpenAiUsage;
+  error?: string;
+};
+
 export type ProductIntelligenceAnalysis = {
   productId: string;
   designation: {
@@ -70,6 +110,7 @@ export type ProductIntelligenceBatchResponse = {
   engineVersion: string;
   generatedAt: string;
   analyses: ProductIntelligenceAnalysis[];
+  verification?: ProductIntelligenceOpenAiVerification;
 };
 
 export type ProductIntelligenceLookupResult = {
@@ -79,6 +120,7 @@ export type ProductIntelligenceLookupResult = {
   analyses: ProductIntelligenceAnalysis[];
   engineVersion?: string;
   generatedAt?: string;
+  verification?: ProductIntelligenceOpenAiVerification;
   upstreamStatus?: number;
   error?:
     | 'product_intelligence_not_configured'
