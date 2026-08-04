@@ -58,6 +58,22 @@ export type ProductIntelligenceOpenAiUsage = {
   totalTokens: number;
 };
 
+export type ProductIntelligenceOpenAiCost = {
+  allowed: boolean;
+  reason: string;
+  estimatedMaximumUsd: number;
+  requestLimitUsd: number;
+  dailyLimitUsd: number;
+  spentTodayUsd: number;
+  remainingTodayUsd: number;
+  actualUsd: number;
+  inputUsd: number;
+  cachedInputUsd: number;
+  outputUsd: number;
+  currency: 'USD';
+  pricingVersion: 'gpt-5.6-luna-2026-08';
+};
+
 export type ProductIntelligenceOpenAiVerification = {
   enabled: boolean;
   attempted: boolean;
@@ -68,6 +84,7 @@ export type ProductIntelligenceOpenAiVerification = {
   cacheHit: boolean;
   products: ProductIntelligenceOpenAiProductResearch[];
   usage?: ProductIntelligenceOpenAiUsage;
+  cost: ProductIntelligenceOpenAiCost;
   error?: string;
 };
 
@@ -110,7 +127,7 @@ export type ProductIntelligenceBatchResponse = {
   engineVersion: string;
   generatedAt: string;
   analyses: ProductIntelligenceAnalysis[];
-  verification?: ProductIntelligenceOpenAiVerification;
+  verification: ProductIntelligenceOpenAiVerification;
 };
 
 export type ProductIntelligenceLookupResult = {
