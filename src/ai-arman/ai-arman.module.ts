@@ -3,6 +3,8 @@ import { AiArmanController } from './ai-arman.controller';
 import { AiArmanService } from './ai-arman.service';
 import { ChatPreviewService } from './chat/chat-preview.service';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
+import { ProductIntelligenceEnrichmentService } from './discovery/product-intelligence-enrichment.service';
+import { ProductIntelligenceClient } from './integrations/product-intelligence.client';
 import { SearchBrainClient } from './integrations/search-brain.client';
 import { RecommendationScoringService } from './recommendation/recommendation-scoring.service';
 
@@ -12,6 +14,8 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     AiArmanService,
     ChatPreviewService,
     ProductDiscoveryService,
+    ProductIntelligenceEnrichmentService,
+    ProductIntelligenceClient,
     SearchBrainClient,
     RecommendationScoringService,
   ],
@@ -19,6 +23,8 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     AiArmanService,
     ChatPreviewService,
     ProductDiscoveryService,
+    ProductIntelligenceEnrichmentService,
+    ProductIntelligenceClient,
     SearchBrainClient,
     RecommendationScoringService,
   ],
