@@ -1,0 +1,59 @@
+name: AI Arman foundation CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/ai-arman-foundation-ci.yml'
+      - 'docs/ai-arman/**'
+      - 'src/ai-arman/**'
+      - 'src/app.module.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'tsconfig.build.json'
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - '.github/workflows/ai-arman-foundation-ci.yml'
+      - 'docs/ai-arman/**'
+      - 'src/ai-arman/**'
+      - 'src/app.module.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'tsconfig.build.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-arman-foundation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test -- --runInBand
+
+      - name: Build TypeScript
+        run: npm run build
