@@ -70,6 +70,10 @@ export class ProductIntelligenceClient {
       if (
         body.contractVersion !== PRODUCT_INTELLIGENCE_CONTRACT_VERSION
         || !Array.isArray(body.analyses)
+        || !body.verification
+        || typeof body.verification !== 'object'
+        || !body.verification.cost
+        || typeof body.verification.cost !== 'object'
       ) {
         return {
           ok: false,
