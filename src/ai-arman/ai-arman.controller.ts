@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { AiArmanService } from './ai-arman.service';
 import { ChatConversationService } from './chat/chat-conversation.service';
-import type { AiArmanChatRequest } from './chat/chat-messages.types';
+import { ChatRequestParser } from './chat/chat-request.parser';
 import { ChatPreviewService } from './chat/chat-preview.service';
 import type { ChatPreviewRequest } from './chat/chat-preview.types';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
@@ -14,6 +14,7 @@ export class AiArmanController {
   constructor(
     private readonly aiArmanService: AiArmanService,
     private readonly chatConversationService: ChatConversationService,
+    private readonly chatRequestParser: ChatRequestParser,
     private readonly chatPreviewService: ChatPreviewService,
     private readonly productDiscoveryService: ProductDiscoveryService,
     private readonly productIntelligenceEnrichmentService: ProductIntelligenceEnrichmentService,
@@ -25,8 +26,9 @@ export class AiArmanController {
   }
 
   @Post('chat/messages')
-  createChatMessage(@Body() body: AiArmanChatRequest) {
-    return this.chatConversationService.handleWithShadow(body);
+  createChatMessage(@Body() body: unknown) {
+    const request = this.chatRequestParser.parse(body);
+    return this.chatConversationService.handleWithShadow(request);
   }
 
   @Get('products/discover')
