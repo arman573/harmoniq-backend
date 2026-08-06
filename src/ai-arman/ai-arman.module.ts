@@ -8,6 +8,7 @@ import {
 import { ChatConversationResultStore } from './chat/chat-conversation-result.store';
 import { ChatConversationStateStore } from './chat/chat-conversation-state.store';
 import { ChatConversationService } from './chat/chat-conversation.service';
+import { ChatInterpretationValidator } from './chat/chat-interpretation.validator';
 import { ChatMessagesService } from './chat/chat-messages.service';
 import { ChatPreviewService } from './chat/chat-preview.service';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
@@ -31,6 +32,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
       useExisting: ChatConversationStateStore,
     },
     ChatConversationService,
+    ChatInterpretationValidator,
     ChatMessagesService,
     ChatPreviewService,
     ProductDiscoveryService,
@@ -44,6 +46,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ChatConversationResultRepository,
     ChatConversationStateRepository,
     ChatConversationService,
+    ChatInterpretationValidator,
     ChatMessagesService,
     ChatPreviewService,
     ProductDiscoveryService,
