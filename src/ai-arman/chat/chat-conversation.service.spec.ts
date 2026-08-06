@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { ChatConversationResultStore } from './chat-conversation-result.store';
 import { ChatConversationStateStore } from './chat-conversation-state.store';
 import { ChatConversationService } from './chat-conversation.service';
 import { ChatMessagesService } from './chat-messages.service';
@@ -9,6 +10,7 @@ describe('ChatConversationService', () => {
     return new ChatConversationService(
       new ChatMessagesService(),
       new ChatConversationStateStore(),
+      new ChatConversationResultStore(),
     );
   }
 
@@ -48,6 +50,39 @@ describe('ChatConversationService', () => {
       'analyze_product_suitability',
       'get_product_live_facts',
     ]);
+  });
+
+  it('returns the original response for an identical repeated client message', () => {
+    const service = createService();
+    const request = {
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'repeat-1',
+      message: { text: 'Jag har tunt hår och söker schampo.' },
+    } as const;
+
+    const first = service.handle(request);
+    const repeated = service.handle(request);
+
+    expect(repeated).toEqual(first);
+    expect(repeated.serverMessageId).toBe(first.serverMessageId);
+    expect(repeated.conversationId).toBe(first.conversationId);
+  });
+
+  it('rejects reuse of a client message ID with changed content', () => {
+    const service = createService();
+    service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'conflict-1',
+      message: { text: 'Schampo för torrt hår' },
+    });
+
+    expect(() =>
+      service.handle({
+        contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+        clientMessageId: 'conflict-1',
+        message: { text: 'Balsam för fett hår' },
+      }),
+    ).toThrow('client_message_id_conflict');
   });
 
   it('keeps conversation state isolated between conversation IDs', () => {
