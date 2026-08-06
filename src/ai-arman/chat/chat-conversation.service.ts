@@ -1,8 +1,13 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Optional,
+} from '@nestjs/common';
 import {
   ChatConversationResultRepository,
   ChatConversationStateRepository,
 } from './chat-conversation.repositories';
+import { ChatInterpretationShadowOrchestrator } from './chat-interpretation-shadow-orchestrator.service';
 import { ChatMessagesService } from './chat-messages.service';
 import type {
   AiArmanChatRequest,
@@ -14,15 +19,43 @@ import type {
   AiArmanResponseBlock,
 } from './chat-messages.types';
 
+type ProcessedChatMessage = {
+  response: AiArmanChatResponse;
+  previousState: AiArmanConversationState | null;
+  replayed: boolean;
+};
+
 @Injectable()
 export class ChatConversationService {
   constructor(
     private readonly messages: ChatMessagesService,
     private readonly stateStore: ChatConversationStateRepository,
     private readonly resultStore: ChatConversationResultRepository,
+    @Optional()
+    private readonly shadowOrchestrator?: ChatInterpretationShadowOrchestrator,
   ) {}
 
   handle(input: AiArmanChatRequest): AiArmanChatResponse {
+    return this.process(input).response;
+  }
+
+  async handleWithShadow(
+    input: AiArmanChatRequest,
+  ): Promise<AiArmanChatResponse> {
+    const processed = this.process(input);
+
+    if (!processed.replayed && this.shadowOrchestrator) {
+      await this.shadowOrchestrator.run(processed.response.interpretation, {
+        text: input.message.text,
+        locale: 'sv-SE',
+        previousState: processed.previousState,
+      });
+    }
+
+    return processed.response;
+  }
+
+  private process(input: AiArmanChatRequest): ProcessedChatMessage {
     const idempotencyKey = this.createIdempotencyKey(input);
     const fingerprint = this.createRequestFingerprint(input);
     const stored = this.resultStore.get(idempotencyKey);
@@ -31,15 +64,34 @@ export class ChatConversationService {
       if (stored.fingerprint !== fingerprint) {
         throw new BadRequestException('client_message_id_conflict');
       }
-      return stored.response;
+      return {
+        response: stored.response,
+        previousState: null,
+        replayed: true,
+      };
     }
 
-    const previous = this.loadPreviousState(input);
+    const previousState = this.loadPreviousState(input);
     const current = this.messages.handle(input);
-    const interpretation = this.mergeInterpretation(current.interpretation, previous);
-    const decision = this.decideFromMergedInterpretation(current.decision, interpretation);
-    const state = this.mergeState(current.state, previous, interpretation, decision);
-    const blocks = this.composeBlocks(current.blocks, interpretation, decision);
+    const interpretation = this.mergeInterpretation(
+      current.interpretation,
+      previousState,
+    );
+    const decision = this.decideFromMergedInterpretation(
+      current.decision,
+      interpretation,
+    );
+    const state = this.mergeState(
+      current.state,
+      previousState,
+      interpretation,
+      decision,
+    );
+    const blocks = this.composeBlocks(
+      current.blocks,
+      interpretation,
+      decision,
+    );
 
     this.stateStore.save(state);
 
@@ -51,7 +103,15 @@ export class ChatConversationService {
       blocks,
     };
 
-    return this.resultStore.save(idempotencyKey, fingerprint, response);
+    return {
+      response: this.resultStore.save(
+        idempotencyKey,
+        fingerprint,
+        response,
+      ),
+      previousState,
+      replayed: false,
+    };
   }
 
   private createIdempotencyKey(input: AiArmanChatRequest) {
@@ -69,7 +129,9 @@ export class ChatConversationService {
     });
   }
 
-  private loadPreviousState(input: AiArmanChatRequest): AiArmanConversationState | null {
+  private loadPreviousState(
+    input: AiArmanChatRequest,
+  ): AiArmanConversationState | null {
     const conversationId = input.conversationId?.trim();
     if (!conversationId) return null;
 
@@ -101,7 +163,9 @@ export class ChatConversationService {
       ...current.entities.productReferences,
     ]);
     const orderReference =
-      current.entities.orderReference ?? previous?.remembered.orderReference ?? null;
+      current.entities.orderReference ??
+      previous?.remembered.orderReference ??
+      null;
 
     const productJourneyContinues =
       previous?.activeJourney === 'before_purchase' ||
@@ -116,7 +180,10 @@ export class ChatConversationService {
       (field) => field !== 'requestedProductType',
     );
 
-    if (primaryIntent === 'product_recommendation' && requestedProductTypes.length === 0) {
+    if (
+      primaryIntent === 'product_recommendation' &&
+      requestedProductTypes.length === 0
+    ) {
       missingFields.unshift('requestedProductType');
     }
 
@@ -156,7 +223,11 @@ export class ChatConversationService {
       owner: 'backend_policy',
       route: 'recommendation',
       plannedTools: ready
-        ? ['search_products', 'analyze_product_suitability', 'get_product_live_facts']
+        ? [
+            'search_products',
+            'analyze_product_suitability',
+            'get_product_live_facts',
+          ]
         : [],
       executionStatus: 'not_executed_foundation',
       requiresIdentity: false,
@@ -173,7 +244,9 @@ export class ChatConversationService {
     interpretation: AiArmanInterpretation,
     decision: AiArmanDecision,
   ): AiArmanConversationState {
-    const pendingQuestion = interpretation.missingFields.includes('requestedProductType')
+    const pendingQuestion = interpretation.missingFields.includes(
+      'requestedProductType',
+    )
       ? {
           id: 'requested-product-type',
           expectedField: 'requestedProductType',
@@ -247,6 +320,8 @@ function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
-export function isSupportedProductType(value: string): value is AiArmanProductType {
+export function isSupportedProductType(
+  value: string,
+): value is AiArmanProductType {
   return ['shampoo', 'conditioner', 'hair_mask', 'leave_in'].includes(value);
 }
