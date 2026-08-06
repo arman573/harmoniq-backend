@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { ChatConversationResultStore } from './chat-conversation-result.store';
-import { ChatConversationStateStore } from './chat-conversation-state.store';
+import {
+  ChatConversationResultRepository,
+  ChatConversationStateRepository,
+} from './chat-conversation.repositories';
 import { ChatMessagesService } from './chat-messages.service';
 import type {
   AiArmanChatRequest,
@@ -16,8 +18,8 @@ import type {
 export class ChatConversationService {
   constructor(
     private readonly messages: ChatMessagesService,
-    private readonly stateStore: ChatConversationStateStore,
-    private readonly resultStore: ChatConversationResultStore,
+    private readonly stateStore: ChatConversationStateRepository,
+    private readonly resultStore: ChatConversationResultRepository,
   ) {}
 
   handle(input: AiArmanChatRequest): AiArmanChatResponse {
@@ -34,14 +36,8 @@ export class ChatConversationService {
 
     const previous = this.loadPreviousState(input);
     const current = this.messages.handle(input);
-    const interpretation = this.mergeInterpretation(
-      current.interpretation,
-      previous,
-    );
-    const decision = this.decideFromMergedInterpretation(
-      current.decision,
-      interpretation,
-    );
+    const interpretation = this.mergeInterpretation(current.interpretation, previous);
+    const decision = this.decideFromMergedInterpretation(current.decision, interpretation);
     const state = this.mergeState(current.state, previous, interpretation, decision);
     const blocks = this.composeBlocks(current.blocks, interpretation, decision);
 
@@ -73,9 +69,7 @@ export class ChatConversationService {
     });
   }
 
-  private loadPreviousState(
-    input: AiArmanChatRequest,
-  ): AiArmanConversationState | null {
+  private loadPreviousState(input: AiArmanChatRequest): AiArmanConversationState | null {
     const conversationId = input.conversationId?.trim();
     if (!conversationId) return null;
 
@@ -107,9 +101,7 @@ export class ChatConversationService {
       ...current.entities.productReferences,
     ]);
     const orderReference =
-      current.entities.orderReference ??
-      previous?.remembered.orderReference ??
-      null;
+      current.entities.orderReference ?? previous?.remembered.orderReference ?? null;
 
     const productJourneyContinues =
       previous?.activeJourney === 'before_purchase' ||
@@ -164,11 +156,7 @@ export class ChatConversationService {
       owner: 'backend_policy',
       route: 'recommendation',
       plannedTools: ready
-        ? [
-            'search_products',
-            'analyze_product_suitability',
-            'get_product_live_facts',
-          ]
+        ? ['search_products', 'analyze_product_suitability', 'get_product_live_facts']
         : [],
       executionStatus: 'not_executed_foundation',
       requiresIdentity: false,
@@ -185,9 +173,7 @@ export class ChatConversationService {
     interpretation: AiArmanInterpretation,
     decision: AiArmanDecision,
   ): AiArmanConversationState {
-    const pendingQuestion = interpretation.missingFields.includes(
-      'requestedProductType',
-    )
+    const pendingQuestion = interpretation.missingFields.includes('requestedProductType')
       ? {
           id: 'requested-product-type',
           expectedField: 'requestedProductType',
@@ -261,8 +247,6 @@ function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
-export function isSupportedProductType(
-  value: string,
-): value is AiArmanProductType {
+export function isSupportedProductType(value: string): value is AiArmanProductType {
   return ['shampoo', 'conditioner', 'hair_mask', 'leave_in'].includes(value);
 }
