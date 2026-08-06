@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { AiArmanService } from './ai-arman.service';
+import { ChatMessagesService } from './chat/chat-messages.service';
+import type { AiArmanChatRequest } from './chat/chat-messages.types';
 import { ChatPreviewService } from './chat/chat-preview.service';
 import type { ChatPreviewRequest } from './chat/chat-preview.types';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
@@ -11,6 +13,7 @@ import type { RecommendationCandidate } from './recommendation/recommendation.ty
 export class AiArmanController {
   constructor(
     private readonly aiArmanService: AiArmanService,
+    private readonly chatMessagesService: ChatMessagesService,
     private readonly chatPreviewService: ChatPreviewService,
     private readonly productDiscoveryService: ProductDiscoveryService,
     private readonly productIntelligenceEnrichmentService: ProductIntelligenceEnrichmentService,
@@ -19,6 +22,11 @@ export class AiArmanController {
   @Get('foundation')
   getFoundationStatus() {
     return this.aiArmanService.getFoundationStatus();
+  }
+
+  @Post('chat/messages')
+  createChatMessage(@Body() body: AiArmanChatRequest) {
+    return this.chatMessagesService.handle(body);
   }
 
   @Get('products/discover')
