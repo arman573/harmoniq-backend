@@ -26,7 +26,7 @@ export class AiArmanController {
 
   @Post('chat/messages')
   createChatMessage(@Body() body: AiArmanChatRequest) {
-    return this.chatConversationService.handle(body);
+    return this.chatConversationService.handleWithShadow(body);
   }
 
   @Get('products/discover')
