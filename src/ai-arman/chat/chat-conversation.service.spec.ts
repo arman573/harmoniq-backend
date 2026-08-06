@@ -7,6 +7,7 @@ import {
 import { ChatConversationResultStore } from './chat-conversation-result.store';
 import { ChatConversationStateStore } from './chat-conversation-state.store';
 import { ChatConversationService } from './chat-conversation.service';
+import type { ChatInterpretationShadowOrchestrator } from './chat-interpretation-shadow-orchestrator.service';
 import { ChatMessagesService } from './chat-messages.service';
 import {
   AI_ARMAN_CHAT_CONTRACT_VERSION,
@@ -15,11 +16,14 @@ import {
 } from './chat-messages.types';
 
 describe('ChatConversationService', () => {
-  function createService() {
+  function createService(
+    shadowOrchestrator?: ChatInterpretationShadowOrchestrator,
+  ) {
     return new ChatConversationService(
       new ChatMessagesService(),
       new ChatConversationStateStore(),
       new ChatConversationResultStore(),
+      shadowOrchestrator,
     );
   }
 
@@ -73,6 +77,49 @@ describe('ChatConversationService', () => {
     expect(repeated).toEqual(first);
     expect(repeated.serverMessageId).toBe(first.serverMessageId);
     expect(repeated.conversationId).toBe(first.conversationId);
+  });
+
+  it('returns the same customer response when passive shadow handling is used', async () => {
+    const run = jest.fn().mockResolvedValue({
+      status: 'disabled',
+      comparison: null,
+    });
+    const service = createService({ run } as unknown as ChatInterpretationShadowOrchestrator);
+    const request = {
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'shadow-passive-1',
+      message: { text: 'Jag söker schampo för tunt hår.' },
+    } as const;
+
+    const response = await service.handleWithShadow(request);
+
+    expect(response.interpretation.source).toBe('deterministic_fallback');
+    expect(response.safety.aiModelUsed).toBe(false);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith(response.interpretation, {
+      text: request.message.text,
+      locale: 'sv-SE',
+      previousState: null,
+    });
+  });
+
+  it('does not run shadow evaluation again for an idempotent replay', async () => {
+    const run = jest.fn().mockResolvedValue({
+      status: 'disabled',
+      comparison: null,
+    });
+    const service = createService({ run } as unknown as ChatInterpretationShadowOrchestrator);
+    const request = {
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'shadow-replay-1',
+      message: { text: 'Jag söker balsam för färgat hår.' },
+    } as const;
+
+    const first = await service.handleWithShadow(request);
+    const repeated = await service.handleWithShadow(request);
+
+    expect(repeated).toEqual(first);
+    expect(run).toHaveBeenCalledTimes(1);
   });
 
   it('rejects reuse of a client message ID with changed content', () => {
