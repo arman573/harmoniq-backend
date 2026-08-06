@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { ChatConversationStateRepository } from './chat-conversation.repositories';
 import type { AiArmanConversationState } from './chat-messages.types';
 
 @Injectable()
-export class ChatConversationStateStore {
+export class ChatConversationStateStore extends ChatConversationStateRepository {
   private readonly states = new Map<string, AiArmanConversationState>();
 
   get(conversationId: string): AiArmanConversationState | null {
@@ -27,8 +28,6 @@ function cloneState(state: AiArmanConversationState): AiArmanConversationState {
       exclusions: [...state.remembered.exclusions],
       productReferences: [...state.remembered.productReferences],
     },
-    pendingQuestion: state.pendingQuestion
-      ? { ...state.pendingQuestion }
-      : null,
+    pendingQuestion: state.pendingQuestion ? { ...state.pendingQuestion } : null,
   };
 }
