@@ -201,7 +201,7 @@ export class ChatMessagesService {
     interpretation: AiArmanInterpretation,
     decision: AiArmanDecision,
   ): AiArmanConversationState {
-    const question = buildQuestion(interpreationQuestionField(interpretation));
+    const question = buildQuestion(interpretationQuestionField(interpretation));
     return {
       stateVersion: AI_ARMAN_CONVERSATION_STATE_VERSION,
       conversationId,
@@ -225,7 +225,7 @@ export class ChatMessagesService {
     interpretation: AiArmanInterpretation,
     decision: AiArmanDecision,
   ): AiArmanResponseBlock[] {
-    const question = buildQuestion(interpreationQuestionField(interpretation));
+    const question = buildQuestion(interpretationQuestionField(interpretation));
     if (question) {
       return [
         {
@@ -338,8 +338,8 @@ function detectIntent(
 function detectNeeds(value: string) {
   const needs: string[] = [];
   const signals: Array<[RegExp, string]> = [
-    [/tunt har/, 'thin_hair'],
-    [/fargat har/, 'color_treated_hair'],
+    [/\btunt\b/, 'thin_hair'],
+    [/\bfargat\b/, 'color_treated_hair'],
     [/fett snabbt|fet harbotten/, 'oily_scalp'],
     [/torra langder|torrt har/, 'dry_lengths'],
     [/friss|frizz/, 'frizz_control'],
@@ -370,7 +370,7 @@ function journeyForIntent(intent: AiArmanIntent): AiArmanJourney {
   return 'general';
 }
 
-function interpreationQuestionField(interpretation: AiArmanInterpretation) {
+function interpretationQuestionField(interpretation: AiArmanInterpretation) {
   return interpretation.missingFields[0] ?? null;
 }
 
