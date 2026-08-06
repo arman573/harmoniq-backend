@@ -1,9 +1,18 @@
 import { BadRequestException } from '@nestjs/common';
+import {
+  ChatConversationResultRepository,
+  ChatConversationStateRepository,
+  type StoredChatResult,
+} from './chat-conversation.repositories';
 import { ChatConversationResultStore } from './chat-conversation-result.store';
 import { ChatConversationStateStore } from './chat-conversation-state.store';
 import { ChatConversationService } from './chat-conversation.service';
 import { ChatMessagesService } from './chat-messages.service';
-import { AI_ARMAN_CHAT_CONTRACT_VERSION } from './chat-messages.types';
+import {
+  AI_ARMAN_CHAT_CONTRACT_VERSION,
+  type AiArmanChatResponse,
+  type AiArmanConversationState,
+} from './chat-messages.types';
 
 describe('ChatConversationService', () => {
   function createService() {
@@ -24,9 +33,7 @@ describe('ChatConversationService', () => {
 
     expect(first.interpretation.primaryIntent).toBe('product_recommendation');
     expect(first.state.status).toBe('collecting');
-    expect(first.state.pendingQuestion?.expectedField).toBe(
-      'requestedProductType',
-    );
+    expect(first.state.pendingQuestion?.expectedField).toBe('requestedProductType');
     expect(first.state.remembered.needs).toEqual(
       expect.arrayContaining(['color_treated_hair', 'dry_lengths']),
     );
@@ -122,5 +129,50 @@ describe('ChatConversationService', () => {
         message: { text: 'Schampo' },
       }),
     ).toThrow(BadRequestException);
+  });
+
+  it('works against repository contracts without depending on Map stores', () => {
+    class TestStateRepository extends ChatConversationStateRepository {
+      state: AiArmanConversationState | null = null;
+
+      get(conversationId: string) {
+        return this.state?.conversationId === conversationId ? this.state : null;
+      }
+
+      save(state: AiArmanConversationState) {
+        this.state = state;
+        return state;
+      }
+    }
+
+    class TestResultRepository extends ChatConversationResultRepository {
+      result: StoredChatResult | null = null;
+
+      get() {
+        return this.result;
+      }
+
+      save(_key: string, fingerprint: string, response: AiArmanChatResponse) {
+        this.result = { fingerprint, response };
+        return response;
+      }
+    }
+
+    const stateRepository = new TestStateRepository();
+    const resultRepository = new TestResultRepository();
+    const service = new ChatConversationService(
+      new ChatMessagesService(),
+      stateRepository,
+      resultRepository,
+    );
+
+    const response = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'repository-contract-1',
+      message: { text: 'Jag söker balsam för tunt hår.' },
+    });
+
+    expect(stateRepository.state?.conversationId).toBe(response.conversationId);
+    expect(resultRepository.result?.response).toEqual(response);
   });
 });
