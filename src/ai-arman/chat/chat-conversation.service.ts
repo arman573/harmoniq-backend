@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { ChatConversationResultStore } from './chat-conversation-result.store';
 import { ChatConversationStateStore } from './chat-conversation-state.store';
 import { ChatMessagesService } from './chat-messages.service';
 import type {
@@ -16,9 +17,21 @@ export class ChatConversationService {
   constructor(
     private readonly messages: ChatMessagesService,
     private readonly stateStore: ChatConversationStateStore,
+    private readonly resultStore: ChatConversationResultStore,
   ) {}
 
   handle(input: AiArmanChatRequest): AiArmanChatResponse {
+    const idempotencyKey = this.createIdempotencyKey(input);
+    const fingerprint = this.createRequestFingerprint(input);
+    const stored = this.resultStore.get(idempotencyKey);
+
+    if (stored) {
+      if (stored.fingerprint !== fingerprint) {
+        throw new BadRequestException('client_message_id_conflict');
+      }
+      return stored.response;
+    }
+
     const previous = this.loadPreviousState(input);
     const current = this.messages.handle(input);
     const interpretation = this.mergeInterpretation(
@@ -34,13 +47,30 @@ export class ChatConversationService {
 
     this.stateStore.save(state);
 
-    return {
+    const response = {
       ...current,
       interpretation,
       decision,
       state,
       blocks,
     };
+
+    return this.resultStore.save(idempotencyKey, fingerprint, response);
+  }
+
+  private createIdempotencyKey(input: AiArmanChatRequest) {
+    const scope = input.conversationId?.trim() || 'new-conversation';
+    return `${scope}:${input.clientMessageId.trim()}`;
+  }
+
+  private createRequestFingerprint(input: AiArmanChatRequest) {
+    return JSON.stringify({
+      contractVersion: input.contractVersion,
+      conversationId: input.conversationId?.trim() || null,
+      clientMessageId: input.clientMessageId.trim(),
+      messageText: input.message?.text?.trim() || '',
+      context: input.context ?? null,
+    });
   }
 
   private loadPreviousState(
