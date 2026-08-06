@@ -46,7 +46,7 @@ export type AiArmanProductType =
 
 export type AiArmanInterpretation = {
   schemaVersion: 'ai-arman-interpretation-v1';
-  source: 'deterministic_fallback';
+  source: 'deterministic_fallback' | 'model_candidate';
   locale: 'sv-SE';
   primaryIntent: AiArmanIntent;
   secondaryIntents: AiArmanIntent[];
