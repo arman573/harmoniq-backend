@@ -17,6 +17,7 @@ import { ChatInterpretationShadowService } from './chat/chat-interpretation-shad
 import { ChatInterpretationValidator } from './chat/chat-interpretation.validator';
 import { ChatMessagesService } from './chat/chat-messages.service';
 import { ChatPreviewService } from './chat/chat-preview.service';
+import { ChatRequestParser } from './chat/chat-request.parser';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
 import { ProductIntelligenceEnrichmentService } from './discovery/product-intelligence-enrichment.service';
 import { ProductIntelligenceClient } from './integrations/product-intelligence.client';
@@ -48,6 +49,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ChatInterpretationValidator,
     ChatMessagesService,
     ChatPreviewService,
+    ChatRequestParser,
     ProductDiscoveryService,
     ProductIntelligenceEnrichmentService,
     ProductIntelligenceClient,
@@ -65,6 +67,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ChatInterpretationValidator,
     ChatMessagesService,
     ChatPreviewService,
+    ChatRequestParser,
     ProductDiscoveryService,
     ProductIntelligenceEnrichmentService,
     ProductIntelligenceClient,
