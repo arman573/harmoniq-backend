@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AiArmanController } from './ai-arman.controller';
 import { AiArmanService } from './ai-arman.service';
+import { ChatConversationStateStore } from './chat/chat-conversation-state.store';
+import { ChatConversationService } from './chat/chat-conversation.service';
 import { ChatMessagesService } from './chat/chat-messages.service';
 import { ChatPreviewService } from './chat/chat-preview.service';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
@@ -13,6 +15,8 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
   controllers: [AiArmanController],
   providers: [
     AiArmanService,
+    ChatConversationStateStore,
+    ChatConversationService,
     ChatMessagesService,
     ChatPreviewService,
     ProductDiscoveryService,
@@ -23,6 +27,8 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
   ],
   exports: [
     AiArmanService,
+    ChatConversationStateStore,
+    ChatConversationService,
     ChatMessagesService,
     ChatPreviewService,
     ProductDiscoveryService,
