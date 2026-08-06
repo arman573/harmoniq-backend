@@ -1,13 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import {
+  ChatConversationResultRepository,
+  type StoredChatResult,
+} from './chat-conversation.repositories';
 import type { AiArmanChatResponse } from './chat-messages.types';
 
-type StoredChatResult = {
-  fingerprint: string;
-  response: AiArmanChatResponse;
-};
-
 @Injectable()
-export class ChatConversationResultStore {
+export class ChatConversationResultStore extends ChatConversationResultRepository {
   private readonly results = new Map<string, StoredChatResult>();
 
   get(key: string): StoredChatResult | null {
