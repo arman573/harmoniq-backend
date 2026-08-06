@@ -8,6 +8,11 @@ import {
 import { ChatConversationResultStore } from './chat/chat-conversation-result.store';
 import { ChatConversationStateStore } from './chat/chat-conversation-state.store';
 import { ChatConversationService } from './chat/chat-conversation.service';
+import {
+  ChatInterpretationShadowConfig,
+  DisabledChatInterpretationShadowConfig,
+} from './chat/chat-interpretation-shadow.config';
+import { ChatInterpretationShadowOrchestrator } from './chat/chat-interpretation-shadow-orchestrator.service';
 import { ChatInterpretationShadowService } from './chat/chat-interpretation-shadow.service';
 import { ChatInterpretationValidator } from './chat/chat-interpretation.validator';
 import { ChatMessagesService } from './chat/chat-messages.service';
@@ -24,6 +29,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     AiArmanService,
     ChatConversationResultStore,
     ChatConversationStateStore,
+    DisabledChatInterpretationShadowConfig,
     {
       provide: ChatConversationResultRepository,
       useExisting: ChatConversationResultStore,
@@ -32,7 +38,12 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
       provide: ChatConversationStateRepository,
       useExisting: ChatConversationStateStore,
     },
+    {
+      provide: ChatInterpretationShadowConfig,
+      useExisting: DisabledChatInterpretationShadowConfig,
+    },
     ChatConversationService,
+    ChatInterpretationShadowOrchestrator,
     ChatInterpretationShadowService,
     ChatInterpretationValidator,
     ChatMessagesService,
@@ -48,6 +59,8 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ChatConversationResultRepository,
     ChatConversationStateRepository,
     ChatConversationService,
+    ChatInterpretationShadowConfig,
+    ChatInterpretationShadowOrchestrator,
     ChatInterpretationShadowService,
     ChatInterpretationValidator,
     ChatMessagesService,
