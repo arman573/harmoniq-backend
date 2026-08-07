@@ -6,6 +6,12 @@ export type AiArmanInterpretationProviderInput = {
   previousState: AiArmanConversationState | null;
 };
 
+export type AiArmanInterpretationProviderMetadata = {
+  provider: string;
+  modelVersion: string;
+  promptVersion: string;
+};
+
 export type AiArmanInterpretationProviderUsage = {
   inputTokens: number;
   outputTokens: number;
@@ -18,6 +24,8 @@ export type AiArmanInterpretationProviderResult = {
 };
 
 export abstract class ChatInterpretationProvider {
+  abstract metadata(): AiArmanInterpretationProviderMetadata;
+
   abstract interpret(
     input: AiArmanInterpretationProviderInput,
   ): Promise<AiArmanInterpretationProviderResult>;
