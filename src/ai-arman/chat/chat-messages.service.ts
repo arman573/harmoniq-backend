@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   AI_ARMAN_CHAT_CONTRACT_VERSION,
@@ -23,7 +24,7 @@ export class ChatMessagesService {
     const text = input.message.text.trim();
     const normalized = normalizeText(text);
     const conversationId =
-      input.conversationId?.trim() || this.createStableId('conversation', input.clientMessageId);
+      input.conversationId?.trim() || this.createOpaqueId('conversation');
     const interpretation = this.interpret(normalized);
     const decision = this.decide(interpretation);
     const state = this.buildState(conversationId, interpretation, decision);
@@ -32,7 +33,7 @@ export class ChatMessagesService {
     return {
       contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
       conversationId,
-      serverMessageId: this.createStableId('message', input.clientMessageId),
+      serverMessageId: this.createOpaqueId('message'),
       interpretation,
       state,
       decision,
@@ -285,9 +286,8 @@ export class ChatMessagesService {
     ];
   }
 
-  private createStableId(prefix: string, clientMessageId: string) {
-    const normalized = clientMessageId.trim().replace(/[^a-zA-Z0-9_-]/g, '-');
-    return `${prefix}-${normalized}`;
+  private createOpaqueId(prefix: 'conversation' | 'message') {
+    return `${prefix}-${randomUUID()}`;
   }
 }
 
