@@ -1,0 +1,151 @@
+import { VendreProductLiveFactsClient } from './vendre-product-live-facts.client';
+
+const originalBaseUrl = process.env.VENDRE_API_BASE_URL;
+const originalApiKey = process.env.VENDRE_API_KEY;
+
+function requestProduct(productId = '123') {
+  return {
+    productId,
+    title: `Produkt ${productId}`,
+    canonicalUrl: `https://www.harmoniq.se/produkt-${productId}`,
+    imageUrl: `https://www.harmoniq.se/produkt-${productId}.jpg`,
+  };
+}
+
+describe('VendreProductLiveFactsClient', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (originalBaseUrl === undefined) delete process.env.VENDRE_API_BASE_URL;
+    else process.env.VENDRE_API_BASE_URL = originalBaseUrl;
+    if (originalApiKey === undefined) delete process.env.VENDRE_API_KEY;
+    else process.env.VENDRE_API_KEY = originalApiKey;
+  });
+
+  it('fails closed without Vendre configuration and makes no network call', async () => {
+    delete process.env.VENDRE_API_BASE_URL;
+    delete process.env.VENDRE_API_KEY;
+    const fetchSpy = jest.spyOn(global, 'fetch');
+    const client = new VendreProductLiveFactsClient();
+
+    const result = await client.getFacts([requestProduct()]);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: false,
+      configured: false,
+      readOnly: true,
+      source: 'not_configured',
+      requestedProductIds: ['123'],
+      facts: [],
+      missingProductIds: ['123'],
+      error: 'product_live_facts_not_configured',
+    });
+  });
+
+  it('uses GET with X-Authorization and maps verified Vendre facts', async () => {
+    process.env.VENDRE_API_BASE_URL = 'https://www.harmoniq.se';
+    process.env.VENDRE_API_KEY = 'test-key';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: 123,
+        name: { sv: 'Produkt 123' },
+        price: '100',
+        quantity: '2',
+        status: 1,
+        show: true,
+      }),
+    } as Response);
+    const client = new VendreProductLiveFactsClient();
+
+    const result = await client.getFacts([requestProduct()]);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(String(url)).toBe('https://www.harmoniq.se/API/1/products/123');
+    expect(init).toMatchObject({
+      method: 'GET',
+      redirect: 'error',
+      headers: {
+        Accept: 'application/json',
+        'X-Authorization': 'test-key',
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.facts).toHaveLength(1);
+    expect(result.facts[0]).toMatchObject({
+      productId: '123',
+      canonicalUrl: 'https://www.harmoniq.se/produkt-123',
+      title: 'Produkt 123',
+      imageUrl: 'https://www.harmoniq.se/produkt-123.jpg',
+      price: { amount: 125, currency: 'SEK' },
+      stock: { quantity: 2, availability: 'in_stock' },
+      active: true,
+      visible: true,
+      source: 'vendre',
+    });
+    expect(Number.isFinite(Date.parse(result.facts[0].fetchedAt))).toBe(true);
+  });
+
+  it('uses an active special price before adding Swedish standard VAT', async () => {
+    process.env.VENDRE_API_BASE_URL = 'https://www.harmoniq.se';
+    process.env.VENDRE_API_KEY = 'test-key';
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: 123,
+        name: { sv: 'Produkt 123' },
+        price: 100,
+        price_special: 80,
+        price_special_date_range: null,
+        quantity: 1,
+        status: true,
+        show: true,
+      }),
+    } as Response);
+    const client = new VendreProductLiveFactsClient();
+
+    const result = await client.getFacts([requestProduct()]);
+
+    expect(result.facts[0].price).toEqual({ amount: 100, currency: 'SEK' });
+  });
+
+  it('requires backend-owned storefront metadata instead of accepting bare ids', async () => {
+    process.env.VENDRE_API_BASE_URL = 'https://www.harmoniq.se';
+    process.env.VENDRE_API_KEY = 'test-key';
+    const fetchSpy = jest.spyOn(global, 'fetch');
+    const client = new VendreProductLiveFactsClient();
+
+    const result = await client.getFacts(['123']);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('product_live_facts_invalid_request');
+  });
+
+  it('fails closed when Vendre product identity does not match the request', async () => {
+    process.env.VENDRE_API_BASE_URL = 'https://www.harmoniq.se';
+    process.env.VENDRE_API_KEY = 'test-key';
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: 999,
+        name: { sv: 'Fel produkt' },
+        price: 100,
+        quantity: 2,
+        status: 1,
+        show: 1,
+      }),
+    } as Response);
+    const client = new VendreProductLiveFactsClient();
+
+    const result = await client.getFacts([requestProduct()]);
+
+    expect(result.ok).toBe(false);
+    expect(result.facts).toEqual([]);
+    expect(result.missingProductIds).toEqual(['123']);
+  });
+});
