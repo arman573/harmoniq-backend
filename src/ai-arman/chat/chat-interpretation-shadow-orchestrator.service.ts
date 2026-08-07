@@ -26,6 +26,10 @@ export type ChatInterpretationShadowRunResult =
       comparison: ChatInterpretationShadowComparison;
     }
   | {
+      status: 'provider_timeout';
+      comparison: null;
+    }
+  | {
       status: 'provider_error';
       comparison: null;
     };
@@ -52,13 +56,44 @@ export class ChatInterpretationShadowOrchestrator {
     }
 
     try {
-      const candidate = await this.provider.interpret(input);
+      const candidate = await withTimeout(
+        this.provider.interpret(input),
+        this.config.providerTimeoutMs(),
+      );
       return {
         status: 'completed',
         comparison: this.shadow.compare(deterministic, candidate),
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof ShadowProviderTimeoutError) {
+        return { status: 'provider_timeout', comparison: null };
+      }
       return { status: 'provider_error', comparison: null };
     }
   }
+}
+
+class ShadowProviderTimeoutError extends Error {
+  constructor() {
+    super('shadow_provider_timeout');
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new ShadowProviderTimeoutError());
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
 }
