@@ -3,7 +3,6 @@ import {
   ChatInterpretationProvider,
   type AiArmanInterpretationProviderInput,
   type AiArmanInterpretationProviderResult,
-  type AiArmanInterpretationProviderUsage,
 } from './chat-interpretation.provider';
 import {
   ChatInterpretationShadowConfig,
