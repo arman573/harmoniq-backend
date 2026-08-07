@@ -3,6 +3,7 @@ import {
   Injectable,
   Optional,
 } from '@nestjs/common';
+import { HaircareRecommendationJourneyService } from '../discovery/haircare-recommendation-journey.service';
 import {
   ChatConversationResultRepository,
   ChatConversationStateRepository,
@@ -23,7 +24,15 @@ type ProcessedChatMessage = {
   response: AiArmanChatResponse;
   previousState: AiArmanConversationState | null;
   replayed: boolean;
+  idempotencyKey: string;
+  fingerprint: string;
 };
+
+type RecommendationJourneyStatus =
+  | 'no_verified_candidates'
+  | 'live_facts_unavailable'
+  | 'no_verified_live_products'
+  | 'product_cards_ready';
 
 @Injectable()
 export class ChatConversationService {
@@ -33,6 +42,8 @@ export class ChatConversationService {
     private readonly resultStore: ChatConversationResultRepository,
     @Optional()
     private readonly shadowOrchestrator?: ChatInterpretationShadowOrchestrator,
+    @Optional()
+    private readonly recommendationJourney?: HaircareRecommendationJourneyService,
   ) {}
 
   handle(input: AiArmanChatRequest): AiArmanChatResponse {
@@ -44,12 +55,23 @@ export class ChatConversationService {
   ): Promise<AiArmanChatResponse> {
     const processed = this.process(input);
 
-    if (!processed.replayed && this.shadowOrchestrator) {
+    if (processed.replayed) {
+      return processed.response;
+    }
+
+    if (this.shadowOrchestrator) {
       await this.shadowOrchestrator.run(processed.response.interpretation, {
         text: input.message.text,
         locale: 'sv-SE',
         previousState: processed.previousState,
       });
+    }
+
+    if (
+      this.recommendationJourney &&
+      this.shouldExecuteRecommendationJourney(processed.response)
+    ) {
+      return this.executeRecommendationJourney(processed);
     }
 
     return processed.response;
@@ -68,6 +90,8 @@ export class ChatConversationService {
         response: stored.response,
         previousState: null,
         replayed: true,
+        idempotencyKey,
+        fingerprint,
       };
     }
 
@@ -111,7 +135,152 @@ export class ChatConversationService {
       ),
       previousState,
       replayed: false,
+      idempotencyKey,
+      fingerprint,
     };
+  }
+
+  private shouldExecuteRecommendationJourney(
+    response: AiArmanChatResponse,
+  ): boolean {
+    const requiredTools = [
+      'search_products',
+      'analyze_product_suitability',
+      'get_product_live_facts',
+    ] as const;
+
+    return (
+      response.interpretation.primaryIntent === 'product_recommendation' &&
+      response.interpretation.missingFields.length === 0 &&
+      response.state.status === 'ready_for_tools' &&
+      response.decision.owner === 'backend_policy' &&
+      response.decision.route === 'recommendation' &&
+      requiredTools.every((tool) => response.decision.plannedTools.includes(tool))
+    );
+  }
+
+  private async executeRecommendationJourney(
+    processed: ProcessedChatMessage,
+  ): Promise<AiArmanChatResponse> {
+    try {
+      const result = await this.recommendationJourney!.prepare(
+        processed.response.interpretation,
+      );
+      const status = result.status as RecommendationJourneyStatus;
+      const response = this.applyRecommendationJourneyResult(
+        processed.response,
+        status,
+      );
+
+      return this.resultStore.save(
+        processed.idempotencyKey,
+        processed.fingerprint,
+        response,
+      );
+    } catch {
+      const response: AiArmanChatResponse = {
+        ...processed.response,
+        decision: {
+          ...processed.response.decision,
+          executionStatus: 'failed_closed',
+          reasons: unique([
+            ...processed.response.decision.reasons,
+            'recommendation_journey_failed_closed',
+          ]),
+        },
+        blocks: [
+          {
+            type: 'message',
+            text: 'Jag kan inte verifiera rekommendationerna säkert just nu, så jag visar inga produkter.',
+          },
+          {
+            type: 'error_notice',
+            code: 'recommendation_temporarily_unavailable',
+            text: 'Produktrekommendationerna kunde inte verifieras just nu.',
+            retryable: true,
+          },
+        ],
+      };
+
+      return this.resultStore.save(
+        processed.idempotencyKey,
+        processed.fingerprint,
+        response,
+      );
+    }
+  }
+
+  private applyRecommendationJourneyResult(
+    response: AiArmanChatResponse,
+    status: RecommendationJourneyStatus,
+  ): AiArmanChatResponse {
+    const liveFactsUsed =
+      status === 'no_verified_live_products' || status === 'product_cards_ready';
+    const executionStatus =
+      status === 'live_facts_unavailable'
+        ? ('failed_closed' as const)
+        : ('executed_read_only' as const);
+
+    return {
+      ...response,
+      decision: {
+        ...response.decision,
+        executionStatus,
+        reasons: unique([
+          ...response.decision.reasons,
+          `recommendation_journey:${status}`,
+        ]),
+      },
+      blocks: this.composeRecommendationExecutionBlocks(status),
+      safety: {
+        ...response.safety,
+        liveFactsUsed,
+      },
+    };
+  }
+
+  private composeRecommendationExecutionBlocks(
+    status: RecommendationJourneyStatus,
+  ): AiArmanResponseBlock[] {
+    if (status === 'live_facts_unavailable') {
+      return [
+        {
+          type: 'message',
+          text: 'Jag kan inte verifiera aktuellt pris, lager och produktstatus just nu, så jag visar ingen rekommendation ännu.',
+        },
+        {
+          type: 'error_notice',
+          code: 'product_live_facts_unavailable',
+          text: 'Live produktfakta är inte tillgängliga just nu.',
+          retryable: true,
+        },
+      ];
+    }
+
+    if (status === 'no_verified_candidates') {
+      return [
+        {
+          type: 'message',
+          text: 'Jag hittade ingen produkt som klarade den fulla kvalitetsgranskningen. Jag visar hellre inget än en svag rekommendation.',
+        },
+      ];
+    }
+
+    if (status === 'no_verified_live_products') {
+      return [
+        {
+          type: 'message',
+          text: 'Kandidaterna klarade produktanalysen, men ingen kunde verifieras som aktiv, synlig och köpbar just nu.',
+        },
+      ];
+    }
+
+    return [
+      {
+        type: 'message',
+        text: 'Jag har verifierade produktalternativ, men produktkorten är ännu inte aktiverade i den vanliga chatten.',
+      },
+    ];
   }
 
   private createIdempotencyKey(input: AiArmanChatRequest) {
