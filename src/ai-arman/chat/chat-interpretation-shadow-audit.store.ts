@@ -13,6 +13,10 @@ export type ChatInterpretationShadowAuditRecord = {
     | 'provider_rate_limited'
     | 'provider_budget_exceeded'
     | 'provider_timeout'
+    | 'provider_authentication'
+    | 'provider_quota'
+    | 'provider_unavailable'
+    | 'provider_invalid_response'
     | 'provider_error';
   latencyMs: number | null;
   inputTokens: number | null;
