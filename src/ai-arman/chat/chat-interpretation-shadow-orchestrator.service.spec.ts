@@ -1,5 +1,8 @@
 import type { AiArmanConversationState } from './chat-messages.types';
-import { ChatInterpretationProvider } from './chat-interpretation.provider';
+import {
+  ChatInterpretationProvider,
+  type AiArmanInterpretationProviderResult,
+} from './chat-interpretation.provider';
 import { ChatInterpretationShadowConfig } from './chat-interpretation-shadow.config';
 import { ChatInterpretationShadowOrchestrator } from './chat-interpretation-shadow-orchestrator.service';
 import { ChatInterpretationShadowService } from './chat-interpretation-shadow.service';
@@ -56,11 +59,14 @@ class StaticConfig extends ChatInterpretationShadowConfig {
 class StubProvider extends ChatInterpretationProvider {
   calls = 0;
 
-  constructor(private readonly result: unknown, private readonly shouldThrow = false) {
+  constructor(
+    private readonly result: AiArmanInterpretationProviderResult,
+    private readonly shouldThrow = false,
+  ) {
     super();
   }
 
-  async interpret(): Promise<unknown> {
+  async interpret(): Promise<AiArmanInterpretationProviderResult> {
     this.calls += 1;
     if (this.shouldThrow) throw new Error('provider failed');
     return this.result;
@@ -70,7 +76,7 @@ class StubProvider extends ChatInterpretationProvider {
 class NeverProvider extends ChatInterpretationProvider {
   calls = 0;
 
-  async interpret(): Promise<unknown> {
+  async interpret(): Promise<AiArmanInterpretationProviderResult> {
     this.calls += 1;
     return new Promise(() => undefined);
   }
@@ -97,13 +103,26 @@ function candidate() {
   };
 }
 
+function providerResult(
+  usage: AiArmanInterpretationProviderResult['usage'] = {
+    inputTokens: 120,
+    outputTokens: 40,
+    estimatedCostUsd: 0.0012,
+  },
+): AiArmanInterpretationProviderResult {
+  return {
+    candidate: candidate(),
+    usage,
+  };
+}
+
 function shadowService() {
   return new ChatInterpretationShadowService(new ChatInterpretationValidator());
 }
 
 describe('ChatInterpretationShadowOrchestrator', () => {
   it('does not call the provider while shadow mode is disabled', async () => {
-    const provider = new StubProvider(candidate());
+    const provider = new StubProvider(providerResult());
     const orchestrator = new ChatInterpretationShadowOrchestrator(
       new StaticConfig(false),
       shadowService(),
@@ -129,8 +148,8 @@ describe('ChatInterpretationShadowOrchestrator', () => {
     });
   });
 
-  it('returns only comparison metrics for a valid candidate', async () => {
-    const provider = new StubProvider(candidate());
+  it('returns only comparison metrics plus normalized usage for a valid candidate', async () => {
+    const provider = new StubProvider(providerResult());
     const orchestrator = new ChatInterpretationShadowOrchestrator(
       new StaticConfig(true),
       shadowService(),
@@ -149,11 +168,21 @@ describe('ChatInterpretationShadowOrchestrator', () => {
         affectsTools: false,
       }),
     );
+    expect(result).toEqual(
+      expect.objectContaining({
+        usage: {
+          inputTokens: 120,
+          outputTokens: 40,
+          totalTokens: 160,
+          estimatedCostUsd: 0.0012,
+        },
+      }),
+    );
     expect(provider.calls).toBe(1);
   });
 
   it('contains provider errors without exposing them to the caller', async () => {
-    const provider = new StubProvider(null, true);
+    const provider = new StubProvider(providerResult(), true);
     const orchestrator = new ChatInterpretationShadowOrchestrator(
       new StaticConfig(true),
       shadowService(),
@@ -164,6 +193,23 @@ describe('ChatInterpretationShadowOrchestrator', () => {
       status: 'provider_error',
       comparison: null,
     });
+  });
+
+  it('fails closed when provider usage metadata is invalid', async () => {
+    const provider = new StubProvider(
+      providerResult({ inputTokens: -1, outputTokens: 10 }),
+    );
+    const orchestrator = new ChatInterpretationShadowOrchestrator(
+      new StaticConfig(true),
+      shadowService(),
+      provider,
+    );
+
+    await expect(orchestrator.run(deterministic, input)).resolves.toEqual({
+      status: 'provider_error',
+      comparison: null,
+    });
+    expect(provider.calls).toBe(1);
   });
 
   it('bounds provider latency and reports timeout without affecting authority', async () => {
@@ -182,7 +228,7 @@ describe('ChatInterpretationShadowOrchestrator', () => {
   });
 
   it('enforces the provider request budget before another model call', async () => {
-    const provider = new StubProvider(candidate());
+    const provider = new StubProvider(providerResult());
     const orchestrator = new ChatInterpretationShadowOrchestrator(
       new StaticConfig(true, undefined, 1),
       shadowService(),
