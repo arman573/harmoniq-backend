@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { ChatInterpretationValidator } from './chat-interpretation.validator';
 import type {
   AiArmanInterpretation,
@@ -34,8 +34,11 @@ export class ChatInterpretationShadowService {
 
     try {
       parsed = this.validator.parse(candidate);
-    } catch {
-      return invalidComparison();
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        return invalidComparison();
+      }
+      throw error;
     }
 
     return {
