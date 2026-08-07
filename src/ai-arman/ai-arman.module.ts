@@ -27,7 +27,10 @@ import { HaircareRecommendationJourneyService } from './discovery/haircare-recom
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
 import { ProductIntelligenceEnrichmentService } from './discovery/product-intelligence-enrichment.service';
 import { ProductIntelligenceClient } from './integrations/product-intelligence.client';
-import { ProductLiveFactsClient } from './integrations/product-live-facts.client';
+import {
+  DisabledProductLiveFactsClient,
+  ProductLiveFactsClient,
+} from './integrations/product-live-facts.client';
 import { SearchBrainClient } from './integrations/search-brain.client';
 import { ProductRecommendationCardService } from './recommendation/product-recommendation-card.service';
 import { RecommendationScoringService } from './recommendation/recommendation-scoring.service';
@@ -39,6 +42,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ChatConversationResultStore,
     ChatConversationStateStore,
     DisabledChatInterpretationShadowConfig,
+    DisabledProductLiveFactsClient,
     InMemoryChatInterpretationShadowAuditStore,
     {
       provide: ChatConversationResultRepository,
@@ -56,6 +60,10 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
       provide: ChatInterpretationShadowAuditSink,
       useExisting: InMemoryChatInterpretationShadowAuditStore,
     },
+    {
+      provide: ProductLiveFactsClient,
+      useExisting: DisabledProductLiveFactsClient,
+    },
     ChatConversationService,
     ChatInterpretationShadowOrchestrator,
     ChatInterpretationShadowService,
@@ -68,7 +76,6 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ProductDiscoveryService,
     ProductIntelligenceEnrichmentService,
     ProductIntelligenceClient,
-    ProductLiveFactsClient,
     ProductRecommendationCardService,
     SearchBrainClient,
     RecommendationScoringService,
