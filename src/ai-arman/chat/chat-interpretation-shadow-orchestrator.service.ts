@@ -1,6 +1,8 @@
 import { Injectable, Optional } from '@nestjs/common';
 import {
   ChatInterpretationProvider,
+  ChatInterpretationProviderError,
+  type AiArmanInterpretationProviderErrorCode,
   type AiArmanInterpretationProviderInput,
   type AiArmanInterpretationProviderMetadata,
   type AiArmanInterpretationProviderResult,
@@ -26,6 +28,12 @@ type ProviderUsageWindowEntry = {
   totalTokens: number;
   estimatedCostUsd: number;
 };
+
+type ClassifiedProviderStatus =
+  | 'provider_authentication'
+  | 'provider_quota'
+  | 'provider_unavailable'
+  | 'provider_invalid_response';
 
 export type ChatInterpretationShadowUsage = {
   inputTokens: number;
@@ -59,6 +67,10 @@ export type ChatInterpretationShadowRunResult =
     }
   | {
       status: 'provider_timeout';
+      comparison: null;
+    }
+  | {
+      status: ClassifiedProviderStatus;
       comparison: null;
     }
   | {
@@ -196,6 +208,21 @@ export class ChatInterpretationShadowOrchestrator {
         return { status: 'provider_timeout', comparison: null };
       }
 
+      if (error instanceof ChatInterpretationProviderError) {
+        const status = mapProviderErrorStatus(error.code);
+        this.recordAudit(metadata, {
+          status,
+          latencyMs,
+          inputTokens: null,
+          outputTokens: null,
+          totalTokens: null,
+          estimatedCostUsd: null,
+          candidateValid: null,
+          primaryIntentMatch: null,
+        });
+        return { status, comparison: null };
+      }
+
       this.recordAudit(metadata, {
         status: 'provider_error',
         latencyMs,
@@ -311,6 +338,21 @@ export class ChatInterpretationShadowOrchestrator {
 class ShadowProviderTimeoutError extends Error {
   constructor() {
     super('shadow_provider_timeout');
+  }
+}
+
+function mapProviderErrorStatus(
+  code: AiArmanInterpretationProviderErrorCode,
+): ClassifiedProviderStatus {
+  switch (code) {
+    case 'authentication':
+      return 'provider_authentication';
+    case 'quota':
+      return 'provider_quota';
+    case 'unavailable':
+      return 'provider_unavailable';
+    case 'invalid_response':
+      return 'provider_invalid_response';
   }
 }
 
