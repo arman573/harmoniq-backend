@@ -6,8 +6,19 @@ export type AiArmanInterpretationProviderInput = {
   previousState: AiArmanConversationState | null;
 };
 
+export type AiArmanInterpretationProviderUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd?: number;
+};
+
+export type AiArmanInterpretationProviderResult = {
+  candidate: unknown;
+  usage: AiArmanInterpretationProviderUsage;
+};
+
 export abstract class ChatInterpretationProvider {
   abstract interpret(
     input: AiArmanInterpretationProviderInput,
-  ): Promise<unknown>;
+  ): Promise<AiArmanInterpretationProviderResult>;
 }
