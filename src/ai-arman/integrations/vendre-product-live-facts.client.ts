@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   ProductLiveFactsClient,
+  ProductLiveFactsInput,
   normalizeProductLiveFactsRequest,
 } from './product-live-facts.client';
 import type {
@@ -17,7 +18,7 @@ type UnknownRecord = Record<string, unknown>;
 @Injectable()
 export class VendreProductLiveFactsClient extends ProductLiveFactsClient {
   async getFacts(
-    products: ProductLiveFactsRequestProduct[],
+    products: ProductLiveFactsInput,
   ): Promise<ProductLiveFactsLookupResult> {
     const requestedProducts = normalizeProductLiveFactsRequest(products);
     const requestedProductIds = requestedProducts.map((product) => product.productId);
