@@ -23,6 +23,19 @@ export type AiArmanInterpretationProviderResult = {
   usage: AiArmanInterpretationProviderUsage;
 };
 
+export type AiArmanInterpretationProviderErrorCode =
+  | 'authentication'
+  | 'quota'
+  | 'unavailable'
+  | 'invalid_response';
+
+export class ChatInterpretationProviderError extends Error {
+  constructor(readonly code: AiArmanInterpretationProviderErrorCode) {
+    super(`chat_interpretation_provider_error:${code}`);
+    this.name = 'ChatInterpretationProviderError';
+  }
+}
+
 export abstract class ChatInterpretationProvider {
   abstract metadata(): AiArmanInterpretationProviderMetadata;
 
