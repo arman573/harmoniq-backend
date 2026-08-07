@@ -1,6 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { AiArmanInterpretation } from '../chat/chat-messages.types';
+import { ProductLiveFactsClient } from '../integrations/product-live-facts.client';
+import type { ProductLiveFact } from '../integrations/product-live-facts.types';
 import type { ProductIntelligenceRequestProduct } from '../integrations/product-intelligence.types';
+import type { ScoredRecommendationCandidate } from '../recommendation/recommendation.types';
 import { ProductDiscoveryService } from './product-discovery.service';
 import { ProductIntelligenceEnrichmentService } from './product-intelligence-enrichment.service';
 
@@ -11,6 +14,7 @@ export class HaircareRecommendationJourneyService {
   constructor(
     private readonly discovery: ProductDiscoveryService,
     private readonly enrichment: ProductIntelligenceEnrichmentService,
+    private readonly productLiveFacts: ProductLiveFactsClient,
   ) {}
 
   async prepare(interpretation: AiArmanInterpretation) {
@@ -31,7 +35,9 @@ export class HaircareRecommendationJourneyService {
         productsFound: discovered.productsFound,
         recommendations: [],
         rejected: [],
-        safety: safetyState(),
+        liveFacts: null,
+        liveFactsRejected: [],
+        safety: safetyState(false),
       };
     }
 
@@ -40,18 +46,136 @@ export class HaircareRecommendationJourneyService {
       products,
     });
 
+    if (enriched.recommendations.length === 0) {
+      return {
+        status: 'no_verified_candidates' as const,
+        query,
+        productsFound: discovered.productsFound,
+        recommendations: [],
+        rejected: enriched.rejected,
+        liveFacts: null,
+        liveFactsRejected: [],
+        safety: safetyState(false),
+      };
+    }
+
+    const liveFactsLookup = await this.productLiveFacts.getFacts(
+      enriched.recommendations.map((candidate) => candidate.productId),
+    );
+
+    if (!liveFactsLookup.ok) {
+      return {
+        status: 'live_facts_unavailable' as const,
+        query,
+        productsFound: discovered.productsFound,
+        recommendations: [],
+        candidatesAwaitingLiveFacts: enriched.recommendations,
+        rejected: enriched.rejected,
+        liveFacts: {
+          configured: liveFactsLookup.configured,
+          source: liveFactsLookup.source,
+          requestedProductIds: liveFactsLookup.requestedProductIds,
+          missingProductIds: liveFactsLookup.missingProductIds,
+          error: liveFactsLookup.error,
+        },
+        liveFactsRejected: [],
+        safety: safetyState(false),
+      };
+    }
+
+    const verified = verifyRecommendationsAgainstLiveFacts(
+      enriched.recommendations,
+      liveFactsLookup.facts,
+    );
+
     return {
       status:
-        enriched.recommendations.length > 0
-          ? ('ready_for_live_facts' as const)
-          : ('no_verified_candidates' as const),
+        verified.recommendations.length > 0
+          ? ('ready_for_product_cards' as const)
+          : ('no_verified_live_products' as const),
       query,
       productsFound: discovered.productsFound,
-      recommendations: enriched.recommendations,
+      recommendations: verified.recommendations,
       rejected: enriched.rejected,
-      safety: safetyState(),
+      liveFacts: {
+        configured: liveFactsLookup.configured,
+        source: liveFactsLookup.source,
+        requestedProductIds: liveFactsLookup.requestedProductIds,
+        missingProductIds: liveFactsLookup.missingProductIds,
+        error: liveFactsLookup.error,
+      },
+      liveFactsRejected: verified.rejected,
+      safety: safetyState(verified.recommendations.length > 0),
     };
   }
+}
+
+function verifyRecommendationsAgainstLiveFacts(
+  candidates: ScoredRecommendationCandidate[],
+  facts: ProductLiveFact[],
+) {
+  const factsByProductId = new Map(
+    facts.map((fact) => [String(fact?.productId || '').trim(), fact]),
+  );
+  const recommendations: Array<
+    ScoredRecommendationCandidate & { liveFacts: ProductLiveFact }
+  > = [];
+  const rejected: Array<{ productId: string; reasons: string[] }> = [];
+
+  for (const candidate of candidates) {
+    const fact = factsByProductId.get(candidate.productId);
+    const reasons = validateLiveFact(candidate, fact);
+
+    if (!fact || reasons.length > 0) {
+      rejected.push({ productId: candidate.productId, reasons });
+      continue;
+    }
+
+    recommendations.push({ ...candidate, liveFacts: fact });
+  }
+
+  return { recommendations, rejected };
+}
+
+function validateLiveFact(
+  candidate: ScoredRecommendationCandidate,
+  fact: ProductLiveFact | undefined,
+): string[] {
+  if (!fact) return ['missing_product_live_facts'];
+
+  const reasons: string[] = [];
+  const productId = String(fact.productId || '').trim();
+  const canonicalUrl = String(fact.canonicalUrl || '').trim();
+  const title = String(fact.title || '').trim();
+  const currency = String(fact.price?.currency || '').trim().toUpperCase();
+  const amount = Number(fact.price?.amount);
+  const quantity = fact.stock?.quantity;
+  const fetchedAt = Date.parse(String(fact.fetchedAt || ''));
+
+  if (productId !== candidate.productId) reasons.push('product_identity_mismatch');
+  if (normalizeIdentity(title) !== normalizeIdentity(candidate.title)) {
+    reasons.push('product_title_mismatch');
+  }
+  if (!canonicalUrl) reasons.push('missing_canonical_product_url');
+  if (!Number.isFinite(amount) || amount <= 0) reasons.push('invalid_verified_price');
+  if (!/^[A-Z]{3}$/.test(currency)) reasons.push('invalid_price_currency');
+  if (fact.active !== true) reasons.push('product_inactive');
+  if (fact.visible !== true) reasons.push('product_hidden');
+  if (fact.stock?.availability !== 'in_stock') reasons.push('product_not_in_stock');
+  if (quantity !== null && (!Number.isFinite(quantity) || Number(quantity) <= 0)) {
+    reasons.push('invalid_stock_quantity');
+  }
+  if (!Number.isFinite(fetchedAt)) reasons.push('invalid_live_facts_timestamp');
+  if (fact.source !== 'vendre') reasons.push('invalid_live_facts_source');
+
+  return [...new Set(reasons)];
+}
+
+function normalizeIdentity(value: string): string {
+  return String(value || '')
+    .trim()
+    .toLocaleLowerCase('sv-SE')
+    .replace(/\s+/g, ' ');
 }
 
 function toIntelligenceProduct(candidate: {
@@ -102,12 +226,12 @@ function buildDiscoveryQuery(interpretation: AiArmanInterpretation): string {
   return query.slice(0, 200);
 }
 
-function safetyState() {
+function safetyState(liveProductFactsVerified: boolean) {
   return {
     readOnly: true,
     backendOwnedCandidates: true,
     productIntelligenceRequired: true,
-    liveProductFactsVerified: false,
+    liveProductFactsVerified,
     customerProductCardsReady: false,
     productionActionsEnabled: false,
   } as const;
