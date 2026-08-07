@@ -113,7 +113,10 @@ export type AiArmanDecision = {
     | 'human_support'
     | 'general';
   plannedTools: AiArmanToolName[];
-  executionStatus: 'not_executed_foundation';
+  executionStatus:
+    | 'not_executed_foundation'
+    | 'executed_read_only'
+    | 'failed_closed';
   requiresIdentity: boolean;
   requiresConfirmation: false;
   reasons: string[];
@@ -229,7 +232,7 @@ export type AiArmanChatResponse = {
   blocks: AiArmanResponseBlock[];
   safety: {
     aiModelUsed: false;
-    liveFactsUsed: false;
+    liveFactsUsed: boolean;
     writesExecuted: false;
     productionActionsEnabled: false;
     htmlAcceptedFromModel: false;
