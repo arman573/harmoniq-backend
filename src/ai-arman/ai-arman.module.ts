@@ -22,9 +22,11 @@ import { ChatInterpretationValidator } from './chat/chat-interpretation.validato
 import { ChatMessagesService } from './chat/chat-messages.service';
 import { ChatPreviewService } from './chat/chat-preview.service';
 import { ChatRequestParser } from './chat/chat-request.parser';
+import { HaircareRecommendationJourneyService } from './discovery/haircare-recommendation-journey.service';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
 import { ProductIntelligenceEnrichmentService } from './discovery/product-intelligence-enrichment.service';
 import { ProductIntelligenceClient } from './integrations/product-intelligence.client';
+import { ProductLiveFactsClient } from './integrations/product-live-facts.client';
 import { SearchBrainClient } from './integrations/search-brain.client';
 import { RecommendationScoringService } from './recommendation/recommendation-scoring.service';
 
@@ -59,9 +61,11 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ChatMessagesService,
     ChatPreviewService,
     ChatRequestParser,
+    HaircareRecommendationJourneyService,
     ProductDiscoveryService,
     ProductIntelligenceEnrichmentService,
     ProductIntelligenceClient,
+    ProductLiveFactsClient,
     SearchBrainClient,
     RecommendationScoringService,
   ],
@@ -78,9 +82,11 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ChatMessagesService,
     ChatPreviewService,
     ChatRequestParser,
+    HaircareRecommendationJourneyService,
     ProductDiscoveryService,
     ProductIntelligenceEnrichmentService,
     ProductIntelligenceClient,
+    ProductLiveFactsClient,
     SearchBrainClient,
     RecommendationScoringService,
   ],
