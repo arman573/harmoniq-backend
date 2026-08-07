@@ -11,6 +11,7 @@ export type ChatInterpretationShadowAuditRecord = {
   status:
     | 'completed'
     | 'provider_rate_limited'
+    | 'provider_budget_exceeded'
     | 'provider_timeout'
     | 'provider_error';
   latencyMs: number | null;
