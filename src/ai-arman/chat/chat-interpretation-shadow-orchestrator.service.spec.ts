@@ -32,12 +32,19 @@ const input = {
 };
 
 class StaticConfig extends ChatInterpretationShadowConfig {
-  constructor(private readonly enabled: boolean) {
+  constructor(
+    private readonly enabled: boolean,
+    private readonly timeoutMs?: number,
+  ) {
     super();
   }
 
   isEnabled(): boolean {
     return this.enabled;
+  }
+
+  override providerTimeoutMs(): number {
+    return this.timeoutMs ?? super.providerTimeoutMs();
   }
 }
 
@@ -52,6 +59,15 @@ class StubProvider extends ChatInterpretationProvider {
     this.calls += 1;
     if (this.shouldThrow) throw new Error('provider failed');
     return this.result;
+  }
+}
+
+class NeverProvider extends ChatInterpretationProvider {
+  calls = 0;
+
+  async interpret(): Promise<unknown> {
+    this.calls += 1;
+    return new Promise(() => undefined);
   }
 }
 
@@ -143,5 +159,20 @@ describe('ChatInterpretationShadowOrchestrator', () => {
       status: 'provider_error',
       comparison: null,
     });
+  });
+
+  it('bounds provider latency and reports timeout without affecting authority', async () => {
+    const provider = new NeverProvider();
+    const orchestrator = new ChatInterpretationShadowOrchestrator(
+      new StaticConfig(true, 5),
+      shadowService(),
+      provider,
+    );
+
+    await expect(orchestrator.run(deterministic, input)).resolves.toEqual({
+      status: 'provider_timeout',
+      comparison: null,
+    });
+    expect(provider.calls).toBe(1);
   });
 });
