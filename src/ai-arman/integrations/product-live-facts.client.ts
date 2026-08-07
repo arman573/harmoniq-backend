@@ -5,21 +5,24 @@ import {
   ProductLiveFactsRequestProduct,
 } from './product-live-facts.types';
 
+export type ProductLiveFactsInput =
+  | string[]
+  | ProductLiveFactsRequestProduct[];
+
 export abstract class ProductLiveFactsClient {
   abstract getFacts(
-    products: ProductLiveFactsRequestProduct[],
+    products: ProductLiveFactsInput,
   ): Promise<ProductLiveFactsLookupResult>;
 }
 
 @Injectable()
 export class DisabledProductLiveFactsClient extends ProductLiveFactsClient {
   async getFacts(
-    products: ProductLiveFactsRequestProduct[],
+    products: ProductLiveFactsInput,
   ): Promise<ProductLiveFactsLookupResult> {
-    const requestedProducts = normalizeProducts(products);
-    const requestedProductIds = requestedProducts.map((product) => product.productId);
+    const requestedProductIds = normalizeProductIds(products);
 
-    if (requestedProducts.length === 0) {
+    if (requestedProductIds.length === 0) {
       return {
         ok: false,
         configured: false,
@@ -46,24 +49,20 @@ export class DisabledProductLiveFactsClient extends ProductLiveFactsClient {
 }
 
 export function normalizeProductLiveFactsRequest(
-  products: ProductLiveFactsRequestProduct[],
-): ProductLiveFactsRequestProduct[] {
-  return normalizeProducts(products);
-}
-
-function normalizeProducts(
-  products: ProductLiveFactsRequestProduct[],
+  products: ProductLiveFactsInput,
 ): ProductLiveFactsRequestProduct[] {
   if (!Array.isArray(products)) return [];
 
   const seen = new Set<string>();
   const normalized: ProductLiveFactsRequestProduct[] = [];
 
-  for (const product of products) {
-    const productId = String(product?.productId || '').trim();
-    const title = String(product?.title || '').trim();
-    const canonicalUrl = String(product?.canonicalUrl || '').trim();
-    const imageUrl = String(product?.imageUrl || '').trim() || null;
+  for (const raw of products) {
+    if (typeof raw === 'string') continue;
+
+    const productId = String(raw?.productId || '').trim();
+    const title = String(raw?.title || '').trim();
+    const canonicalUrl = String(raw?.canonicalUrl || '').trim();
+    const imageUrl = String(raw?.imageUrl || '').trim() || null;
 
     if (!productId || !title || !canonicalUrl || seen.has(productId)) continue;
 
@@ -74,4 +73,15 @@ function normalizeProducts(
   }
 
   return normalized;
+}
+
+function normalizeProductIds(products: ProductLiveFactsInput): string[] {
+  if (!Array.isArray(products)) return [];
+
+  const values = products.map((product) =>
+    typeof product === 'string' ? product : product?.productId,
+  );
+
+  return [...new Set(values.map(String).map((value) => value.trim()).filter(Boolean))]
+    .slice(0, PRODUCT_LIVE_FACTS_MAX_PRODUCTS);
 }
