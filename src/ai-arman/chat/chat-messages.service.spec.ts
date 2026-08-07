@@ -30,6 +30,23 @@ describe('ChatMessagesService', () => {
     expect(result.safety.productionActionsEnabled).toBe(false);
   });
 
+  it('generates opaque public identifiers instead of deriving them from the client message ID', () => {
+    const result = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'customer-controlled-secret-looking-id',
+      message: { text: 'Hej' },
+    });
+
+    expect(result.conversationId).toMatch(
+      /^conversation-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(result.serverMessageId).toMatch(
+      /^message-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(result.conversationId).not.toContain('customer-controlled');
+    expect(result.serverMessageId).not.toContain('customer-controlled');
+  });
+
   it('requires verified identity before any order or tracking tool can execute', () => {
     const result = service.handle({
       contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
