@@ -61,6 +61,10 @@ export type ChatInterpretationShadowRunResult =
       comparison: null;
     }
   | {
+      status: 'provider_concurrency_limited';
+      comparison: null;
+    }
+  | {
       status: 'provider_budget_exceeded';
       comparison: null;
       usage: ChatInterpretationShadowUsage | null;
@@ -82,6 +86,7 @@ export type ChatInterpretationShadowRunResult =
 export class ChatInterpretationShadowOrchestrator {
   private readonly providerCallTimes: number[] = [];
   private readonly providerUsageWindow: ProviderUsageWindowEntry[] = [];
+  private activeProviderCalls = 0;
 
   constructor(
     private readonly config: ChatInterpretationShadowConfig,
@@ -130,7 +135,22 @@ export class ChatInterpretationShadowOrchestrator {
       };
     }
 
+    if (!this.acquireProviderSlot()) {
+      this.recordAudit(metadata, {
+        status: 'provider_concurrency_limited',
+        latencyMs: null,
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        estimatedCostUsd: null,
+        candidateValid: null,
+        primaryIntentMatch: null,
+      });
+      return { status: 'provider_concurrency_limited', comparison: null };
+    }
+
     if (!this.reserveProviderCall(now)) {
+      this.releaseProviderSlot();
       this.recordAudit(metadata, {
         status: 'provider_rate_limited',
         latencyMs: null,
@@ -234,7 +254,24 @@ export class ChatInterpretationShadowOrchestrator {
         primaryIntentMatch: null,
       });
       return { status: 'provider_error', comparison: null };
+    } finally {
+      this.releaseProviderSlot();
     }
+  }
+
+  private acquireProviderSlot(): boolean {
+    if (
+      this.activeProviderCalls >= this.config.maxConcurrentProviderCalls()
+    ) {
+      return false;
+    }
+
+    this.activeProviderCalls += 1;
+    return true;
+  }
+
+  private releaseProviderSlot(): void {
+    this.activeProviderCalls = Math.max(0, this.activeProviderCalls - 1);
   }
 
   private reserveProviderCall(now: number): boolean {
