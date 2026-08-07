@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { ChatInterpretationValidator } from './chat-interpretation.validator';
-import type { AiArmanInterpretation } from './chat-messages.types';
+import type {
+  AiArmanInterpretation,
+  AiArmanModelInterpretationCandidate,
+} from './chat-messages.types';
 
 export type ChatInterpretationShadowComparison = {
   status: 'valid_candidate' | 'invalid_candidate';
@@ -27,7 +30,7 @@ export class ChatInterpretationShadowService {
     deterministic: AiArmanInterpretation,
     candidate: unknown,
   ): ChatInterpretationShadowComparison {
-    let parsed: AiArmanInterpretation;
+    let parsed: AiArmanModelInterpretationCandidate;
 
     try {
       parsed = this.validator.parse(candidate);
@@ -37,7 +40,7 @@ export class ChatInterpretationShadowService {
 
     return {
       status: 'valid_candidate',
-      candidateSource: 'model_candidate',
+      candidateSource: parsed.source,
       primaryIntentMatch:
         deterministic.primaryIntent === parsed.primaryIntent,
       secondaryIntentOverlap: overlapRatio(
