@@ -1,9 +1,11 @@
 import type { HaircareRecommendationJourneyService } from '../discovery/haircare-recommendation-journey.service';
+import type { ProductRecommendationCard } from '../recommendation/product-recommendation-card.types';
 import { ChatConversationResultStore } from './chat-conversation-result.store';
 import { ChatConversationStateStore } from './chat-conversation-state.store';
 import { ChatConversationService } from './chat-conversation.service';
 import { ChatMessagesService } from './chat-messages.service';
 import { AI_ARMAN_CHAT_CONTRACT_VERSION } from './chat-messages.types';
+import { ProductCardBlockMapper } from './product-card-block.mapper';
 
 function createService(prepare: jest.Mock) {
   const journey = { prepare } as unknown as HaircareRecommendationJourneyService;
@@ -13,7 +15,40 @@ function createService(prepare: jest.Mock) {
     new ChatConversationResultStore(),
     undefined,
     journey,
+    new ProductCardBlockMapper(),
   );
+}
+
+function verifiedCard(
+  productId = '1',
+  overrides: Partial<ProductRecommendationCard> = {},
+): ProductRecommendationCard {
+  return {
+    schemaVersion: 'ai-arman-product-card-v1',
+    type: 'product_card',
+    position: 1,
+    label: 'Bäst matchning',
+    productId,
+    title: `Produkt ${productId}`,
+    imageUrl: `https://www.harmoniq.se/product-${productId}.jpg`,
+    productUrl: `https://www.harmoniq.se/product-${productId}`,
+    price: { amount: 199, currency: 'SEK' },
+    availability: { status: 'in_stock', quantity: 2 },
+    whyItFits: ['Bra matchning'],
+    inciSignals: ['Relevant INCI-signal'],
+    limitations: [],
+    quality: {
+      score: 85,
+      rankingScore: 87,
+      tier: 'A',
+      confidence: 90,
+    },
+    verification: {
+      productFactsSource: 'vendre',
+      fetchedAt: '2026-08-07T18:00:00.000Z',
+    },
+    ...overrides,
+  };
 }
 
 describe('ChatConversationService recommendation journey execution', () => {
@@ -107,24 +142,70 @@ describe('ChatConversationService recommendation journey execution', () => {
     expect(prepare).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps verified product cards hidden from the regular chat in this slice', async () => {
+  it('maps verified journey cards into the regular chat response', async () => {
     const prepare = jest.fn().mockResolvedValue({
       status: 'product_cards_ready',
       recommendations: [{ productId: '1' }],
-      productCards: [{ productId: '1' }],
+      productCards: [verifiedCard('1')],
     });
     const service = createService(prepare);
 
     const response = await service.handleWithShadow({
       contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
-      clientMessageId: 'journey-cards-hidden-1',
+      clientMessageId: 'journey-cards-ready-1',
       message: { text: 'Jag söker balsam för färgat hår.' },
     });
 
-    expect(prepare).toHaveBeenCalledTimes(1);
     expect(response.decision.executionStatus).toBe('executed_read_only');
-    expect(response.blocks.some((block) => block.type === 'product_cards')).toBe(false);
+    const block = response.blocks.find((item) => item.type === 'product_cards');
+    expect(block).toEqual({
+      type: 'product_cards',
+      cards: [
+        {
+          productId: '1',
+          title: 'Produkt 1',
+          imageUrl: 'https://www.harmoniq.se/product-1.jpg',
+          productUrl: 'https://www.harmoniq.se/product-1',
+          price: 199,
+          currency: 'SEK',
+          stockStatus: 'in_stock',
+          whyItFits: ['Bra matchning'],
+          inciSignals: ['Relevant INCI-signal'],
+          limitations: [],
+          usage: [],
+          confidence: 90,
+          factsFetchedAt: '2026-08-07T18:00:00.000Z',
+        },
+      ],
+    });
     expect(response.safety.liveFactsUsed).toBe(true);
+    expect(response.safety.writesExecuted).toBe(false);
+    expect(response.safety.productionActionsEnabled).toBe(false);
+  });
+
+  it('fails closed when product_cards_ready contains invalid card data', async () => {
+    const prepare = jest.fn().mockResolvedValue({
+      status: 'product_cards_ready',
+      recommendations: [{ productId: '1' }],
+      productCards: [
+        verifiedCard('1', {
+          price: { amount: 19, currency: 'EUR' },
+        }),
+      ],
+    });
+    const service = createService(prepare);
+
+    const response = await service.handleWithShadow({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'journey-card-invalid-1',
+      message: { text: 'Jag söker schampo för tunt hår.' },
+    });
+
+    expect(response.decision.executionStatus).toBe('failed_closed');
+    expect(response.decision.reasons).toContain(
+      'recommendation_journey_failed_closed',
+    );
+    expect(response.blocks.some((block) => block.type === 'product_cards')).toBe(false);
     expect(response.safety.productionActionsEnabled).toBe(false);
   });
 
