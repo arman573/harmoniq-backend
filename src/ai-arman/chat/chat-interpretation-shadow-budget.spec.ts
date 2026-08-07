@@ -39,6 +39,8 @@ class BudgetConfig extends ChatInterpretationShadowConfig {
   constructor(
     private readonly perCallTokens: number,
     private readonly perMinuteTokens: number,
+    private readonly perCallCostUsd = 1,
+    private readonly perMinuteCostUsd = 10,
   ) {
     super();
   }
@@ -56,11 +58,11 @@ class BudgetConfig extends ChatInterpretationShadowConfig {
   }
 
   override maxEstimatedCostUsdPerCall(): number {
-    return 1;
+    return this.perCallCostUsd;
   }
 
   override maxEstimatedCostUsdPerMinute(): number {
-    return 10;
+    return this.perMinuteCostUsd;
   }
 }
 
@@ -126,6 +128,31 @@ describe('ChatInterpretationShadowOrchestrator budgets', () => {
         outputTokens: 20,
         totalTokens: 110,
         estimatedCostUsd: null,
+      },
+    });
+    expect(provider.calls).toBe(1);
+  });
+
+  it('rejects candidate authority when one provider call exceeds the estimated cost budget', async () => {
+    const provider = new UsageProvider({
+      inputTokens: 100,
+      outputTokens: 50,
+      estimatedCostUsd: 0.021,
+    });
+    const orchestrator = new ChatInterpretationShadowOrchestrator(
+      new BudgetConfig(1000, 10_000, 0.02, 0.1),
+      shadowService(),
+      provider,
+    );
+
+    await expect(orchestrator.run(deterministic, input)).resolves.toEqual({
+      status: 'provider_budget_exceeded',
+      comparison: null,
+      usage: {
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+        estimatedCostUsd: 0.021,
       },
     });
     expect(provider.calls).toBe(1);
