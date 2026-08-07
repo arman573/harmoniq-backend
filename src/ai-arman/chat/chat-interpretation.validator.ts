@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type {
   AiArmanIntent,
-  AiArmanInterpretation,
+  AiArmanModelInterpretationCandidate,
   AiArmanProductType,
 } from './chat-messages.types';
 
@@ -29,7 +29,7 @@ const MAX_STRING_LENGTH = 120;
 
 @Injectable()
 export class ChatInterpretationValidator {
-  parse(candidate: unknown): AiArmanInterpretation {
+  parse(candidate: unknown): AiArmanModelInterpretationCandidate {
     const value = asRecord(candidate, 'interpretation_invalid');
     assertExactKeys(value, [
       'schemaVersion',
@@ -86,7 +86,9 @@ export class ChatInterpretationValidator {
   }
 }
 
-function parseEntities(value: unknown): AiArmanInterpretation['entities'] {
+function parseEntities(
+  value: unknown,
+): AiArmanModelInterpretationCandidate['entities'] {
   const entities = asRecord(value, 'interpretation_invalid:entities');
   assertExactKeys(entities, [
     'requestedProductTypes',
