@@ -1,8 +1,10 @@
 import type { AiArmanConversationState } from './chat-messages.types';
 import {
   ChatInterpretationProvider,
+  type AiArmanInterpretationProviderMetadata,
   type AiArmanInterpretationProviderResult,
 } from './chat-interpretation.provider';
+import { InMemoryChatInterpretationShadowAuditStore } from './chat-interpretation-shadow-audit.store';
 import { ChatInterpretationShadowConfig } from './chat-interpretation-shadow.config';
 import { ChatInterpretationShadowOrchestrator } from './chat-interpretation-shadow-orchestrator.service';
 import { ChatInterpretationShadowService } from './chat-interpretation-shadow.service';
@@ -34,6 +36,12 @@ const input = {
   previousState: null as AiArmanConversationState | null,
 };
 
+const metadata: AiArmanInterpretationProviderMetadata = {
+  provider: 'test-provider',
+  modelVersion: 'test-model-v1',
+  promptVersion: 'interpretation-prompt-v1',
+};
+
 class StaticConfig extends ChatInterpretationShadowConfig {
   constructor(
     private readonly enabled: boolean,
@@ -62,8 +70,13 @@ class StubProvider extends ChatInterpretationProvider {
   constructor(
     private readonly result: AiArmanInterpretationProviderResult,
     private readonly shouldThrow = false,
+    private readonly providerMetadata = metadata,
   ) {
     super();
+  }
+
+  metadata(): AiArmanInterpretationProviderMetadata {
+    return this.providerMetadata;
   }
 
   async interpret(): Promise<AiArmanInterpretationProviderResult> {
@@ -75,6 +88,10 @@ class StubProvider extends ChatInterpretationProvider {
 
 class NeverProvider extends ChatInterpretationProvider {
   calls = 0;
+
+  metadata(): AiArmanInterpretationProviderMetadata {
+    return metadata;
+  }
 
   async interpret(): Promise<AiArmanInterpretationProviderResult> {
     this.calls += 1;
@@ -181,6 +198,44 @@ describe('ChatInterpretationShadowOrchestrator', () => {
     expect(provider.calls).toBe(1);
   });
 
+  it('records only safe provider metadata and aggregate shadow metrics', async () => {
+    const provider = new StubProvider(providerResult());
+    const audit = new InMemoryChatInterpretationShadowAuditStore();
+    const orchestrator = new ChatInterpretationShadowOrchestrator(
+      new StaticConfig(true),
+      shadowService(),
+      provider,
+      audit,
+    );
+
+    await orchestrator.run(deterministic, input);
+
+    const records = audit.snapshot();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toEqual(
+      expect.objectContaining({
+        provider: 'test-provider',
+        modelVersion: 'test-model-v1',
+        promptVersion: 'interpretation-prompt-v1',
+        status: 'completed',
+        inputTokens: 120,
+        outputTokens: 40,
+        totalTokens: 160,
+        estimatedCostUsd: 0.0012,
+        candidateValid: true,
+        primaryIntentMatch: true,
+      }),
+    );
+    expect(Object.keys(records[0])).not.toEqual(
+      expect.arrayContaining([
+        'text',
+        'candidate',
+        'conversationId',
+        'previousState',
+      ]),
+    );
+  });
+
   it('contains provider errors without exposing them to the caller', async () => {
     const provider = new StubProvider(providerResult(), true);
     const orchestrator = new ChatInterpretationShadowOrchestrator(
@@ -193,6 +248,25 @@ describe('ChatInterpretationShadowOrchestrator', () => {
       status: 'provider_error',
       comparison: null,
     });
+  });
+
+  it('fails closed when provider metadata is invalid', async () => {
+    const provider = new StubProvider(providerResult(), false, {
+      provider: '   ',
+      modelVersion: 'test-model-v1',
+      promptVersion: 'interpretation-prompt-v1',
+    });
+    const orchestrator = new ChatInterpretationShadowOrchestrator(
+      new StaticConfig(true),
+      shadowService(),
+      provider,
+    );
+
+    await expect(orchestrator.run(deterministic, input)).resolves.toEqual({
+      status: 'provider_error',
+      comparison: null,
+    });
+    expect(provider.calls).toBe(0);
   });
 
   it('fails closed when provider usage metadata is invalid', async () => {
