@@ -250,6 +250,26 @@ describe('ChatInterpretationShadowOrchestrator', () => {
     });
   });
 
+  it('contains unexpected shadow comparison failures as provider errors', async () => {
+    const provider = new StubProvider(providerResult());
+    const explodingShadow = {
+      compare: jest.fn(() => {
+        throw new Error('shadow comparison exploded');
+      }),
+    } as unknown as ChatInterpretationShadowService;
+    const orchestrator = new ChatInterpretationShadowOrchestrator(
+      new StaticConfig(true),
+      explodingShadow,
+      provider,
+    );
+
+    await expect(orchestrator.run(deterministic, input)).resolves.toEqual({
+      status: 'provider_error',
+      comparison: null,
+    });
+    expect(provider.calls).toBe(1);
+  });
+
   it('fails closed when provider metadata is invalid', async () => {
     const provider = new StubProvider(providerResult(), false, {
       provider: '   ',
