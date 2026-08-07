@@ -2,14 +2,24 @@ import { Injectable } from '@nestjs/common';
 import {
   PRODUCT_LIVE_FACTS_MAX_PRODUCTS,
   ProductLiveFactsLookupResult,
+  ProductLiveFactsRequestProduct,
 } from './product-live-facts.types';
 
-@Injectable()
-export class ProductLiveFactsClient {
-  async getFacts(productIds: string[]): Promise<ProductLiveFactsLookupResult> {
-    const requestedProductIds = normalizeProductIds(productIds);
+export abstract class ProductLiveFactsClient {
+  abstract getFacts(
+    products: ProductLiveFactsRequestProduct[],
+  ): Promise<ProductLiveFactsLookupResult>;
+}
 
-    if (requestedProductIds.length === 0) {
+@Injectable()
+export class DisabledProductLiveFactsClient extends ProductLiveFactsClient {
+  async getFacts(
+    products: ProductLiveFactsRequestProduct[],
+  ): Promise<ProductLiveFactsLookupResult> {
+    const requestedProducts = normalizeProducts(products);
+    const requestedProductIds = requestedProducts.map((product) => product.productId);
+
+    if (requestedProducts.length === 0) {
       return {
         ok: false,
         configured: false,
@@ -35,9 +45,33 @@ export class ProductLiveFactsClient {
   }
 }
 
-function normalizeProductIds(productIds: string[]): string[] {
-  if (!Array.isArray(productIds)) return [];
+export function normalizeProductLiveFactsRequest(
+  products: ProductLiveFactsRequestProduct[],
+): ProductLiveFactsRequestProduct[] {
+  return normalizeProducts(products);
+}
 
-  return [...new Set(productIds.map(String).map((value) => value.trim()).filter(Boolean))]
-    .slice(0, PRODUCT_LIVE_FACTS_MAX_PRODUCTS);
+function normalizeProducts(
+  products: ProductLiveFactsRequestProduct[],
+): ProductLiveFactsRequestProduct[] {
+  if (!Array.isArray(products)) return [];
+
+  const seen = new Set<string>();
+  const normalized: ProductLiveFactsRequestProduct[] = [];
+
+  for (const product of products) {
+    const productId = String(product?.productId || '').trim();
+    const title = String(product?.title || '').trim();
+    const canonicalUrl = String(product?.canonicalUrl || '').trim();
+    const imageUrl = String(product?.imageUrl || '').trim() || null;
+
+    if (!productId || !title || !canonicalUrl || seen.has(productId)) continue;
+
+    seen.add(productId);
+    normalized.push({ productId, title, canonicalUrl, imageUrl });
+
+    if (normalized.length >= PRODUCT_LIVE_FACTS_MAX_PRODUCTS) break;
+  }
+
+  return normalized;
 }
