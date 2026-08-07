@@ -3,6 +3,7 @@ import type { AiArmanInterpretation } from '../chat/chat-messages.types';
 import { ProductLiveFactsClient } from '../integrations/product-live-facts.client';
 import type { ProductLiveFact } from '../integrations/product-live-facts.types';
 import type { ProductIntelligenceRequestProduct } from '../integrations/product-intelligence.types';
+import { ProductRecommendationCardService } from '../recommendation/product-recommendation-card.service';
 import type { ScoredRecommendationCandidate } from '../recommendation/recommendation.types';
 import { ProductDiscoveryService } from './product-discovery.service';
 import { ProductIntelligenceEnrichmentService } from './product-intelligence-enrichment.service';
@@ -15,6 +16,7 @@ export class HaircareRecommendationJourneyService {
     private readonly discovery: ProductDiscoveryService,
     private readonly enrichment: ProductIntelligenceEnrichmentService,
     private readonly productLiveFacts: ProductLiveFactsClient,
+    private readonly productCards: ProductRecommendationCardService,
   ) {}
 
   async prepare(interpretation: AiArmanInterpretation) {
@@ -34,10 +36,11 @@ export class HaircareRecommendationJourneyService {
         query,
         productsFound: discovered.productsFound,
         recommendations: [],
+        productCards: [],
         rejected: [],
         liveFacts: null,
         liveFactsRejected: [],
-        safety: safetyState(false),
+        safety: safetyState(false, false),
       };
     }
 
@@ -52,10 +55,11 @@ export class HaircareRecommendationJourneyService {
         query,
         productsFound: discovered.productsFound,
         recommendations: [],
+        productCards: [],
         rejected: enriched.rejected,
         liveFacts: null,
         liveFactsRejected: [],
-        safety: safetyState(false),
+        safety: safetyState(false, false),
       };
     }
 
@@ -69,6 +73,7 @@ export class HaircareRecommendationJourneyService {
         query,
         productsFound: discovered.productsFound,
         recommendations: [],
+        productCards: [],
         candidatesAwaitingLiveFacts: enriched.recommendations,
         rejected: enriched.rejected,
         liveFacts: {
@@ -79,7 +84,7 @@ export class HaircareRecommendationJourneyService {
           error: liveFactsLookup.error,
         },
         liveFactsRejected: [],
-        safety: safetyState(false),
+        safety: safetyState(false, false),
       };
     }
 
@@ -87,15 +92,17 @@ export class HaircareRecommendationJourneyService {
       enriched.recommendations,
       liveFactsLookup.facts,
     );
+    const productCards = this.productCards.compose(verified.recommendations);
+    const cardsReady = productCards.length > 0;
 
     return {
-      status:
-        verified.recommendations.length > 0
-          ? ('ready_for_product_cards' as const)
-          : ('no_verified_live_products' as const),
+      status: cardsReady
+        ? ('product_cards_ready' as const)
+        : ('no_verified_live_products' as const),
       query,
       productsFound: discovered.productsFound,
       recommendations: verified.recommendations,
+      productCards,
       rejected: enriched.rejected,
       liveFacts: {
         configured: liveFactsLookup.configured,
@@ -105,7 +112,7 @@ export class HaircareRecommendationJourneyService {
         error: liveFactsLookup.error,
       },
       liveFactsRejected: verified.rejected,
-      safety: safetyState(verified.recommendations.length > 0),
+      safety: safetyState(cardsReady, cardsReady),
     };
   }
 }
@@ -226,13 +233,16 @@ function buildDiscoveryQuery(interpretation: AiArmanInterpretation): string {
   return query.slice(0, 200);
 }
 
-function safetyState(liveProductFactsVerified: boolean) {
+function safetyState(
+  liveProductFactsVerified: boolean,
+  customerProductCardsReady: boolean,
+) {
   return {
     readOnly: true,
     backendOwnedCandidates: true,
     productIntelligenceRequired: true,
     liveProductFactsVerified,
-    customerProductCardsReady: false,
+    customerProductCardsReady,
     productionActionsEnabled: false,
   } as const;
 }
