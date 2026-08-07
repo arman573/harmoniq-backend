@@ -12,6 +12,13 @@ export type ProductLiveFactsErrorCode =
   | 'product_live_facts_upstream_error'
   | 'product_live_facts_invalid_response';
 
+export type ProductLiveFactsRequestProduct = {
+  productId: string;
+  title: string;
+  canonicalUrl: string;
+  imageUrl: string | null;
+};
+
 export type ProductLiveFact = {
   productId: string;
   canonicalUrl: string;
