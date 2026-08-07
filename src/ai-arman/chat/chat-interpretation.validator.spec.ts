@@ -29,6 +29,15 @@ describe('ChatInterpretationValidator', () => {
     expect(validator.parse(validCandidate())).toEqual(validCandidate());
   });
 
+  it('rejects a candidate that claims backend deterministic authority', () => {
+    expect(() =>
+      validator.parse({
+        ...validCandidate(),
+        source: 'deterministic_fallback',
+      }),
+    ).toThrow('interpretation_invalid:source');
+  });
+
   it('rejects unknown top-level fields', () => {
     expect(() =>
       validator.parse({ ...validCandidate(), plannedTools: ['get_order'] }),
