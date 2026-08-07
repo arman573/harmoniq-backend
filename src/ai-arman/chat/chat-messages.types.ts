@@ -44,23 +44,32 @@ export type AiArmanProductType =
   | 'hair_mask'
   | 'leave_in';
 
-export type AiArmanInterpretation = {
+export type AiArmanInterpretationEntities = {
+  requestedProductTypes: AiArmanProductType[];
+  needs: string[];
+  exclusions: string[];
+  orderReference: string | null;
+  productReferences: string[];
+};
+
+export type AiArmanInterpretationBase = {
   schemaVersion: 'ai-arman-interpretation-v1';
-  source: 'deterministic_fallback' | 'model_candidate';
   locale: 'sv-SE';
   primaryIntent: AiArmanIntent;
   secondaryIntents: AiArmanIntent[];
   confidence: number;
-  entities: {
-    requestedProductTypes: AiArmanProductType[];
-    needs: string[];
-    exclusions: string[];
-    orderReference: string | null;
-    productReferences: string[];
-  };
+  entities: AiArmanInterpretationEntities;
   missingFields: string[];
   requiresIdentity: boolean;
   requiresHumanReview: boolean;
+};
+
+export type AiArmanInterpretation = AiArmanInterpretationBase & {
+  source: 'deterministic_fallback';
+};
+
+export type AiArmanModelInterpretationCandidate = AiArmanInterpretationBase & {
+  source: 'model_candidate';
 };
 
 export type AiArmanConversationState = {
