@@ -5,4 +5,224 @@ export const AI_ARMAN_CONVERSATION_STATE_VERSION =
 export type AiArmanChatChannel = 'web_widget' | 'internal_preview';
 
 export type AiArmanChatRequest = {
-  contractVersion: typeof AI_ARMAN_CHAT_CONTRACT_VERSION
+  contractVersion: typeof AI_ARMAN_CHAT_CONTRACT_VERSION;
+  conversationId?: string;
+  clientMessageId: string;
+  message: {
+    text: string;
+  };
+  context?: {
+    locale?: 'sv-SE';
+    channel?: AiArmanChatChannel;
+    page?: {
+      url?: string;
+      productId?: string;
+    };
+  };
+};
+
+export type AiArmanIntent =
+  | 'product_recommendation'
+  | 'purchased_product_usage'
+  | 'order_status'
+  | 'tracking_status'
+  | 'return_help'
+  | 'claim_help'
+  | 'human_handoff'
+  | 'greeting'
+  | 'unknown';
+
+export type AiArmanJourney =
+  | 'before_purchase'
+  | 'after_purchase'
+  | 'customer_service'
+  | 'general';
+
+export type AiArmanProductType =
+  | 'shampoo'
+  | 'conditioner'
+  | 'hair_mask'
+  | 'leave_in';
+
+export type AiArmanInterpretation = {
+  schemaVersion: 'ai-arman-interpretation-v1';
+  source: 'deterministic_fallback' | 'model_candidate';
+  locale: 'sv-SE';
+  primaryIntent: AiArmanIntent;
+  secondaryIntents: AiArmanIntent[];
+  confidence: number;
+  entities: {
+    requestedProductTypes: AiArmanProductType[];
+    needs: string[];
+    exclusions: string[];
+    orderReference: string | null;
+    productReferences: string[];
+  };
+  missingFields: string[];
+  requiresIdentity: boolean;
+  requiresHumanReview: boolean;
+};
+
+export type AiArmanConversationState = {
+  stateVersion: typeof AI_ARMAN_CONVERSATION_STATE_VERSION;
+  conversationId: string;
+  status: 'collecting' | 'ready_for_tools' | 'handoff_required';
+  activeJourney: AiArmanJourney;
+  locale: 'sv-SE';
+  identityLevel: 'anonymous';
+  remembered: {
+    requestedProductTypes: AiArmanProductType[];
+    needs: string[];
+    exclusions: string[];
+    orderReference: string | null;
+    productReferences: string[];
+  };
+  pendingQuestion: {
+    id: string;
+    expectedField: string;
+  } | null;
+};
+
+export type AiArmanToolName =
+  | 'search_products'
+  | 'analyze_product_suitability'
+  | 'get_product_live_facts'
+  | 'get_order'
+  | 'get_tracking_status'
+  | 'get_case_status'
+  | 'prepare_return_case'
+  | 'prepare_claim_case'
+  | 'handoff_to_customer_service';
+
+export type AiArmanDecision = {
+  owner: 'backend_policy';
+  route:
+    | 'recommendation'
+    | 'purchased_product_guidance'
+    | 'order_support'
+    | 'returns_support'
+    | 'human_support'
+    | 'general';
+  plannedTools: AiArmanToolName[];
+  executionStatus: 'not_executed_foundation';
+  requiresIdentity: boolean;
+  requiresConfirmation: false;
+  reasons: string[];
+};
+
+export type AiArmanMessageBlock = {
+  type: 'message';
+  text: string;
+};
+
+export type AiArmanQuestionBlock = {
+  type: 'question';
+  id: string;
+  text: string;
+  expectedField: string;
+  required: boolean;
+};
+
+export type AiArmanQuickRepliesBlock = {
+  type: 'quick_replies';
+  options: Array<{
+    id: string;
+    label: string;
+    value: string;
+  }>;
+};
+
+export type AiArmanProductCardBlock = {
+  type: 'product_cards';
+  cards: Array<{
+    productId: string;
+    title: string;
+    imageUrl: string | null;
+    productUrl: string;
+    price: number | null;
+    currency: 'SEK' | null;
+    stockStatus: 'in_stock' | 'low_stock' | 'out_of_stock' | 'unknown';
+    whyItFits: string[];
+    inciSignals: string[];
+    limitations: string[];
+    usage: string[];
+    confidence: number;
+    factsFetchedAt: string;
+  }>;
+};
+
+export type AiArmanOrderStatusCardBlock = {
+  type: 'order_status_card';
+  orderNumber: string;
+  status: string;
+  statusLabel: string;
+  updatedAt: string;
+};
+
+export type AiArmanTrackingCardBlock = {
+  type: 'tracking_card';
+  orderNumber: string;
+  carrier: string | null;
+  trackingStatus: string;
+  trackingLabel: string;
+  trackingUrl: string | null;
+  updatedAt: string;
+};
+
+export type AiArmanPurchasedProductCardBlock = {
+  type: 'purchased_product_card';
+  orderNumber: string;
+  productId: string;
+  title: string;
+  imageUrl: string | null;
+  productUrl: string | null;
+};
+
+export type AiArmanSafetyNoticeBlock = {
+  type: 'safety_notice';
+  severity: 'info' | 'warning' | 'urgent';
+  text: string;
+};
+
+export type AiArmanSupportHandoffBlock = {
+  type: 'support_handoff';
+  status: 'available' | 'not_configured';
+  reason: string;
+  transcriptPreserved: boolean;
+};
+
+export type AiArmanErrorNoticeBlock = {
+  type: 'error_notice';
+  code: string;
+  text: string;
+  retryable: boolean;
+};
+
+export type AiArmanResponseBlock =
+  | AiArmanMessageBlock
+  | AiArmanQuestionBlock
+  | AiArmanQuickRepliesBlock
+  | AiArmanProductCardBlock
+  | AiArmanOrderStatusCardBlock
+  | AiArmanTrackingCardBlock
+  | AiArmanPurchasedProductCardBlock
+  | AiArmanSafetyNoticeBlock
+  | AiArmanSupportHandoffBlock
+  | AiArmanErrorNoticeBlock;
+
+export type AiArmanChatResponse = {
+  contractVersion: typeof AI_ARMAN_CHAT_CONTRACT_VERSION;
+  conversationId: string;
+  serverMessageId: string;
+  interpretation: AiArmanInterpretation;
+  state: AiArmanConversationState;
+  decision: AiArmanDecision;
+  blocks: AiArmanResponseBlock[];
+  safety: {
+    aiModelUsed: false;
+    liveFactsUsed: false;
+    writesExecuted: false;
+    productionActionsEnabled: false;
+    htmlAcceptedFromModel: false;
+  };
+};
