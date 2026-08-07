@@ -21,6 +21,12 @@ import type { AiArmanInterpretation } from './chat-messages.types';
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const MAX_METADATA_LENGTH = 120;
 
+type ProviderUsageWindowEntry = {
+  recordedAt: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+};
+
 export type ChatInterpretationShadowUsage = {
   inputTokens: number;
   outputTokens: number;
@@ -47,6 +53,11 @@ export type ChatInterpretationShadowRunResult =
       comparison: null;
     }
   | {
+      status: 'provider_budget_exceeded';
+      comparison: null;
+      usage: ChatInterpretationShadowUsage | null;
+    }
+  | {
       status: 'provider_timeout';
       comparison: null;
     }
@@ -58,6 +69,7 @@ export type ChatInterpretationShadowRunResult =
 @Injectable()
 export class ChatInterpretationShadowOrchestrator {
   private readonly providerCallTimes: number[] = [];
+  private readonly providerUsageWindow: ProviderUsageWindowEntry[] = [];
 
   constructor(
     private readonly config: ChatInterpretationShadowConfig,
@@ -87,7 +99,26 @@ export class ChatInterpretationShadowOrchestrator {
       return { status: 'provider_error', comparison: null };
     }
 
-    if (!this.reserveProviderCall(Date.now())) {
+    const now = Date.now();
+    if (this.minuteBudgetExhausted(now)) {
+      this.recordAudit(metadata, {
+        status: 'provider_budget_exceeded',
+        latencyMs: null,
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        estimatedCostUsd: null,
+        candidateValid: null,
+        primaryIntentMatch: null,
+      });
+      return {
+        status: 'provider_budget_exceeded',
+        comparison: null,
+        usage: null,
+      };
+    }
+
+    if (!this.reserveProviderCall(now)) {
       this.recordAudit(metadata, {
         status: 'provider_rate_limited',
         latencyMs: null,
@@ -109,11 +140,32 @@ export class ChatInterpretationShadowOrchestrator {
         this.config.providerTimeoutMs(),
       );
       const usage = normalizeUsage(result);
+      const completedAt = Date.now();
+      this.recordProviderUsage(completedAt, usage);
+
+      if (this.usageExceedsBudget(completedAt, usage)) {
+        this.recordAudit(metadata, {
+          status: 'provider_budget_exceeded',
+          latencyMs: Math.max(0, completedAt - startedAt),
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          totalTokens: usage.totalTokens,
+          estimatedCostUsd: usage.estimatedCostUsd,
+          candidateValid: null,
+          primaryIntentMatch: null,
+        });
+        return {
+          status: 'provider_budget_exceeded',
+          comparison: null,
+          usage,
+        };
+      }
+
       const comparison = this.shadow.compare(deterministic, result.candidate);
 
       this.recordAudit(metadata, {
         status: 'completed',
-        latencyMs: Math.max(0, Date.now() - startedAt),
+        latencyMs: Math.max(0, completedAt - startedAt),
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
         totalTokens: usage.totalTokens,
@@ -175,6 +227,62 @@ export class ChatInterpretationShadowOrchestrator {
 
     this.providerCallTimes.push(now);
     return true;
+  }
+
+  private pruneUsageWindow(now: number): void {
+    const cutoff = now - RATE_LIMIT_WINDOW_MS;
+    while (
+      this.providerUsageWindow.length > 0 &&
+      this.providerUsageWindow[0].recordedAt <= cutoff
+    ) {
+      this.providerUsageWindow.shift();
+    }
+  }
+
+  private minuteBudgetExhausted(now: number): boolean {
+    this.pruneUsageWindow(now);
+    const totals = this.currentUsageTotals();
+    return (
+      totals.tokens >= this.config.maxProviderTokensPerMinute() ||
+      totals.costUsd >= this.config.maxEstimatedCostUsdPerMinute()
+    );
+  }
+
+  private usageExceedsBudget(
+    now: number,
+    usage: ChatInterpretationShadowUsage,
+  ): boolean {
+    this.pruneUsageWindow(now);
+    const totals = this.currentUsageTotals();
+    return (
+      usage.totalTokens > this.config.maxProviderTokensPerCall() ||
+      (usage.estimatedCostUsd !== null &&
+        usage.estimatedCostUsd > this.config.maxEstimatedCostUsdPerCall()) ||
+      totals.tokens > this.config.maxProviderTokensPerMinute() ||
+      totals.costUsd > this.config.maxEstimatedCostUsdPerMinute()
+    );
+  }
+
+  private recordProviderUsage(
+    now: number,
+    usage: ChatInterpretationShadowUsage,
+  ): void {
+    this.pruneUsageWindow(now);
+    this.providerUsageWindow.push({
+      recordedAt: now,
+      totalTokens: usage.totalTokens,
+      estimatedCostUsd: usage.estimatedCostUsd ?? 0,
+    });
+  }
+
+  private currentUsageTotals(): { tokens: number; costUsd: number } {
+    return this.providerUsageWindow.reduce(
+      (total, entry) => ({
+        tokens: total.tokens + entry.totalTokens,
+        costUsd: total.costUsd + entry.estimatedCostUsd,
+      }),
+      { tokens: 0, costUsd: 0 },
+    );
   }
 
   private recordAudit(
