@@ -22,6 +22,7 @@ import { ChatInterpretationValidator } from './chat/chat-interpretation.validato
 import { ChatMessagesService } from './chat/chat-messages.service';
 import { ChatPreviewService } from './chat/chat-preview.service';
 import { ChatRequestParser } from './chat/chat-request.parser';
+import { ProductCardBlockMapper } from './chat/product-card-block.mapper';
 import { HaircareRecommendationJourneyService } from './discovery/haircare-recommendation-journey.service';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
 import { ProductIntelligenceEnrichmentService } from './discovery/product-intelligence-enrichment.service';
@@ -62,6 +63,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ChatMessagesService,
     ChatPreviewService,
     ChatRequestParser,
+    ProductCardBlockMapper,
     HaircareRecommendationJourneyService,
     ProductDiscoveryService,
     ProductIntelligenceEnrichmentService,
@@ -84,6 +86,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ChatMessagesService,
     ChatPreviewService,
     ChatRequestParser,
+    ProductCardBlockMapper,
     HaircareRecommendationJourneyService,
     ProductDiscoveryService,
     ProductIntelligenceEnrichmentService,
