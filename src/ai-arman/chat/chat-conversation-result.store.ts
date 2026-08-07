@@ -5,17 +5,31 @@ import {
 } from './chat-conversation.repositories';
 import type { AiArmanChatResponse } from './chat-messages.types';
 
+const RESULT_TTL_MS = 30 * 60 * 1000;
+const MAX_RESULTS = 2000;
+
+type StoredResultEntry = {
+  result: StoredChatResult;
+  expiresAt: number;
+};
+
 @Injectable()
 export class ChatConversationResultStore extends ChatConversationResultRepository {
-  private readonly results = new Map<string, StoredChatResult>();
+  private readonly results = new Map<string, StoredResultEntry>();
 
   get(key: string): StoredChatResult | null {
-    const result = this.results.get(key);
-    if (!result) return null;
+    const now = Date.now();
+    this.pruneExpired(now);
+
+    const entry = this.results.get(key);
+    if (!entry) return null;
+
+    this.results.delete(key);
+    this.results.set(key, entry);
 
     return {
-      fingerprint: result.fingerprint,
-      response: cloneResponse(result.response),
+      fingerprint: entry.result.fingerprint,
+      response: cloneResponse(entry.result.response),
     };
   }
 
@@ -24,9 +38,34 @@ export class ChatConversationResultStore extends ChatConversationResultRepositor
     fingerprint: string,
     response: AiArmanChatResponse,
   ): AiArmanChatResponse {
+    const now = Date.now();
+    this.pruneExpired(now);
+
     const snapshot = cloneResponse(response);
-    this.results.set(key, { fingerprint, response: snapshot });
+    this.results.delete(key);
+    this.results.set(key, {
+      result: { fingerprint, response: snapshot },
+      expiresAt: now + RESULT_TTL_MS,
+    });
+    this.enforceMaxSize();
+
     return cloneResponse(snapshot);
+  }
+
+  private pruneExpired(now: number) {
+    for (const [key, entry] of this.results) {
+      if (entry.expiresAt <= now) {
+        this.results.delete(key);
+      }
+    }
+  }
+
+  private enforceMaxSize() {
+    while (this.results.size > MAX_RESULTS) {
+      const oldestKey = this.results.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      this.results.delete(oldestKey);
+    }
   }
 }
 
