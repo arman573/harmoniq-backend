@@ -4,6 +4,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { HaircareRecommendationJourneyService } from '../discovery/haircare-recommendation-journey.service';
+import type { ProductRecommendationCard } from '../recommendation/product-recommendation-card.types';
 import {
   ChatConversationResultRepository,
   ChatConversationStateRepository,
@@ -16,9 +17,11 @@ import type {
   AiArmanConversationState,
   AiArmanDecision,
   AiArmanInterpretation,
+  AiArmanProductCardBlock,
   AiArmanProductType,
   AiArmanResponseBlock,
 } from './chat-messages.types';
+import { ProductCardBlockMapper } from './product-card-block.mapper';
 
 type ProcessedChatMessage = {
   response: AiArmanChatResponse;
@@ -44,6 +47,8 @@ export class ChatConversationService {
     private readonly shadowOrchestrator?: ChatInterpretationShadowOrchestrator,
     @Optional()
     private readonly recommendationJourney?: HaircareRecommendationJourneyService,
+    @Optional()
+    private readonly productCardBlockMapper?: ProductCardBlockMapper,
   ) {}
 
   handle(input: AiArmanChatRequest): AiArmanChatResponse {
@@ -170,6 +175,7 @@ export class ChatConversationService {
       const response = this.applyRecommendationJourneyResult(
         processed.response,
         status,
+        result.productCards as ProductRecommendationCard[],
       );
 
       return this.resultStore.save(
@@ -213,6 +219,7 @@ export class ChatConversationService {
   private applyRecommendationJourneyResult(
     response: AiArmanChatResponse,
     status: RecommendationJourneyStatus,
+    productCards: ProductRecommendationCard[],
   ): AiArmanChatResponse {
     const liveFactsUsed =
       status === 'no_verified_live_products' || status === 'product_cards_ready';
@@ -220,6 +227,7 @@ export class ChatConversationService {
       status === 'live_facts_unavailable'
         ? ('failed_closed' as const)
         : ('executed_read_only' as const);
+    const productCardBlock = this.composeProductCardBlock(status, productCards);
 
     return {
       ...response,
@@ -231,7 +239,7 @@ export class ChatConversationService {
           `recommendation_journey:${status}`,
         ]),
       },
-      blocks: this.composeRecommendationExecutionBlocks(status),
+      blocks: this.composeRecommendationExecutionBlocks(status, productCardBlock),
       safety: {
         ...response.safety,
         liveFactsUsed,
@@ -239,8 +247,25 @@ export class ChatConversationService {
     };
   }
 
+  private composeProductCardBlock(
+    status: RecommendationJourneyStatus,
+    productCards: ProductRecommendationCard[],
+  ): AiArmanProductCardBlock | null {
+    if (status !== 'product_cards_ready') return null;
+    if (!this.productCardBlockMapper) {
+      throw new BadRequestException('product_card_block_mapper_required');
+    }
+
+    const block = this.productCardBlockMapper.compose(productCards);
+    if (!block || block.cards.length === 0) {
+      throw new BadRequestException('verified_product_cards_required');
+    }
+    return block;
+  }
+
   private composeRecommendationExecutionBlocks(
     status: RecommendationJourneyStatus,
+    productCardBlock: AiArmanProductCardBlock | null,
   ): AiArmanResponseBlock[] {
     if (status === 'live_facts_unavailable') {
       return [
@@ -275,11 +300,18 @@ export class ChatConversationService {
       ];
     }
 
+    if (!productCardBlock) {
+      throw new BadRequestException('verified_product_cards_required');
+    }
+
     return [
       {
         type: 'message',
-        text: 'Jag har verifierade produktalternativ, men produktkorten är ännu inte aktiverade i den vanliga chatten.',
+        text: productCardBlock.cards.length === 1
+          ? 'Jag hittade en produkt som klarade både kvalitetsgranskningen och kontrollen av aktuellt pris, lager och produktstatus.'
+          : `Jag hittade ${productCardBlock.cards.length} produkter som klarade både kvalitetsgranskningen och kontrollen av aktuellt pris, lager och produktstatus.`,
       },
+      productCardBlock,
     ];
   }
 
