@@ -64,6 +64,21 @@ describe('ChatInterpretationShadowService', () => {
     );
   });
 
+  it('does not mask unexpected validator failures as invalid model output', () => {
+    const validator = {
+      parse: jest.fn(() => {
+        throw new Error('validator exploded');
+      }),
+    } as unknown as ChatInterpretationValidator;
+    const unexpectedFailureService = new ChatInterpretationShadowService(
+      validator,
+    );
+
+    expect(() =>
+      unexpectedFailureService.compare(deterministic, {}),
+    ).toThrow('validator exploded');
+  });
+
   it('reports complete overlap for two empty entity lists', () => {
     const result = service.compare(deterministic, {
       ...deterministic,
