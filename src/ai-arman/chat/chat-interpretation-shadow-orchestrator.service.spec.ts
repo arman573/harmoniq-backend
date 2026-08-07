@@ -35,6 +35,7 @@ class StaticConfig extends ChatInterpretationShadowConfig {
   constructor(
     private readonly enabled: boolean,
     private readonly timeoutMs?: number,
+    private readonly maxCallsPerMinute?: number,
   ) {
     super();
   }
@@ -45,6 +46,10 @@ class StaticConfig extends ChatInterpretationShadowConfig {
 
   override providerTimeoutMs(): number {
     return this.timeoutMs ?? super.providerTimeoutMs();
+  }
+
+  override maxProviderCallsPerMinute(): number {
+    return this.maxCallsPerMinute ?? super.maxProviderCallsPerMinute();
   }
 }
 
@@ -171,6 +176,24 @@ describe('ChatInterpretationShadowOrchestrator', () => {
 
     await expect(orchestrator.run(deterministic, input)).resolves.toEqual({
       status: 'provider_timeout',
+      comparison: null,
+    });
+    expect(provider.calls).toBe(1);
+  });
+
+  it('enforces the provider request budget before another model call', async () => {
+    const provider = new StubProvider(candidate());
+    const orchestrator = new ChatInterpretationShadowOrchestrator(
+      new StaticConfig(true, undefined, 1),
+      shadowService(),
+      provider,
+    );
+
+    await expect(orchestrator.run(deterministic, input)).resolves.toEqual(
+      expect.objectContaining({ status: 'completed' }),
+    );
+    await expect(orchestrator.run(deterministic, input)).resolves.toEqual({
+      status: 'provider_rate_limited',
       comparison: null,
     });
     expect(provider.calls).toBe(1);
