@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 
 const DEFAULT_PROVIDER_TIMEOUT_MS = 1500;
 const DEFAULT_MAX_PROVIDER_CALLS_PER_MINUTE = 30;
+const DEFAULT_MAX_PROVIDER_TOKENS_PER_CALL = 4096;
+const DEFAULT_MAX_PROVIDER_TOKENS_PER_MINUTE = 30_000;
+const DEFAULT_MAX_ESTIMATED_COST_USD_PER_CALL = 0.02;
+const DEFAULT_MAX_ESTIMATED_COST_USD_PER_MINUTE = 0.1;
 
 export abstract class ChatInterpretationShadowConfig {
   abstract isEnabled(): boolean;
@@ -12,6 +16,22 @@ export abstract class ChatInterpretationShadowConfig {
 
   maxProviderCallsPerMinute(): number {
     return DEFAULT_MAX_PROVIDER_CALLS_PER_MINUTE;
+  }
+
+  maxProviderTokensPerCall(): number {
+    return DEFAULT_MAX_PROVIDER_TOKENS_PER_CALL;
+  }
+
+  maxProviderTokensPerMinute(): number {
+    return DEFAULT_MAX_PROVIDER_TOKENS_PER_MINUTE;
+  }
+
+  maxEstimatedCostUsdPerCall(): number {
+    return DEFAULT_MAX_ESTIMATED_COST_USD_PER_CALL;
+  }
+
+  maxEstimatedCostUsdPerMinute(): number {
+    return DEFAULT_MAX_ESTIMATED_COST_USD_PER_MINUTE;
   }
 }
 
