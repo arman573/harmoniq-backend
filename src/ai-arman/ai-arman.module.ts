@@ -28,6 +28,7 @@ import { ProductIntelligenceEnrichmentService } from './discovery/product-intell
 import { ProductIntelligenceClient } from './integrations/product-intelligence.client';
 import { ProductLiveFactsClient } from './integrations/product-live-facts.client';
 import { SearchBrainClient } from './integrations/search-brain.client';
+import { ProductRecommendationCardService } from './recommendation/product-recommendation-card.service';
 import { RecommendationScoringService } from './recommendation/recommendation-scoring.service';
 
 @Module({
@@ -66,6 +67,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ProductIntelligenceEnrichmentService,
     ProductIntelligenceClient,
     ProductLiveFactsClient,
+    ProductRecommendationCardService,
     SearchBrainClient,
     RecommendationScoringService,
   ],
@@ -87,6 +89,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ProductIntelligenceEnrichmentService,
     ProductIntelligenceClient,
     ProductLiveFactsClient,
+    ProductRecommendationCardService,
     SearchBrainClient,
     RecommendationScoringService,
   ],
