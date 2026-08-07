@@ -2,6 +2,8 @@ import { Injectable, Optional } from '@nestjs/common';
 import {
   ChatInterpretationProvider,
   type AiArmanInterpretationProviderInput,
+  type AiArmanInterpretationProviderResult,
+  type AiArmanInterpretationProviderUsage,
 } from './chat-interpretation.provider';
 import {
   ChatInterpretationShadowConfig,
@@ -13,6 +15,13 @@ import {
 import type { AiArmanInterpretation } from './chat-messages.types';
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
+
+export type ChatInterpretationShadowUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number | null;
+};
 
 export type ChatInterpretationShadowRunResult =
   | {
@@ -26,6 +35,7 @@ export type ChatInterpretationShadowRunResult =
   | {
       status: 'completed';
       comparison: ChatInterpretationShadowComparison;
+      usage: ChatInterpretationShadowUsage;
     }
   | {
       status: 'provider_rate_limited';
@@ -68,13 +78,16 @@ export class ChatInterpretationShadowOrchestrator {
     }
 
     try {
-      const candidate = await withTimeout(
+      const result = await withTimeout(
         this.provider.interpret(input),
         this.config.providerTimeoutMs(),
       );
+      const usage = normalizeUsage(result);
+
       return {
         status: 'completed',
-        comparison: this.shadow.compare(deterministic, candidate),
+        comparison: this.shadow.compare(deterministic, result.candidate),
+        usage,
       };
     } catch (error) {
       if (error instanceof ShadowProviderTimeoutError) {
@@ -107,6 +120,34 @@ export class ChatInterpretationShadowOrchestrator {
 class ShadowProviderTimeoutError extends Error {
   constructor() {
     super('shadow_provider_timeout');
+  }
+}
+
+function normalizeUsage(
+  result: AiArmanInterpretationProviderResult,
+): ChatInterpretationShadowUsage {
+  const usage = result.usage;
+  assertNonNegativeInteger(usage.inputTokens);
+  assertNonNegativeInteger(usage.outputTokens);
+
+  if (
+    usage.estimatedCostUsd !== undefined &&
+    (!Number.isFinite(usage.estimatedCostUsd) || usage.estimatedCostUsd < 0)
+  ) {
+    throw new Error('shadow_provider_usage_invalid');
+  }
+
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.inputTokens + usage.outputTokens,
+    estimatedCostUsd: usage.estimatedCostUsd ?? null,
+  };
+}
+
+function assertNonNegativeInteger(value: number) {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error('shadow_provider_usage_invalid');
   }
 }
 
