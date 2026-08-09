@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { getProductLiveFactsFreshnessRejectionReason } from '../integrations/product-live-facts-freshness.policy';
 import type { ProductLiveFact } from '../integrations/product-live-facts.types';
 import type { ScoredRecommendationCandidate } from './recommendation.types';
 import {
@@ -71,6 +72,9 @@ export class ProductRecommendationCardService {
     }
 
     const facts = candidate.liveFacts;
+    const freshnessRejection = getProductLiveFactsFreshnessRejectionReason(
+      facts?.fetchedAt,
+    );
     if (
       !facts
       || String(facts.productId || '').trim() !== candidate.productId
@@ -82,7 +86,7 @@ export class ProductRecommendationCardService {
       || !Number.isFinite(facts.price?.amount)
       || facts.price.amount <= 0
       || !String(facts.price?.currency || '').trim()
-      || !Number.isFinite(Date.parse(String(facts.fetchedAt || '')))
+      || freshnessRejection !== null
     ) {
       throw new BadRequestException('verified_product_live_facts_required');
     }
