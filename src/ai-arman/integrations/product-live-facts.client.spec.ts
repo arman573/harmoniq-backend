@@ -1,10 +1,25 @@
-import { DisabledProductLiveFactsClient } from './product-live-facts.client';
+import {
+  DisabledProductLiveFactsClient,
+  normalizeProductLiveFactsRequest,
+} from './product-live-facts.client';
+
+function requestProduct(productId: string) {
+  return {
+    productId,
+    title: `Produkt ${productId}`,
+    canonicalUrl: `https://www.harmoniq.se/produkt-${productId}`,
+    imageUrl: null,
+  };
+}
 
 describe('DisabledProductLiveFactsClient', () => {
   it('fails closed when live product facts are not configured', async () => {
     const client = new DisabledProductLiveFactsClient();
 
-    const result = await client.getFacts(['123', '456']);
+    const result = await client.getFacts([
+      requestProduct('123'),
+      requestProduct('456'),
+    ]);
 
     expect(result).toEqual({
       ok: false,
@@ -30,20 +45,27 @@ describe('DisabledProductLiveFactsClient', () => {
     expect(result.error).toBe('product_live_facts_invalid_request');
   });
 
-  it('normalizes duplicate and blank product ids', async () => {
+  it('normalizes duplicate and blank metadata ids', async () => {
     const client = new DisabledProductLiveFactsClient();
 
-    const result = await client.getFacts([' 123 ', '', '123', '456', '   ']);
+    const result = await client.getFacts([
+      requestProduct(' 123 '),
+      requestProduct('123'),
+      requestProduct('456'),
+      { ...requestProduct(''), productId: '' },
+    ]);
 
     expect(result.requestedProductIds).toEqual(['123', '456']);
     expect(result.missingProductIds).toEqual(['123', '456']);
   });
 
-  it('limits a lookup to 25 backend-owned product ids', async () => {
+  it('limits a lookup to 25 backend-owned metadata products', async () => {
     const client = new DisabledProductLiveFactsClient();
-    const productIds = Array.from({ length: 30 }, (_, index) => String(index + 1));
+    const products = Array.from({ length: 30 }, (_, index) =>
+      requestProduct(String(index + 1)),
+    );
 
-    const result = await client.getFacts(productIds);
+    const result = await client.getFacts(products);
 
     expect(result.requestedProductIds).toHaveLength(25);
     expect(result.requestedProductIds[0]).toBe('1');
@@ -55,16 +77,15 @@ describe('DisabledProductLiveFactsClient', () => {
   it('accepts backend-owned product metadata while remaining disabled', async () => {
     const client = new DisabledProductLiveFactsClient();
 
-    const result = await client.getFacts([
-      {
-        productId: '123',
-        title: 'Produkt 123',
-        canonicalUrl: 'https://www.harmoniq.se/produkt-123',
-        imageUrl: null,
-      },
-    ]);
+    const result = await client.getFacts([requestProduct('123')]);
 
     expect(result.requestedProductIds).toEqual(['123']);
     expect(result.error).toBe('product_live_facts_not_configured');
+  });
+
+  it('fails closed when unexpected bare ids reach the runtime normalizer', () => {
+    expect(normalizeProductLiveFactsRequest(['123', '456'] as unknown)).toEqual(
+      [],
+    );
   });
 });
