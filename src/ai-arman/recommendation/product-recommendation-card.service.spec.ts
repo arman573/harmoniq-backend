@@ -6,6 +6,7 @@ function candidate(
   productId: string,
   title: string,
   overrides: Partial<ScoredRecommendationCandidate> = {},
+  fetchedAt = new Date().toISOString(),
 ) {
   const liveFacts: ProductLiveFact = {
     productId,
@@ -17,7 +18,7 @@ function candidate(
     active: true,
     visible: true,
     source: 'vendre',
-    fetchedAt: '2026-08-07T17:00:00.000Z',
+    fetchedAt,
   };
 
   return {
@@ -54,8 +55,11 @@ function candidate(
 describe('ProductRecommendationCardService', () => {
   it('composes structured cards only from verified recommendation data', () => {
     const service = new ProductRecommendationCardService();
+    const freshTimestamp = new Date().toISOString();
 
-    const cards = service.compose([candidate('1', 'Produkt 1')]);
+    const cards = service.compose([
+      candidate('1', 'Produkt 1', {}, freshTimestamp),
+    ]);
 
     expect(cards).toEqual([
       {
@@ -84,7 +88,7 @@ describe('ProductRecommendationCardService', () => {
         },
         verification: {
           productFactsSource: 'vendre',
-          fetchedAt: '2026-08-07T17:00:00.000Z',
+          fetchedAt: freshTimestamp,
         },
       },
     ]);
@@ -130,6 +134,24 @@ describe('ProductRecommendationCardService', () => {
     expect(() => service.compose([unsafe])).toThrow(
       'verified_product_live_facts_required',
     );
+  });
+
+  it('fails closed when live product facts are stale', () => {
+    const service = new ProductRecommendationCardService();
+    const staleTimestamp = new Date(Date.now() - 6 * 60 * 1000).toISOString();
+
+    expect(() =>
+      service.compose([candidate('1', 'Produkt 1', {}, staleTimestamp)]),
+    ).toThrow('verified_product_live_facts_required');
+  });
+
+  it('fails closed when live product facts are too far in the future', () => {
+    const service = new ProductRecommendationCardService();
+    const futureTimestamp = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+
+    expect(() =>
+      service.compose([candidate('1', 'Produkt 1', {}, futureTimestamp)]),
+    ).toThrow('verified_product_live_facts_required');
   });
 
   it('returns no cards rather than inventing fallback products', () => {
