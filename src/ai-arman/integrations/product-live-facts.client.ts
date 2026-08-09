@@ -5,9 +5,7 @@ import {
   ProductLiveFactsRequestProduct,
 } from './product-live-facts.types';
 
-export type ProductLiveFactsInput =
-  | string[]
-  | ProductLiveFactsRequestProduct[];
+export type ProductLiveFactsInput = ProductLiveFactsRequestProduct[];
 
 export abstract class ProductLiveFactsClient {
   abstract getFacts(
@@ -49,7 +47,7 @@ export class DisabledProductLiveFactsClient extends ProductLiveFactsClient {
 }
 
 export function normalizeProductLiveFactsRequest(
-  products: ProductLiveFactsInput,
+  products: unknown,
 ): ProductLiveFactsRequestProduct[] {
   if (!Array.isArray(products)) return [];
 
@@ -57,12 +55,13 @@ export function normalizeProductLiveFactsRequest(
   const normalized: ProductLiveFactsRequestProduct[] = [];
 
   for (const raw of products) {
-    if (typeof raw === 'string') continue;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
 
-    const productId = String(raw?.productId || '').trim();
-    const title = String(raw?.title || '').trim();
-    const canonicalUrl = String(raw?.canonicalUrl || '').trim();
-    const imageUrl = String(raw?.imageUrl || '').trim() || null;
+    const product = raw as Partial<ProductLiveFactsRequestProduct>;
+    const productId = String(product.productId || '').trim();
+    const title = String(product.title || '').trim();
+    const canonicalUrl = String(product.canonicalUrl || '').trim();
+    const imageUrl = String(product.imageUrl || '').trim() || null;
 
     if (!productId || !title || !canonicalUrl || seen.has(productId)) continue;
 
@@ -75,13 +74,8 @@ export function normalizeProductLiveFactsRequest(
   return normalized;
 }
 
-function normalizeProductIds(products: ProductLiveFactsInput): string[] {
-  if (!Array.isArray(products)) return [];
-
-  const values = products.map((product) =>
-    typeof product === 'string' ? product : product?.productId,
+function normalizeProductIds(products: unknown): string[] {
+  return normalizeProductLiveFactsRequest(products).map(
+    (product) => product.productId,
   );
-
-  return [...new Set(values.map(String).map((value) => value.trim()).filter(Boolean))]
-    .slice(0, PRODUCT_LIVE_FACTS_MAX_PRODUCTS);
 }
