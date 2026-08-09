@@ -1,7 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { AiArmanInterpretation } from '../chat/chat-messages.types';
 import { ProductLiveFactsClient } from '../integrations/product-live-facts.client';
-import type { ProductLiveFact } from '../integrations/product-live-facts.types';
+import type {
+  ProductLiveFact,
+  ProductLiveFactsRequestProduct,
+} from '../integrations/product-live-facts.types';
 import type { ProductIntelligenceRequestProduct } from '../integrations/product-intelligence.types';
 import { ProductRecommendationCardService } from '../recommendation/product-recommendation-card.service';
 import type { ScoredRecommendationCandidate } from '../recommendation/recommendation.types';
@@ -26,9 +29,22 @@ export class HaircareRecommendationJourneyService {
 
     const query = buildDiscoveryQuery(interpretation);
     const discovered = await this.discovery.discover(query);
-    const products = discovered.candidates
-      .slice(0, MAX_DISCOVERY_PRODUCTS)
-      .map((candidate) => toIntelligenceProduct(candidate));
+    const discoveryCandidates = discovered.candidates.slice(
+      0,
+      MAX_DISCOVERY_PRODUCTS,
+    );
+    const products = discoveryCandidates.map((candidate) =>
+      toIntelligenceProduct(candidate),
+    );
+    const liveFactsMetadata = new Map(
+      discoveryCandidates
+        .map((candidate) => toLiveFactsRequestProduct(candidate))
+        .filter(
+          (product): product is ProductLiveFactsRequestProduct =>
+            product !== null,
+        )
+        .map((product) => [product.productId, product] as const),
+    );
 
     if (!discovered.ok || products.length === 0) {
       return {
@@ -63,8 +79,14 @@ export class HaircareRecommendationJourneyService {
       };
     }
 
+    const liveFactsRequestProducts = enriched.recommendations
+      .map((candidate) => liveFactsMetadata.get(candidate.productId) ?? null)
+      .filter(
+        (product): product is ProductLiveFactsRequestProduct => product !== null,
+      );
+
     const liveFactsLookup = await this.productLiveFacts.getFacts(
-      enriched.recommendations.map((candidate) => candidate.productId),
+      liveFactsRequestProducts,
     );
 
     if (!liveFactsLookup.ok) {
@@ -195,6 +217,26 @@ function toIntelligenceProduct(candidate: {
     productId: candidate.productId,
     title: candidate.title,
     ...(url ? { url } : {}),
+  };
+}
+
+function toLiveFactsRequestProduct(candidate: {
+  productId: string;
+  title: string;
+  discovery?: Record<string, unknown>;
+}): ProductLiveFactsRequestProduct | null {
+  const productId = String(candidate.productId || '').trim();
+  const title = String(candidate.title || '').trim();
+  const canonicalUrl = String(candidate.discovery?.url || '').trim();
+  const imageUrl = String(candidate.discovery?.imageUrl || '').trim() || null;
+
+  if (!productId || !title || !canonicalUrl) return null;
+
+  return {
+    productId,
+    title,
+    canonicalUrl,
+    imageUrl,
   };
 }
 
