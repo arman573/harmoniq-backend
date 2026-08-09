@@ -85,6 +85,21 @@ function createService(
   );
 }
 
+function verifiedFact(fetchedAt = new Date().toISOString()) {
+  return {
+    productId: '1',
+    canonicalUrl: 'https://www.harmoniq.se/produkt-1',
+    title: 'Produkt 1',
+    imageUrl: 'https://www.harmoniq.se/produkt-1.jpg',
+    price: { amount: 199, currency: 'SEK' },
+    stock: { quantity: 3, availability: 'in_stock' as const },
+    active: true,
+    visible: true,
+    source: 'vendre' as const,
+    fetchedAt,
+  };
+}
+
 describe('HaircareRecommendationJourneyService', () => {
   it('builds a backend-owned query, limits discovery candidates and passes backend metadata to live facts', async () => {
     const discovery = createDiscovery();
@@ -182,7 +197,7 @@ describe('HaircareRecommendationJourneyService', () => {
     expect(result.productCards).toEqual([]);
   });
 
-  it('creates structured product cards only after valid live facts', async () => {
+  it('creates structured product cards only after valid fresh live facts', async () => {
     const discovery = createDiscovery();
     const enrichment = createEnrichment();
     const productLiveFacts = {
@@ -193,18 +208,7 @@ describe('HaircareRecommendationJourneyService', () => {
         source: 'vendre',
         requestedProductIds: ['1'],
         missingProductIds: [],
-        facts: [{
-          productId: '1',
-          canonicalUrl: 'https://www.harmoniq.se/produkt-1',
-          title: 'Produkt 1',
-          imageUrl: 'https://www.harmoniq.se/produkt-1.jpg',
-          price: { amount: 199, currency: 'SEK' },
-          stock: { quantity: 3, availability: 'in_stock' },
-          active: true,
-          visible: true,
-          source: 'vendre',
-          fetchedAt: '2026-08-07T17:00:00.000Z',
-        }],
+        facts: [verifiedFact()],
       }),
     } as unknown as ProductLiveFactsClient;
 
@@ -226,6 +230,58 @@ describe('HaircareRecommendationJourneyService', () => {
     expect(result.safety.customerProductCardsReady).toBe(true);
   });
 
+  it('rejects stale live facts before product cards are created', async () => {
+    const discovery = createDiscovery();
+    const enrichment = createEnrichment();
+    const staleTimestamp = new Date(Date.now() - 6 * 60 * 1000).toISOString();
+    const productLiveFacts = {
+      getFacts: jest.fn().mockResolvedValue({
+        ok: true,
+        configured: true,
+        readOnly: true,
+        source: 'vendre',
+        requestedProductIds: ['1'],
+        missingProductIds: [],
+        facts: [verifiedFact(staleTimestamp)],
+      }),
+    } as unknown as ProductLiveFactsClient;
+
+    const result = await createService(discovery, enrichment, productLiveFacts).prepare(interpretation);
+
+    expect(result.status).toBe('no_verified_live_products');
+    expect(result.productCards).toEqual([]);
+    expect(result.liveFactsRejected).toEqual([
+      { productId: '1', reasons: ['stale_live_facts'] },
+    ]);
+    expect(result.safety.liveProductFactsVerified).toBe(false);
+  });
+
+  it('rejects live facts with a timestamp too far in the future', async () => {
+    const discovery = createDiscovery();
+    const enrichment = createEnrichment();
+    const futureTimestamp = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+    const productLiveFacts = {
+      getFacts: jest.fn().mockResolvedValue({
+        ok: true,
+        configured: true,
+        readOnly: true,
+        source: 'vendre',
+        requestedProductIds: ['1'],
+        missingProductIds: [],
+        facts: [verifiedFact(futureTimestamp)],
+      }),
+    } as unknown as ProductLiveFactsClient;
+
+    const result = await createService(discovery, enrichment, productLiveFacts).prepare(interpretation);
+
+    expect(result.status).toBe('no_verified_live_products');
+    expect(result.productCards).toEqual([]);
+    expect(result.liveFactsRejected).toEqual([
+      { productId: '1', reasons: ['future_live_facts_timestamp'] },
+    ]);
+    expect(result.safety.liveProductFactsVerified).toBe(false);
+  });
+
   it('rejects live facts that do not meet product safety requirements and creates no cards', async () => {
     const discovery = createDiscovery();
     const enrichment = createEnrichment();
@@ -238,16 +294,9 @@ describe('HaircareRecommendationJourneyService', () => {
         requestedProductIds: ['1'],
         missingProductIds: [],
         facts: [{
-          productId: '1',
-          canonicalUrl: 'https://www.harmoniq.se/produkt-1',
-          title: 'Produkt 1',
+          ...verifiedFact(),
           imageUrl: null,
-          price: { amount: 199, currency: 'SEK' },
           stock: { quantity: 0, availability: 'out_of_stock' },
-          active: true,
-          visible: true,
-          source: 'vendre',
-          fetchedAt: '2026-08-07T17:00:00.000Z',
         }],
       }),
     } as unknown as ProductLiveFactsClient;
