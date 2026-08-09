@@ -14,6 +14,9 @@ const DEFAULT_TIMEOUT_MS = 1200;
 const SWEDISH_STANDARD_VAT_RATE = 0.25;
 
 type UnknownRecord = Record<string, unknown>;
+type NonTimeoutProductLiveFactsError =
+  | 'product_live_facts_upstream_error'
+  | 'product_live_facts_invalid_response';
 
 @Injectable()
 export class VendreProductLiveFactsClient extends ProductLiveFactsClient {
@@ -53,6 +56,7 @@ export class VendreProductLiveFactsClient extends ProductLiveFactsClient {
 
     const facts: ProductLiveFact[] = [];
     const missingProductIds: string[] = [];
+    let terminalError: NonTimeoutProductLiveFactsError | null = null;
 
     for (const product of requestedProducts) {
       const result = await this.fetchProduct(baseUrl, apiKey, product);
@@ -67,6 +71,7 @@ export class VendreProductLiveFactsClient extends ProductLiveFactsClient {
           );
         }
         missingProductIds.push(product.productId);
+        terminalError = chooseTerminalError(terminalError, result.error);
         continue;
       }
 
@@ -82,7 +87,11 @@ export class VendreProductLiveFactsClient extends ProductLiveFactsClient {
       facts,
       missingProductIds,
       ...(facts.length === 0
-        ? { error: 'product_live_facts_upstream_error' as const }
+        ? {
+            error:
+              terminalError ||
+              ('product_live_facts_upstream_error' as const),
+          }
         : {}),
     };
   }
@@ -127,7 +136,13 @@ export class VendreProductLiveFactsClient extends ProductLiveFactsClient {
         return { ok: false, error: 'product_live_facts_upstream_error' };
       }
 
-      const body = (await response.json()) as unknown;
+      let body: unknown;
+      try {
+        body = await response.json();
+      } catch {
+        return { ok: false, error: 'product_live_facts_invalid_response' };
+      }
+
       const product = unwrapRecord(body);
       if (!product) {
         return { ok: false, error: 'product_live_facts_invalid_response' };
@@ -222,6 +237,15 @@ export class VendreProductLiveFactsClient extends ProductLiveFactsClient {
     if (!Number.isFinite(configured)) return DEFAULT_TIMEOUT_MS;
     return Math.min(3000, Math.max(300, configured));
   }
+}
+
+function chooseTerminalError(
+  current: NonTimeoutProductLiveFactsError | null,
+  next: NonTimeoutProductLiveFactsError,
+): NonTimeoutProductLiveFactsError {
+  if (current === 'product_live_facts_upstream_error') return current;
+  if (next === 'product_live_facts_upstream_error') return next;
+  return 'product_live_facts_invalid_response';
 }
 
 function normalizeHttpsBaseUrl(value: unknown): string | null {
