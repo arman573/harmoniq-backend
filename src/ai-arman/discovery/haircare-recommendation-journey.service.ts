@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { AiArmanInterpretation } from '../chat/chat-messages.types';
 import { ProductLiveFactsClient } from '../integrations/product-live-facts.client';
+import { getProductLiveFactsFreshnessRejectionReason } from '../integrations/product-live-facts-freshness.policy';
 import type {
   ProductLiveFact,
   ProductLiveFactsRequestProduct,
@@ -12,8 +13,6 @@ import { ProductDiscoveryService } from './product-discovery.service';
 import { ProductIntelligenceEnrichmentService } from './product-intelligence-enrichment.service';
 
 const MAX_DISCOVERY_PRODUCTS = 25;
-const MAX_LIVE_FACTS_AGE_MS = 5 * 60 * 1000;
-const MAX_LIVE_FACTS_FUTURE_SKEW_MS = 60 * 1000;
 
 @Injectable()
 export class HaircareRecommendationJourneyService {
@@ -181,8 +180,9 @@ function validateLiveFact(
   const currency = String(fact.price?.currency || '').trim().toUpperCase();
   const amount = Number(fact.price?.amount);
   const quantity = fact.stock?.quantity;
-  const fetchedAt = Date.parse(String(fact.fetchedAt || ''));
-  const now = Date.now();
+  const freshnessRejection = getProductLiveFactsFreshnessRejectionReason(
+    fact.fetchedAt,
+  );
 
   if (productId !== candidate.productId) reasons.push('product_identity_mismatch');
   if (normalizeIdentity(title) !== normalizeIdentity(candidate.title)) {
@@ -197,16 +197,7 @@ function validateLiveFact(
   if (quantity !== null && (!Number.isFinite(quantity) || Number(quantity) <= 0)) {
     reasons.push('invalid_stock_quantity');
   }
-  if (!Number.isFinite(fetchedAt)) {
-    reasons.push('invalid_live_facts_timestamp');
-  } else {
-    if (now - fetchedAt > MAX_LIVE_FACTS_AGE_MS) {
-      reasons.push('stale_live_facts');
-    }
-    if (fetchedAt - now > MAX_LIVE_FACTS_FUTURE_SKEW_MS) {
-      reasons.push('future_live_facts_timestamp');
-    }
-  }
+  if (freshnessRejection) reasons.push(freshnessRejection);
   if (fact.source !== 'vendre') reasons.push('invalid_live_facts_source');
 
   return [...new Set(reasons)];
