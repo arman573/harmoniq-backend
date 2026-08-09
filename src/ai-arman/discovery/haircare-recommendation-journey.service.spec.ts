@@ -52,7 +52,10 @@ function createDiscovery(ok = true) {
   const candidates = Array.from({ length: 30 }, (_, index) => ({
     productId: String(index + 1),
     title: `Produkt ${index + 1}`,
-    discovery: { url: `/produkt-${index + 1}` },
+    discovery: {
+      url: `https://www.harmoniq.se/produkt-${index + 1}`,
+      imageUrl: `https://www.harmoniq.se/produkt-${index + 1}.jpg`,
+    },
   }));
   return {
     discover: jest.fn().mockResolvedValue({
@@ -83,7 +86,7 @@ function createService(
 }
 
 describe('HaircareRecommendationJourneyService', () => {
-  it('builds a backend-owned query, limits discovery candidates and fails closed when live facts are disabled', async () => {
+  it('builds a backend-owned query, limits discovery candidates and passes backend metadata to live facts', async () => {
     const discovery = createDiscovery();
     const enrichment = createEnrichment();
     const productLiveFacts = {
@@ -103,12 +106,80 @@ describe('HaircareRecommendationJourneyService', () => {
 
     expect(discovery.discover).toHaveBeenCalledWith('schampo tunt hår färgat hår utan parfym');
     expect((enrichment.enrich as jest.Mock).mock.calls[0][0].products).toHaveLength(25);
-    expect(productLiveFacts.getFacts).toHaveBeenCalledWith(['1']);
+    expect(productLiveFacts.getFacts).toHaveBeenCalledWith([
+      {
+        productId: '1',
+        title: 'Produkt 1',
+        canonicalUrl: 'https://www.harmoniq.se/produkt-1',
+        imageUrl: 'https://www.harmoniq.se/produkt-1.jpg',
+      },
+    ]);
     expect(result.status).toBe('live_facts_unavailable');
     expect(result.recommendations).toEqual([]);
     expect(result.productCards).toEqual([]);
     expect(result.safety.liveProductFactsVerified).toBe(false);
     expect(result.safety.customerProductCardsReady).toBe(false);
+  });
+
+  it('passes metadata only for Product Intelligence approved products', async () => {
+    const discovery = createDiscovery();
+    const approved = {
+      ...recommendation,
+      productId: '2',
+      title: 'Produkt 2',
+    };
+    const enrichment = createEnrichment([approved]);
+    const productLiveFacts = {
+      getFacts: jest.fn().mockResolvedValue({
+        ok: false,
+        configured: false,
+        readOnly: true,
+        source: 'not_configured',
+        requestedProductIds: ['2'],
+        facts: [],
+        missingProductIds: ['2'],
+        error: 'product_live_facts_not_configured',
+      }),
+    } as unknown as ProductLiveFactsClient;
+
+    await createService(discovery, enrichment, productLiveFacts).prepare(interpretation);
+
+    expect(productLiveFacts.getFacts).toHaveBeenCalledWith([
+      {
+        productId: '2',
+        title: 'Produkt 2',
+        canonicalUrl: 'https://www.harmoniq.se/produkt-2',
+        imageUrl: 'https://www.harmoniq.se/produkt-2.jpg',
+      },
+    ]);
+  });
+
+  it('does not trust a Product Intelligence recommendation without matching discovery metadata', async () => {
+    const discovery = createDiscovery();
+    const unknownRecommendation = {
+      ...recommendation,
+      productId: '999',
+      title: 'Produkt 999',
+    };
+    const enrichment = createEnrichment([unknownRecommendation]);
+    const productLiveFacts = {
+      getFacts: jest.fn().mockResolvedValue({
+        ok: false,
+        configured: false,
+        readOnly: true,
+        source: 'not_configured',
+        requestedProductIds: [],
+        facts: [],
+        missingProductIds: [],
+        error: 'product_live_facts_invalid_request',
+      }),
+    } as unknown as ProductLiveFactsClient;
+
+    const result = await createService(discovery, enrichment, productLiveFacts).prepare(interpretation);
+
+    expect(productLiveFacts.getFacts).toHaveBeenCalledWith([]);
+    expect(result.status).toBe('live_facts_unavailable');
+    expect(result.productCards).toEqual([]);
   });
 
   it('creates structured product cards only after valid live facts', async () => {
