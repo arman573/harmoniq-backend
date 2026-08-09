@@ -42,6 +42,31 @@ describe('VendreProductLiveFactsClient', () => {
     });
   });
 
+  it.each([
+    'http://www.harmoniq.se',
+    'not-a-url',
+    'https://user:pass@www.harmoniq.se',
+  ])('rejects an unsafe Vendre base URL before any credentialed request', async (baseUrl) => {
+    process.env.VENDRE_API_BASE_URL = baseUrl;
+    process.env.VENDRE_API_KEY = 'test-key';
+    const fetchSpy = jest.spyOn(global, 'fetch');
+    const client = new VendreProductLiveFactsClient();
+
+    const result = await client.getFacts([requestProduct()]);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: false,
+      configured: false,
+      readOnly: true,
+      source: 'not_configured',
+      requestedProductIds: ['123'],
+      facts: [],
+      missingProductIds: ['123'],
+      error: 'product_live_facts_not_configured',
+    });
+  });
+
   it('uses GET with X-Authorization and maps verified Vendre facts', async () => {
     process.env.VENDRE_API_BASE_URL = 'https://www.harmoniq.se';
     process.env.VENDRE_API_KEY = 'test-key';
