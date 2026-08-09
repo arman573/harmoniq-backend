@@ -171,8 +171,11 @@ describe('VendreProductLiveFactsClient', () => {
     configureVendre();
     const fetchSpy = jest.spyOn(global, 'fetch');
     const client = new VendreProductLiveFactsClient();
+    const runtimeClient = client as unknown as {
+      getFacts(products: unknown): ReturnType<VendreProductLiveFactsClient['getFacts']>;
+    };
 
-    const result = await client.getFacts(['123']);
+    const result = await runtimeClient.getFacts(['123']);
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(result.ok).toBe(false);
