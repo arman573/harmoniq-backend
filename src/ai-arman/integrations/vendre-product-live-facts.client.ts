@@ -205,10 +205,8 @@ export class VendreProductLiveFactsClient extends ProductLiveFactsClient {
     };
   }
 
-  private readBaseUrl(): string {
-    return String(process.env.VENDRE_API_BASE_URL || '')
-      .trim()
-      .replace(/\/$/, '');
+  private readBaseUrl(): string | null {
+    return normalizeHttpsBaseUrl(process.env.VENDRE_API_BASE_URL);
   }
 
   private readApiKey(): string {
@@ -223,6 +221,22 @@ export class VendreProductLiveFactsClient extends ProductLiveFactsClient {
     const configured = Number(process.env.AI_ARMAN_VENDRE_TIMEOUT_MS);
     if (!Number.isFinite(configured)) return DEFAULT_TIMEOUT_MS;
     return Math.min(3000, Math.max(300, configured));
+  }
+}
+
+function normalizeHttpsBaseUrl(value: unknown): string | null {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:') return null;
+    if (!url.hostname || url.username || url.password) return null;
+    url.hash = '';
+    url.search = '';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return null;
   }
 }
 
