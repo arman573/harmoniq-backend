@@ -31,7 +31,10 @@ import {
   DisabledProductLiveFactsClient,
   ProductLiveFactsClient,
 } from './integrations/product-live-facts.client';
+import { readProductLiveFactsProviderConfig } from './integrations/product-live-facts-provider.config';
+import { resolveProductLiveFactsProvider } from './integrations/product-live-facts-provider.resolver';
 import { SearchBrainClient } from './integrations/search-brain.client';
+import { VendreProductLiveFactsClient } from './integrations/vendre-product-live-facts.client';
 import { ProductRecommendationCardService } from './recommendation/product-recommendation-card.service';
 import { RecommendationScoringService } from './recommendation/recommendation-scoring.service';
 
@@ -43,6 +46,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ChatConversationStateStore,
     DisabledChatInterpretationShadowConfig,
     DisabledProductLiveFactsClient,
+    VendreProductLiveFactsClient,
     InMemoryChatInterpretationShadowAuditStore,
     {
       provide: ChatConversationResultRepository,
@@ -62,7 +66,15 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     },
     {
       provide: ProductLiveFactsClient,
-      useExisting: DisabledProductLiveFactsClient,
+      inject: [DisabledProductLiveFactsClient, VendreProductLiveFactsClient],
+      useFactory: (
+        disabled: DisabledProductLiveFactsClient,
+        vendre: VendreProductLiveFactsClient,
+      ) =>
+        resolveProductLiveFactsProvider(readProductLiveFactsProviderConfig(), {
+          disabled,
+          vendre,
+        }).provider,
     },
     ChatConversationService,
     ChatInterpretationShadowOrchestrator,
