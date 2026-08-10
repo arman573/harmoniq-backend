@@ -75,7 +75,7 @@ describe('ProductIntelligenceAuthProvider', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0];
     expect(String(url)).toBe(
-      'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=https%3A%2F%2Fharmoniq-product-intelligence.example.test%2F',
+      'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=https%3A%2F%2Fharmoniq-product-intelligence.example.test',
     );
     expect(init).toMatchObject({
       method: 'GET',
