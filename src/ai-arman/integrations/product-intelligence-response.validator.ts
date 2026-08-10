@@ -76,7 +76,7 @@ function parseAnalysis(value: unknown): ProductIntelligenceAnalysis | null {
   const tags = isRecord(value.tags) ? value.tags : null;
 
   if (!productId || !designation || !inci || !category || !tags) return null;
-  if (!isString(value.designation?.normalized) || !isFiniteNumber(designation.score)) {
+  if (!isString(designation.normalized) || !isFiniteNumber(designation.score)) {
     return null;
   }
   if (!isStringArray(designation.reasons)) return null;
