@@ -88,7 +88,31 @@ describe('readProductLiveFactsProviderConfig', () => {
     });
   });
 
-  it('allows Vendre only with explicit provider, enable flag and configuration', () => {
+  it.each([
+    'http://www.harmoniq.se',
+    'not-a-url',
+    'https://user:pass@www.harmoniq.se',
+  ])('treats an unsafe Vendre base URL as missing configuration', (baseUrl) => {
+    expect(
+      readProductLiveFactsProviderConfig(
+        env({
+          AI_ARMAN_PRODUCT_LIVE_FACTS_PROVIDER: 'vendre',
+          AI_ARMAN_PRODUCT_LIVE_FACTS_ENABLED: 'true',
+          VENDRE_API_BASE_URL: baseUrl,
+          VENDRE_API_KEY: 'secret-placeholder',
+        }),
+      ),
+    ).toEqual({
+      requestedProvider: 'vendre',
+      explicitlyEnabled: true,
+      credentialsConfigured: false,
+      activationAllowed: false,
+      activeProvider: 'disabled',
+      reason: 'vendre_configuration_required',
+    });
+  });
+
+  it('allows Vendre only with explicit provider, enable flag and safe configuration', () => {
     expect(
       readProductLiveFactsProviderConfig(
         env({
