@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ProductIntelligenceAuthProvider } from './product-intelligence-auth.provider';
 import { parseProductIntelligenceBatchResponse } from './product-intelligence-response.validator';
 import {
   PRODUCT_INTELLIGENCE_CONTRACT_VERSION,
@@ -12,6 +13,11 @@ const MAX_PRODUCTS = 25;
 
 @Injectable()
 export class ProductIntelligenceClient {
+  constructor(
+    private readonly authProvider: ProductIntelligenceAuthProvider =
+      new ProductIntelligenceAuthProvider(),
+  ) {}
+
   async evaluate(
     message: string,
     products: ProductIntelligenceRequestProduct[],
@@ -27,6 +33,17 @@ export class ProductIntelligenceClient {
         durationMs: 0,
         analyses: [],
         error: 'product_intelligence_not_configured',
+      };
+    }
+
+    const auth = await this.authProvider.getHeaders();
+    if (!auth.ok) {
+      return {
+        ok: false,
+        configured: false,
+        durationMs: 0,
+        analyses: [],
+        error: auth.error,
       };
     }
 
@@ -48,6 +65,7 @@ export class ProductIntelligenceClient {
           headers: {
             Accept: 'application/json',
             'Content-Type': 'application/json',
+            ...auth.headers,
           },
           body: JSON.stringify(request),
           signal: controller.signal,
