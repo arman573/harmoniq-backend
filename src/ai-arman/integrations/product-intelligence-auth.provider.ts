@@ -1,22 +1,16 @@
 import { Injectable } from '@nestjs/common';
-import { normalizeProductIntelligenceAudience } from './product-intelligence-url.policy';
-
-export type ProductIntelligenceAuthMode =
-  | 'none'
-  | 'google_metadata_identity_token';
+import { ProductIntelligenceResolvedAuthConfig } from './product-intelligence-connection.config';
 
 export type ProductIntelligenceAuthResult =
   | {
       ok: true;
-      mode: ProductIntelligenceAuthMode;
+      mode: ProductIntelligenceResolvedAuthConfig['mode'];
       headers: Record<string, string>;
     }
   | {
       ok: false;
-      mode: ProductIntelligenceAuthMode | 'invalid';
-      error:
-        | 'product_intelligence_auth_not_configured'
-        | 'product_intelligence_auth_failed';
+      mode: 'google_metadata_identity_token';
+      error: 'product_intelligence_auth_failed';
     };
 
 const METADATA_IDENTITY_ENDPOINT =
@@ -26,36 +20,14 @@ const DEFAULT_AUTH_TIMEOUT_MS = 800;
 @Injectable()
 export class ProductIntelligenceAuthProvider {
   async getHeaders(
+    auth: ProductIntelligenceResolvedAuthConfig,
     env: NodeJS.ProcessEnv = process.env,
   ): Promise<ProductIntelligenceAuthResult> {
-    const rawMode = String(env.PRODUCT_INTELLIGENCE_AUTH_MODE || '')
-      .trim()
-      .toLowerCase();
-
-    if (!rawMode || rawMode === 'none') {
+    if (auth.mode === 'none') {
       return {
         ok: true,
         mode: 'none',
         headers: {},
-      };
-    }
-
-    if (rawMode !== 'google_metadata_identity_token') {
-      return {
-        ok: false,
-        mode: 'invalid',
-        error: 'product_intelligence_auth_not_configured',
-      };
-    }
-
-    const audience = normalizeProductIntelligenceAudience(
-      env.PRODUCT_INTELLIGENCE_AUDIENCE,
-    );
-    if (!audience) {
-      return {
-        ok: false,
-        mode: 'google_metadata_identity_token',
-        error: 'product_intelligence_auth_not_configured',
       };
     }
 
@@ -67,7 +39,7 @@ export class ProductIntelligenceAuthProvider {
 
     try {
       const metadataUrl = new URL(METADATA_IDENTITY_ENDPOINT);
-      metadataUrl.searchParams.set('audience', audience);
+      metadataUrl.searchParams.set('audience', auth.audience);
 
       const response = await fetch(metadataUrl, {
         method: 'GET',
