@@ -7,6 +7,7 @@ import {
   ProductIntelligenceLookupResult,
   ProductIntelligenceRequestProduct,
 } from './product-intelligence.types';
+import { normalizeProductIntelligenceRequestBaseUrl } from './product-intelligence-url.policy';
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const MAX_PRODUCTS = 25;
@@ -22,9 +23,9 @@ export class ProductIntelligenceClient {
     message: string,
     products: ProductIntelligenceRequestProduct[],
   ): Promise<ProductIntelligenceLookupResult> {
-    const baseUrl = String(process.env.PRODUCT_INTELLIGENCE_BASE_URL || '')
-      .trim()
-      .replace(/\/$/, '');
+    const baseUrl = normalizeProductIntelligenceRequestBaseUrl(
+      process.env.PRODUCT_INTELLIGENCE_BASE_URL,
+    );
 
     if (!baseUrl) {
       return {
