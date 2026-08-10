@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { normalizeProductIntelligenceAudience } from './product-intelligence-url.policy';
 
 export type ProductIntelligenceAuthMode =
   | 'none'
@@ -47,7 +48,9 @@ export class ProductIntelligenceAuthProvider {
       };
     }
 
-    const audience = normalizeAudience(env.PRODUCT_INTELLIGENCE_AUDIENCE);
+    const audience = normalizeProductIntelligenceAudience(
+      env.PRODUCT_INTELLIGENCE_AUDIENCE,
+    );
     if (!audience) {
       return {
         ok: false,
@@ -108,22 +111,6 @@ export class ProductIntelligenceAuthProvider {
     } finally {
       clearTimeout(timeout);
     }
-  }
-}
-
-function normalizeAudience(value: unknown): string | null {
-  const raw = String(value || '').trim();
-  if (!raw) return null;
-
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== 'https:') return null;
-    if (!url.hostname || url.username || url.password) return null;
-    if (url.search || url.hash) return null;
-    if (url.pathname !== '/' && url.pathname !== '') return null;
-    return `${url.origin}/`;
-  } catch {
-    return null;
   }
 }
 
