@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import { parseProductIntelligenceBatchResponse } from './product-intelligence-response.validator';
 import {
   PRODUCT_INTELLIGENCE_CONTRACT_VERSION,
   ProductIntelligenceBatchRequest,
-  ProductIntelligenceBatchResponse,
   ProductIntelligenceLookupResult,
   ProductIntelligenceRequestProduct,
 } from './product-intelligence.types';
@@ -54,9 +54,23 @@ export class ProductIntelligenceClient {
         },
       );
 
-      const body = (await response.json()) as ProductIntelligenceBatchResponse;
+      let rawBody: unknown;
+      try {
+        rawBody = await response.json();
+      } catch {
+        return {
+          ok: false,
+          configured: true,
+          durationMs: Date.now() - startedAt,
+          upstreamStatus: response.status,
+          analyses: [],
+          error: response.ok
+            ? 'product_intelligence_contract_invalid'
+            : 'product_intelligence_upstream_error',
+        };
+      }
 
-      if (!response.ok || body?.ok !== true) {
+      if (!response.ok) {
         return {
           ok: false,
           configured: true,
@@ -67,14 +81,8 @@ export class ProductIntelligenceClient {
         };
       }
 
-      if (
-        body.contractVersion !== PRODUCT_INTELLIGENCE_CONTRACT_VERSION
-        || !Array.isArray(body.analyses)
-        || !body.verification
-        || typeof body.verification !== 'object'
-        || !body.verification.cost
-        || typeof body.verification.cost !== 'object'
-      ) {
+      const body = parseProductIntelligenceBatchResponse(rawBody);
+      if (!body) {
         return {
           ok: false,
           configured: true,
