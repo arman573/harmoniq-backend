@@ -1,3 +1,5 @@
+import { normalizeVendreHttpsBaseUrl } from './vendre-base-url.policy';
+
 export type ProductLiveFactsProviderName = 'disabled' | 'vendre';
 
 export type ProductLiveFactsProviderConfig = {
@@ -27,7 +29,7 @@ export function readProductLiveFactsProviderConfig(
       .trim()
       .toLowerCase() === 'true';
   const credentialsConfigured = Boolean(
-    String(env.VENDRE_API_BASE_URL || '').trim() &&
+    normalizeVendreHttpsBaseUrl(env.VENDRE_API_BASE_URL) &&
       String(env.VENDRE_API_KEY || '').trim(),
   );
 
