@@ -9,6 +9,7 @@ import type {
   ProductLiveFactsLookupResult,
   ProductLiveFactsRequestProduct,
 } from './product-live-facts.types';
+import { normalizeVendreHttpsBaseUrl } from './vendre-base-url.policy';
 
 const DEFAULT_TIMEOUT_MS = 1200;
 const SWEDISH_STANDARD_VAT_RATE = 0.25;
@@ -221,7 +222,7 @@ export class VendreProductLiveFactsClient extends ProductLiveFactsClient {
   }
 
   private readBaseUrl(): string | null {
-    return normalizeHttpsBaseUrl(process.env.VENDRE_API_BASE_URL);
+    return normalizeVendreHttpsBaseUrl(process.env.VENDRE_API_BASE_URL);
   }
 
   private readApiKey(): string {
@@ -246,22 +247,6 @@ function chooseTerminalError(
   if (current === 'product_live_facts_upstream_error') return current;
   if (next === 'product_live_facts_upstream_error') return next;
   return 'product_live_facts_invalid_response';
-}
-
-function normalizeHttpsBaseUrl(value: unknown): string | null {
-  const raw = String(value || '').trim();
-  if (!raw) return null;
-
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== 'https:') return null;
-    if (!url.hostname || url.username || url.password) return null;
-    url.hash = '';
-    url.search = '';
-    return url.toString().replace(/\/$/, '');
-  } catch {
-    return null;
-  }
 }
 
 function unwrapRecord(value: unknown): UnknownRecord | null {
