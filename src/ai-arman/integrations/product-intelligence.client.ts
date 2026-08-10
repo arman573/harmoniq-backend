@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ProductIntelligenceAuthProvider } from './product-intelligence-auth.provider';
+import { readProductIntelligenceConnectionConfig } from './product-intelligence-connection.config';
 import { parseProductIntelligenceBatchResponse } from './product-intelligence-response.validator';
 import {
   PRODUCT_INTELLIGENCE_CONTRACT_VERSION,
@@ -7,7 +8,6 @@ import {
   ProductIntelligenceLookupResult,
   ProductIntelligenceRequestProduct,
 } from './product-intelligence.types';
-import { normalizeProductIntelligenceRequestBaseUrl } from './product-intelligence-url.policy';
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const MAX_PRODUCTS = 25;
@@ -23,21 +23,18 @@ export class ProductIntelligenceClient {
     message: string,
     products: ProductIntelligenceRequestProduct[],
   ): Promise<ProductIntelligenceLookupResult> {
-    const baseUrl = normalizeProductIntelligenceRequestBaseUrl(
-      process.env.PRODUCT_INTELLIGENCE_BASE_URL,
-    );
-
-    if (!baseUrl) {
+    const connection = readProductIntelligenceConnectionConfig();
+    if (!connection.ok) {
       return {
         ok: false,
         configured: false,
         durationMs: 0,
         analyses: [],
-        error: 'product_intelligence_not_configured',
+        error: connection.error,
       };
     }
 
-    const auth = await this.authProvider.getHeaders();
+    const auth = await this.authProvider.getHeaders(connection.auth);
     if (!auth.ok) {
       return {
         ok: false,
@@ -60,7 +57,7 @@ export class ProductIntelligenceClient {
 
     try {
       const response = await fetch(
-        `${baseUrl}/v1/ai-arman/product-intelligence/evaluate-batch`,
+        `${connection.baseUrl}/v1/ai-arman/product-intelligence/evaluate-batch`,
         {
           method: 'POST',
           headers: {
