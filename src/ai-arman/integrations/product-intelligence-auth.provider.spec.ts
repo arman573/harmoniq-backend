@@ -8,10 +8,13 @@ describe('ProductIntelligenceAuthProvider', () => {
     jest.restoreAllMocks();
   });
 
-  it('keeps authentication disabled by default without a metadata call', async () => {
+  it('keeps authentication disabled without a metadata call', async () => {
     const fetchSpy = jest.spyOn(global, 'fetch');
 
-    const result = await new ProductIntelligenceAuthProvider().getHeaders({});
+    const result = await new ProductIntelligenceAuthProvider().getHeaders({
+      mode: 'none',
+      audience: null,
+    });
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(result).toEqual({
@@ -21,55 +24,14 @@ describe('ProductIntelligenceAuthProvider', () => {
     });
   });
 
-  it.each([
-    '',
-    'http://harmoniq-product-intelligence.example.test',
-    'not-a-url',
-    'https://user:pass@harmoniq-product-intelligence.example.test',
-    'https://harmoniq-product-intelligence.example.test/path',
-    'https://harmoniq-product-intelligence.example.test/?query=1',
-  ])('fails closed for an invalid private-service audience', async (audience) => {
-    const fetchSpy = jest.spyOn(global, 'fetch');
-
-    const result = await new ProductIntelligenceAuthProvider().getHeaders({
-      PRODUCT_INTELLIGENCE_AUTH_MODE: 'google_metadata_identity_token',
-      PRODUCT_INTELLIGENCE_AUDIENCE: audience,
-    });
-
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      ok: false,
-      mode: 'google_metadata_identity_token',
-      error: 'product_intelligence_auth_not_configured',
-    });
-  });
-
-  it('rejects unknown authentication modes before any network call', async () => {
-    const fetchSpy = jest.spyOn(global, 'fetch');
-
-    const result = await new ProductIntelligenceAuthProvider().getHeaders({
-      PRODUCT_INTELLIGENCE_AUTH_MODE: 'bearer_secret',
-      PRODUCT_INTELLIGENCE_AUDIENCE:
-        'https://harmoniq-product-intelligence.example.test/',
-    });
-
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      ok: false,
-      mode: 'invalid',
-      error: 'product_intelligence_auth_not_configured',
-    });
-  });
-
-  it('fetches a Google identity token from the fixed metadata endpoint', async () => {
+  it('fetches a Google identity token for the resolved canonical audience', async () => {
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
       new Response('header.payload.signature', { status: 200 }),
     );
 
     const result = await new ProductIntelligenceAuthProvider().getHeaders({
-      PRODUCT_INTELLIGENCE_AUTH_MODE: 'google_metadata_identity_token',
-      PRODUCT_INTELLIGENCE_AUDIENCE:
-        'https://harmoniq-product-intelligence.example.test/',
+      mode: 'google_metadata_identity_token',
+      audience: 'https://harmoniq-product-intelligence.example.test',
     });
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -100,9 +62,8 @@ describe('ProductIntelligenceAuthProvider', () => {
     jest.spyOn(global, 'fetch').mockResolvedValue(response);
 
     const result = await new ProductIntelligenceAuthProvider().getHeaders({
-      PRODUCT_INTELLIGENCE_AUTH_MODE: 'google_metadata_identity_token',
-      PRODUCT_INTELLIGENCE_AUDIENCE:
-        'https://harmoniq-product-intelligence.example.test/',
+      mode: 'google_metadata_identity_token',
+      audience: 'https://harmoniq-product-intelligence.example.test',
     });
 
     expect(result).toEqual({
