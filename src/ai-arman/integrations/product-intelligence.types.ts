@@ -143,6 +143,7 @@ export type ProductIntelligenceLookupResult = {
     | 'product_intelligence_not_configured'
     | 'product_intelligence_auth_not_configured'
     | 'product_intelligence_auth_failed'
+    | 'product_intelligence_request_invalid'
     | 'product_intelligence_timeout'
     | 'product_intelligence_request_failed'
     | 'product_intelligence_upstream_error'
