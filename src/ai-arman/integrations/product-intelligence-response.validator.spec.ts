@@ -79,6 +79,30 @@ function canonicalResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
+async function evaluateResponse(response: unknown) {
+  global.fetch = jest.fn().mockResolvedValue(
+    new Response(JSON.stringify(response), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  ) as jest.Mock;
+
+  return new ProductIntelligenceClient().evaluate(
+    'Jag behöver ett fuktgivande schampo',
+    [{ productId: '1001', title: 'Hydrating Shampoo' }],
+  );
+}
+
+function expectContractInvalid(result: Awaited<ReturnType<typeof evaluateResponse>>) {
+  expect(result).toMatchObject({
+    ok: false,
+    configured: true,
+    analyses: [],
+    upstreamStatus: 200,
+    error: 'product_intelligence_contract_invalid',
+  });
+}
+
 describe('Product Intelligence response boundary', () => {
   beforeEach(() => {
     process.env.PRODUCT_INTELLIGENCE_BASE_URL =
@@ -95,17 +119,7 @@ describe('Product Intelligence response boundary', () => {
   });
 
   it('accepts the canonical Product Intelligence v1 response', async () => {
-    global.fetch = jest.fn().mockResolvedValue(
-      new Response(JSON.stringify(canonicalResponse()), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
-    ) as jest.Mock;
-
-    const result = await new ProductIntelligenceClient().evaluate(
-      'Jag behöver ett fuktgivande schampo',
-      [{ productId: '1001', title: 'Hydrating Shampoo' }],
-    );
+    const result = await evaluateResponse(canonicalResponse());
 
     expect(result.ok).toBe(true);
     expect(result.analyses).toHaveLength(1);
@@ -123,25 +137,7 @@ describe('Product Intelligence response boundary', () => {
       },
     };
 
-    global.fetch = jest.fn().mockResolvedValue(
-      new Response(JSON.stringify(response), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
-    ) as jest.Mock;
-
-    const result = await new ProductIntelligenceClient().evaluate(
-      'Jag behöver ett fuktgivande schampo',
-      [{ productId: '1001', title: 'Hydrating Shampoo' }],
-    );
-
-    expect(result).toMatchObject({
-      ok: false,
-      configured: true,
-      analyses: [],
-      upstreamStatus: 200,
-      error: 'product_intelligence_contract_invalid',
-    });
+    expectContractInvalid(await evaluateResponse(response));
   });
 
   it('fails closed when a successful upstream response is not valid JSON', async () => {
@@ -157,13 +153,7 @@ describe('Product Intelligence response boundary', () => {
       [{ productId: '1001', title: 'Hydrating Shampoo' }],
     );
 
-    expect(result).toMatchObject({
-      ok: false,
-      configured: true,
-      analyses: [],
-      upstreamStatus: 200,
-      error: 'product_intelligence_contract_invalid',
-    });
+    expectContractInvalid(result);
   });
 
   it('rejects duplicate analysis product IDs', async () => {
@@ -171,19 +161,95 @@ describe('Product Intelligence response boundary', () => {
     const first = (response.analyses as unknown[])[0];
     response.analyses = [first, first] as typeof response.analyses;
 
-    global.fetch = jest.fn().mockResolvedValue(
-      new Response(JSON.stringify(response), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
-    ) as jest.Mock;
+    expectContractInvalid(await evaluateResponse(response));
+  });
 
-    const result = await new ProductIntelligenceClient().evaluate(
-      'Jag behöver ett fuktgivande schampo',
-      [{ productId: '1001', title: 'Hydrating Shampoo' }],
-    );
+  it('rejects overlong evidence text', async () => {
+    const response = canonicalResponse();
+    const analysis = response.analyses[0] as Record<string, unknown>;
+    analysis.evidence = [
+      {
+        source: 'ingredient_intelligence',
+        key: 'glycerin',
+        confidence: 0.9,
+        reason: 'R'.repeat(2001),
+      },
+    ];
 
-    expect(result.error).toBe('product_intelligence_contract_invalid');
-    expect(result.analyses).toEqual([]);
+    expectContractInvalid(await evaluateResponse(response));
+  });
+
+  it('rejects arrays that exceed the bounded item count', async () => {
+    const response = canonicalResponse();
+    const analysis = response.analyses[0] as Record<string, unknown>;
+    analysis.usage = Array.from({ length: 51 }, (_, index) => `usage-${index}`);
+
+    expectContractInvalid(await evaluateResponse(response));
+  });
+
+  it('rejects dangerous invisible characters in upstream text', async () => {
+    const response = canonicalResponse();
+    const analysis = response.analyses[0] as Record<string, unknown>;
+    const designation = analysis.designation as Record<string, unknown>;
+    designation.normalized = 'fuktgivande\u202E schampo';
+
+    expectContractInvalid(await evaluateResponse(response));
+  });
+
+  it('rejects more than eight verification products', async () => {
+    const response = canonicalResponse();
+    const verification = response.verification as Record<string, unknown>;
+    verification.products = Array.from({ length: 9 }, (_, index) => ({
+      productId: `product-${index}`,
+      verdict: 'supported',
+      summary: 'Verifierad.',
+      ingredientFindings: [],
+      problemSolving: [],
+      cautions: [],
+      confidence: 0.9,
+      recommendationAction: 'retain',
+      sources: [],
+      model: 'gpt-5.6-luna',
+      webSearchUsed: false,
+      cached: false,
+    }));
+
+    expectContractInvalid(await evaluateResponse(response));
+  });
+
+  it('rejects unsafe source URLs with credentials', async () => {
+    const response = canonicalResponse();
+    const verification = response.verification as Record<string, unknown>;
+    verification.products = [
+      {
+        productId: '1001',
+        verdict: 'supported',
+        summary: 'Verifierad.',
+        ingredientFindings: [],
+        problemSolving: [],
+        cautions: [],
+        confidence: 0.9,
+        recommendationAction: 'retain',
+        sources: [
+          {
+            url: 'https://user:password@example.test/source',
+            title: 'Unsafe source',
+          },
+        ],
+        model: 'gpt-5.6-luna',
+        webSearchUsed: true,
+        cached: false,
+      },
+    ];
+
+    expectContractInvalid(await evaluateResponse(response));
+  });
+
+  it('rejects responses whose serialized value exceeds 256 KiB', async () => {
+    const response = canonicalResponse({
+      ignoredOversizedField: 'X'.repeat(260 * 1024),
+    });
+
+    expectContractInvalid(await evaluateResponse(response));
   });
 });
