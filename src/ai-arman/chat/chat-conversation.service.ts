@@ -102,8 +102,13 @@ export class ChatConversationService {
 
     const previousState = this.loadPreviousState(input);
     const current = this.messages.handle(input);
-    const interpretation = this.mergeInterpretation(
+    const contextualInterpretation = this.applyPendingAnswer(
       current.interpretation,
+      previousState,
+      input.message.text,
+    );
+    const interpretation = this.mergeInterpretation(
+      contextualInterpretation,
       previousState,
     );
     const decision = this.decideFromMergedInterpretation(
@@ -142,6 +147,29 @@ export class ChatConversationService {
       replayed: false,
       idempotencyKey,
       fingerprint,
+    };
+  }
+
+  private applyPendingAnswer(
+    current: AiArmanInterpretation,
+    previous: AiArmanConversationState | null,
+    messageText: string,
+  ): AiArmanInterpretation {
+    if (previous?.pendingQuestion?.expectedField !== 'drynessLocation') {
+      return current;
+    }
+
+    const resolvedNeeds = resolveDrynessLocationAnswer(messageText);
+    if (resolvedNeeds.length === 0) {
+      return current;
+    }
+
+    return {
+      ...current,
+      entities: {
+        ...current.entities,
+        needs: unique([...current.entities.needs, ...resolvedNeeds]),
+      },
     };
   }
 
@@ -545,6 +573,40 @@ export class ChatConversationService {
 
     return current;
   }
+}
+
+function resolveDrynessLocationAnswer(value: string): string[] {
+  const normalized = normalizeFollowUpText(value);
+  if (!normalized) return [];
+
+  const mentionsScalp = /\bharbotten\b/.test(normalized);
+  const mentionsLengths = /\b(?:langderna|langder|langden|topparna|toppar)\b/.test(
+    normalized,
+  );
+  const negatesScalp = /\binte\s+(?:i\s+)?harbotten\b/.test(normalized);
+  const negatesLengths = /\binte\s+(?:i\s+)?(?:langderna|langder|topparna|toppar)\b/.test(
+    normalized,
+  );
+  const explicitBoth = /\b(?:bada|bade|bagge)(?:\s+och)?\b/.test(normalized);
+
+  if (negatesScalp && mentionsLengths) return ['dry_lengths'];
+  if (negatesLengths && mentionsScalp) return ['dry_scalp'];
+  if (explicitBoth || (mentionsScalp && mentionsLengths)) {
+    return ['dry_scalp', 'dry_lengths'];
+  }
+  if (mentionsScalp) return ['dry_scalp'];
+  if (mentionsLengths) return ['dry_lengths'];
+  return [];
+}
+
+function normalizeFollowUpText(value: string): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function normalizeMergedNeeds(values: string[]): string[] {
