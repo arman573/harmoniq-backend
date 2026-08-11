@@ -30,6 +30,52 @@ describe('ChatMessagesService', () => {
     expect(result.safety.productionActionsEnabled).toBe(false);
   });
 
+  it('recognizes common Swedish descriptions of hair concerns without unnecessary clarification', () => {
+    const result = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'broader-hair-language-1',
+      message: {
+        text: 'Jag har fint slitet och frissigt hår, oljig och lättirriterad hårbotten och söker balsam.',
+      },
+    });
+
+    expect(result.interpretation.primaryIntent).toBe('product_recommendation');
+    expect(result.interpretation.entities.requestedProductTypes).toEqual(['conditioner']);
+    expect(result.interpretation.entities.needs).toEqual(
+      expect.arrayContaining([
+        'thin_hair',
+        'damaged_hair',
+        'frizz_control',
+        'oily_scalp',
+        'sensitive_scalp',
+      ]),
+    );
+    expect(result.interpretation.missingFields).toEqual([]);
+    expect(result.state.status).toBe('ready_for_tools');
+    expect(result.decision.plannedTools).toEqual([
+      'search_products',
+      'analyze_product_suitability',
+      'get_product_live_facts',
+    ]);
+  });
+
+  it('recognizes broader Swedish bleaching and color-treatment wording', () => {
+    const result = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'broader-treatment-language-1',
+      message: {
+        text: 'Mitt hår är färgbehandlat och slingat och jag söker en hårinpackning.',
+      },
+    });
+
+    expect(result.interpretation.primaryIntent).toBe('product_recommendation');
+    expect(result.interpretation.entities.requestedProductTypes).toEqual(['hair_mask']);
+    expect(result.interpretation.entities.needs).toEqual(
+      expect.arrayContaining(['color_treated_hair', 'bleached_hair']),
+    );
+    expect(result.interpretation.missingFields).toEqual([]);
+  });
+
   it('preserves bleached hair and asks where unspecified dryness is located before product search', () => {
     const result = service.handle({
       contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
