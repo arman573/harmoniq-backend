@@ -29,6 +29,10 @@ import { ProductIntelligenceEnrichmentService } from './discovery/product-intell
 import { ProductIntelligenceAuthProvider } from './integrations/product-intelligence-auth.provider';
 import { ProductIntelligenceClient } from './integrations/product-intelligence.client';
 import {
+  InMemoryProductIntelligenceAuditStore,
+  ProductIntelligenceAuditSink,
+} from './integrations/product-intelligence-observability.store';
+import {
   DisabledProductLiveFactsClient,
   ProductLiveFactsClient,
 } from './integrations/product-live-facts.client';
@@ -49,6 +53,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     DisabledProductLiveFactsClient,
     VendreProductLiveFactsClient,
     InMemoryChatInterpretationShadowAuditStore,
+    InMemoryProductIntelligenceAuditStore,
     {
       provide: ChatConversationResultRepository,
       useExisting: ChatConversationResultStore,
@@ -64,6 +69,10 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     {
       provide: ChatInterpretationShadowAuditSink,
       useExisting: InMemoryChatInterpretationShadowAuditStore,
+    },
+    {
+      provide: ProductIntelligenceAuditSink,
+      useExisting: InMemoryProductIntelligenceAuditStore,
     },
     {
       provide: ProductLiveFactsClient,
@@ -110,6 +119,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ProductCardBlockMapper,
     HaircareRecommendationJourneyService,
     ProductDiscoveryService,
+    ProductIntelligenceAuditSink,
     ProductIntelligenceEnrichmentService,
     ProductIntelligenceClient,
     ProductLiveFactsClient,
