@@ -99,6 +99,65 @@ describe('ChatConversationService', () => {
     ]);
   });
 
+  it.each([
+    ['Hårbotten.', ['dry_scalp']],
+    ['Längderna.', ['dry_lengths']],
+    ['Både och.', ['dry_scalp', 'dry_lengths']],
+    ['Både hårbotten och längderna.', ['dry_scalp', 'dry_lengths']],
+    ['Inte hårbotten, mest längderna.', ['dry_lengths']],
+    ['Hårbotten, inte längderna.', ['dry_scalp']],
+  ])(
+    'resolves a natural dryness-location answer %s',
+    (answer, expectedNeeds) => {
+      const service = createService();
+      const first = service.handle({
+        contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+        clientMessageId: `dryness-natural-${answer}`,
+        message: { text: 'Jag har torrt blekt hår och söker schampo.' },
+      });
+
+      const second = service.handle({
+        contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+        conversationId: first.conversationId,
+        clientMessageId: `dryness-natural-followup-${answer}`,
+        message: { text: answer },
+      });
+
+      expect(second.state.status).toBe('ready_for_tools');
+      expect(second.state.pendingQuestion).toBeNull();
+      expect(second.state.remembered.needs).toEqual(
+        expect.arrayContaining(['bleached_hair', ...expectedNeeds]),
+      );
+      expect(second.state.remembered.needs).not.toContain('dry_hair_unspecified');
+      expect(second.decision.plannedTools).toEqual([
+        'search_products',
+        'analyze_product_suitability',
+        'get_product_live_facts',
+      ]);
+    },
+  );
+
+  it('keeps asking when a dryness-location answer is still ambiguous', () => {
+    const service = createService();
+    const first = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'dryness-ambiguous-1',
+      message: { text: 'Jag har torrt blekt hår och söker schampo.' },
+    });
+
+    const second = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      conversationId: first.conversationId,
+      clientMessageId: 'dryness-ambiguous-2',
+      message: { text: 'Svårt att säga.' },
+    });
+
+    expect(second.state.status).toBe('collecting');
+    expect(second.state.pendingQuestion?.expectedField).toBe('drynessLocation');
+    expect(second.state.remembered.needs).toContain('dry_hair_unspecified');
+    expect(second.decision.plannedTools).toEqual([]);
+  });
+
   it('returns the original response for an identical repeated client message', () => {
     const service = createService();
     const request = {
