@@ -351,7 +351,7 @@ export class ChatConversationService {
       ...(previous?.remembered.requestedProductTypes ?? []),
       ...current.entities.requestedProductTypes,
     ]);
-    const needs = unique([
+    const needs = normalizeMergedNeeds([
       ...(previous?.remembered.needs ?? []),
       ...current.entities.needs,
     ]);
@@ -371,6 +371,7 @@ export class ChatConversationService {
     const productJourneyContinues =
       previous?.activeJourney === 'before_purchase' ||
       previous?.pendingQuestion?.expectedField === 'requestedProductType' ||
+      previous?.pendingQuestion?.expectedField === 'drynessLocation' ||
       current.primaryIntent === 'product_recommendation' ||
       (current.primaryIntent === 'unknown' && needs.length > 0);
 
@@ -378,14 +379,22 @@ export class ChatConversationService {
       ? 'product_recommendation'
       : current.primaryIntent;
     const missingFields = current.missingFields.filter(
-      (field) => field !== 'requestedProductType',
+      (field) => field !== 'requestedProductType' && field !== 'drynessLocation',
     );
 
     if (
       primaryIntent === 'product_recommendation' &&
       requestedProductTypes.length === 0
     ) {
-      missingFields.unshift('requestedProductType');
+      missingFields.push('requestedProductType');
+    }
+    if (
+      primaryIntent === 'product_recommendation' &&
+      needs.includes('dry_hair_unspecified') &&
+      !needs.includes('dry_lengths') &&
+      !needs.includes('dry_scalp')
+    ) {
+      missingFields.push('drynessLocation');
     }
 
     return {
@@ -452,9 +461,14 @@ export class ChatConversationService {
           id: 'requested-product-type',
           expectedField: 'requestedProductType',
         }
-      : current.pendingQuestion?.expectedField === 'verifiedOrderIdentity'
-        ? current.pendingQuestion
-        : null;
+      : interpretation.missingFields.includes('drynessLocation')
+        ? {
+            id: 'dryness-location',
+            expectedField: 'drynessLocation',
+          }
+        : current.pendingQuestion?.expectedField === 'verifiedOrderIdentity'
+          ? current.pendingQuestion
+          : null;
 
     return {
       ...current,
@@ -501,6 +515,22 @@ export class ChatConversationService {
       ];
     }
 
+    if (interpretation.missingFields.includes('drynessLocation')) {
+      return [
+        {
+          type: 'message',
+          text: 'Jag har sparat att håret känns torrt. En detalj hjälper mig att välja säkrare.',
+        },
+        {
+          type: 'question',
+          id: 'dryness-location',
+          text: 'Känns torrheten främst i hårbotten, i längderna eller både och?',
+          expectedField: 'drynessLocation',
+          required: true,
+        },
+      ];
+    }
+
     if (
       interpretation.primaryIntent === 'product_recommendation' &&
       decision.plannedTools.length > 0
@@ -515,6 +545,14 @@ export class ChatConversationService {
 
     return current;
   }
+}
+
+function normalizeMergedNeeds(values: string[]): string[] {
+  const needs = unique(values);
+  if (needs.includes('dry_lengths') || needs.includes('dry_scalp')) {
+    return needs.filter((need) => need !== 'dry_hair_unspecified');
+  }
+  return needs;
 }
 
 function unique<T>(values: T[]): T[] {
