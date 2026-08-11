@@ -30,6 +30,37 @@ describe('ChatMessagesService', () => {
     expect(result.safety.productionActionsEnabled).toBe(false);
   });
 
+  it('preserves bleached hair and asks where unspecified dryness is located before product search', () => {
+    const result = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'dryness-clarification-1',
+      message: {
+        text: 'Jag har torrt blekt hår och behöver ett bra schampo.',
+      },
+    });
+
+    expect(result.interpretation.primaryIntent).toBe('product_recommendation');
+    expect(result.interpretation.entities.requestedProductTypes).toEqual(['shampoo']);
+    expect(result.interpretation.entities.needs).toEqual(
+      expect.arrayContaining(['dry_hair_unspecified', 'bleached_hair']),
+    );
+    expect(result.interpretation.missingFields).toEqual(['drynessLocation']);
+    expect(result.decision.plannedTools).toEqual([]);
+    expect(result.state.status).toBe('collecting');
+    expect(result.state.pendingQuestion).toEqual({
+      id: 'dryness-location',
+      expectedField: 'drynessLocation',
+    });
+    expect(result.blocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'question',
+          expectedField: 'drynessLocation',
+        }),
+      ]),
+    );
+  });
+
   it('generates opaque public identifiers instead of deriving them from the client message ID', () => {
     const result = service.handle({
       contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
