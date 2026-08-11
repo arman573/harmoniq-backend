@@ -252,6 +252,7 @@ function buildDiscoveryQuery(interpretation: AiArmanInterpretation): string {
     thin_hair: 'tunt hår',
     color_treated_hair: 'färgat hår',
     bleached_hair: 'blekt hår',
+    damaged_hair: 'skadat hår',
     oily_scalp: 'fet hårbotten',
     dry_scalp: 'torr hårbotten',
     dry_lengths: 'torra längder',
