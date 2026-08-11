@@ -296,7 +296,7 @@ function parseVerification(
 
   const usage = value.usage === undefined ? undefined : parseUsage(value.usage);
   if (value.usage !== undefined && !usage) return null;
-  if (!costMatchesUsage(cost, usage)) return null;
+  if (!costMatchesUsage(cost, usage ?? undefined)) return null;
 
   const error =
     value.error === undefined
