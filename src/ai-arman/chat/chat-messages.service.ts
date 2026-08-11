@@ -85,6 +85,7 @@ export class ChatMessagesService {
     const requestedProductTypes = detectProductTypes(normalized);
     const orderReference = detectOrderReference(normalized);
     const primaryIntent = detectIntent(normalized, requestedProductTypes, orderReference);
+    const needs = detectNeeds(normalized);
     const requiresIdentity = [
       'order_status',
       'tracking_status',
@@ -96,6 +97,14 @@ export class ChatMessagesService {
     const missingFields: string[] = [];
     if (primaryIntent === 'product_recommendation' && requestedProductTypes.length === 0) {
       missingFields.push('requestedProductType');
+    }
+    if (
+      primaryIntent === 'product_recommendation' &&
+      needs.includes('dry_hair_unspecified') &&
+      !needs.includes('dry_lengths') &&
+      !needs.includes('dry_scalp')
+    ) {
+      missingFields.push('drynessLocation');
     }
     if (
       ['order_status', 'tracking_status', 'return_help', 'claim_help'].includes(primaryIntent) &&
@@ -113,7 +122,7 @@ export class ChatMessagesService {
       confidence: primaryIntent === 'unknown' ? 0.35 : 0.72,
       entities: {
         requestedProductTypes,
-        needs: detectNeeds(normalized),
+        needs,
         exclusions: detectExclusions(normalized),
         orderReference,
         productReferences: [],
@@ -337,18 +346,34 @@ function detectIntent(
 
 function detectNeeds(value: string) {
   const needs: string[] = [];
+  const dryLengths = /torra langder|torra toppar|framst langderna|mest langderna|langderna(?: ar)? torra/.test(value);
+  const dryScalp = /torr harbotten|torr i harbotten|harbotten(?: ar)? torr|framst harbotten|mest harbotten/.test(value);
+
+  if (dryLengths) needs.push('dry_lengths');
+  if (dryScalp) needs.push('dry_scalp');
+  if (
+    !dryLengths &&
+    !dryScalp &&
+    /\btorr(?:t|a)?\b/.test(value) &&
+    /\bhar\b/.test(value)
+  ) {
+    needs.push('dry_hair_unspecified');
+  }
+  if (/\bblekt\b|\bblekta\b|\bblonderat\b/.test(value)) {
+    needs.push('bleached_hair');
+  }
+
   const signals: Array<[RegExp, string]> = [
     [/\btunt\b/, 'thin_hair'],
     [/\bfargat\b/, 'color_treated_hair'],
     [/fett snabbt|fet harbotten/, 'oily_scalp'],
-    [/torra langder|torrt har/, 'dry_lengths'],
     [/friss|frizz/, 'frizz_control'],
     [/kanslig harbotten/, 'sensitive_scalp'],
   ];
   for (const [pattern, label] of signals) {
     if (pattern.test(value)) needs.push(label);
   }
-  return needs;
+  return [...new Set(needs)];
 }
 
 function detectExclusions(value: string) {
@@ -380,6 +405,15 @@ function buildQuestion(field: string | null) {
       type: 'question' as const,
       id: 'requested-product-type',
       text: 'Vilken typ av hårprodukt söker du?',
+      expectedField: field,
+      required: true,
+    };
+  }
+  if (field === 'drynessLocation') {
+    return {
+      type: 'question' as const,
+      id: 'dryness-location',
+      text: 'Känns torrheten främst i hårbotten, i längderna eller både och?',
       expectedField: field,
       required: true,
     };
