@@ -39,7 +39,7 @@ describe('ChatConversationService', () => {
     expect(first.state.status).toBe('collecting');
     expect(first.state.pendingQuestion?.expectedField).toBe('requestedProductType');
     expect(first.state.remembered.needs).toEqual(
-      expect.arrayContaining(['color_treated_hair', 'dry_lengths']),
+      expect.arrayContaining(['color_treated_hair', 'dry_hair_unspecified']),
     );
 
     const second = service.handle({
@@ -50,12 +50,48 @@ describe('ChatConversationService', () => {
     });
 
     expect(second.conversationId).toBe(first.conversationId);
+    expect(second.state.status).toBe('collecting');
+    expect(second.state.pendingQuestion?.expectedField).toBe('drynessLocation');
+    expect(second.state.remembered.requestedProductTypes).toEqual(['shampoo']);
+    expect(second.state.remembered.needs).toEqual(
+      expect.arrayContaining(['color_treated_hair', 'dry_hair_unspecified']),
+    );
+    expect(second.decision.plannedTools).toEqual([]);
+  });
+
+  it('resolves hair dryness in a follow-up and only then opens the recommendation toolchain', () => {
+    const service = createService();
+    const first = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'dryness-multi-1',
+      message: {
+        text: 'Jag har torrt blekt hår och behöver ett bra schampo.',
+      },
+    });
+
+    expect(first.state.status).toBe('collecting');
+    expect(first.state.pendingQuestion?.expectedField).toBe('drynessLocation');
+    expect(first.state.remembered.needs).toEqual(
+      expect.arrayContaining(['dry_hair_unspecified', 'bleached_hair']),
+    );
+    expect(first.decision.plannedTools).toEqual([]);
+
+    const second = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      conversationId: first.conversationId,
+      clientMessageId: 'dryness-multi-2',
+      message: { text: 'Främst längderna.' },
+    });
+
+    expect(second.conversationId).toBe(first.conversationId);
+    expect(second.interpretation.primaryIntent).toBe('product_recommendation');
     expect(second.state.status).toBe('ready_for_tools');
     expect(second.state.pendingQuestion).toBeNull();
     expect(second.state.remembered.requestedProductTypes).toEqual(['shampoo']);
     expect(second.state.remembered.needs).toEqual(
-      expect.arrayContaining(['color_treated_hair', 'dry_lengths']),
+      expect.arrayContaining(['bleached_hair', 'dry_lengths']),
     );
+    expect(second.state.remembered.needs).not.toContain('dry_hair_unspecified');
     expect(second.decision.plannedTools).toEqual([
       'search_products',
       'analyze_product_suitability',
