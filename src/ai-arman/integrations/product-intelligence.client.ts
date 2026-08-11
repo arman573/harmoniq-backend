@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ProductIntelligenceAuthProvider } from './product-intelligence-auth.provider';
 import { readProductIntelligenceConnectionConfig } from './product-intelligence-connection.config';
+import { redactProductIntelligenceResponseSecrets } from './product-intelligence-redaction';
 import { parseProductIntelligenceBatchResponse } from './product-intelligence-response.validator';
 import {
   PRODUCT_INTELLIGENCE_CONTRACT_VERSION,
@@ -72,7 +73,10 @@ export class ProductIntelligenceClient {
 
       let rawBody: unknown;
       try {
-        rawBody = await response.json();
+        rawBody = redactProductIntelligenceResponseSecrets(
+          await response.json(),
+          auth.headers,
+        );
       } catch {
         return {
           ok: false,
