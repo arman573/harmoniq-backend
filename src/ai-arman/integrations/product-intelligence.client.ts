@@ -6,16 +6,14 @@ import {
   type ProductIntelligenceAuditStatus,
 } from './product-intelligence-observability.store';
 import { redactProductIntelligenceResponseSecrets } from './product-intelligence-redaction';
+import { buildProductIntelligenceBatchRequest } from './product-intelligence-request.builder';
 import { parseProductIntelligenceBatchResponse } from './product-intelligence-response.validator';
 import {
-  PRODUCT_INTELLIGENCE_CONTRACT_VERSION,
-  ProductIntelligenceBatchRequest,
   ProductIntelligenceLookupResult,
   ProductIntelligenceRequestProduct,
 } from './product-intelligence.types';
 
 const DEFAULT_TIMEOUT_MS = 15000;
-const MAX_PRODUCTS = 25;
 
 @Injectable()
 export class ProductIntelligenceClient {
@@ -49,6 +47,18 @@ export class ProductIntelligenceClient {
       };
     }
 
+    const request = buildProductIntelligenceBatchRequest(message, products);
+    if (!request) {
+      this.recordAudit('request_invalid', connection.auth.mode, 0, null);
+      return {
+        ok: false,
+        configured: true,
+        durationMs: 0,
+        analyses: [],
+        error: 'product_intelligence_request_invalid',
+      };
+    }
+
     const auth = await this.authProvider.getHeaders(connection.auth);
     if (!auth.ok) {
       this.recordAudit('auth_failed', connection.auth.mode, 0, null);
@@ -60,12 +70,6 @@ export class ProductIntelligenceClient {
         error: auth.error,
       };
     }
-
-    const request: ProductIntelligenceBatchRequest = {
-      contractVersion: PRODUCT_INTELLIGENCE_CONTRACT_VERSION,
-      customerNeed: { message: String(message || '').trim() },
-      products: products.slice(0, MAX_PRODUCTS),
-    };
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.readTimeout());
