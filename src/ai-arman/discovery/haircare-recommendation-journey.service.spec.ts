@@ -136,6 +136,32 @@ describe('HaircareRecommendationJourneyService', () => {
     expect(result.safety.customerProductCardsReady).toBe(false);
   });
 
+  it('includes clarified bleached-hair and dryness signals in backend discovery', async () => {
+    const discovery = createDiscovery(false);
+    const enrichment = { enrich: jest.fn() } as unknown as ProductIntelligenceEnrichmentService;
+    const productLiveFacts = { getFacts: jest.fn() } as unknown as ProductLiveFactsClient;
+    const clarifiedInterpretation: AiArmanInterpretation = {
+      ...interpretation,
+      entities: {
+        ...interpretation.entities,
+        requestedProductTypes: ['shampoo'],
+        needs: ['bleached_hair', 'dry_lengths'],
+        exclusions: [],
+      },
+    };
+
+    const result = await createService(discovery, enrichment, productLiveFacts).prepare(
+      clarifiedInterpretation,
+    );
+
+    expect(discovery.discover).toHaveBeenCalledWith(
+      'schampo blekt hår torra längder',
+    );
+    expect(result.status).toBe('no_verified_candidates');
+    expect(enrichment.enrich).not.toHaveBeenCalled();
+    expect(productLiveFacts.getFacts).not.toHaveBeenCalled();
+  });
+
   it('passes metadata only for Product Intelligence approved products', async () => {
     const discovery = createDiscovery();
     const approved = {
