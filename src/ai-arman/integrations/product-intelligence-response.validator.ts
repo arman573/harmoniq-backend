@@ -25,6 +25,10 @@ const MAX_ARRAY_ITEMS = 50;
 const MAX_EVIDENCE_ITEMS = 100;
 const MAX_VERIFICATION_PRODUCTS = 8;
 const MAX_SOURCES = 12;
+const MAX_TOKEN_COUNT = 50_000_000;
+const MAX_REQUEST_LIMIT_USD = 1;
+const MAX_DAILY_LIMIT_USD = 1000;
+const MONEY_TOLERANCE_USD = 0.000003;
 const DANGEROUS_INVISIBLE_PATTERN =
   /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/;
 
@@ -106,7 +110,7 @@ function parseAnalysis(value: unknown): ProductIntelligenceAnalysis | null {
   );
   if (
     normalizedDesignation === null ||
-    !isFiniteNumber(designation.score) ||
+    !isScore(designation.score) ||
     !designationReasons
   ) {
     return null;
@@ -123,10 +127,10 @@ function parseAnalysis(value: unknown): ProductIntelligenceAnalysis | null {
   const analyzedAt = validTimestamp(inci.analyzedAt);
   if (
     originalInci === null ||
-    !isFiniteNumber(inci.suitabilityScore) ||
+    !isScore(inci.suitabilityScore) ||
     !signals ||
     !conflicts ||
-    !isFiniteNumber(inci.confidence) ||
+    !isConfidence(inci.confidence) ||
     !inciEngineVersion ||
     !analyzedAt
   ) {
@@ -154,10 +158,10 @@ function parseAnalysis(value: unknown): ProductIntelligenceAnalysis | null {
     MAX_SHORT_TEXT,
   );
   if (
-    !isFiniteNumber(category.score) ||
+    !isScore(category.score) ||
     !categoryReasons ||
     !categoryValues ||
-    !isFiniteNumber(tags.score) ||
+    !isScore(tags.score) ||
     !tagReasons ||
     !tagValues
   ) {
@@ -202,25 +206,25 @@ function parseAnalysis(value: unknown): ProductIntelligenceAnalysis | null {
     productId,
     designation: {
       normalized: normalizedDesignation,
-      score: designation.score as number,
+      score: designation.score,
       reasons: designationReasons,
     },
     inci: {
       original: originalInci,
-      suitabilityScore: inci.suitabilityScore as number,
+      suitabilityScore: inci.suitabilityScore,
       signals,
       conflicts,
-      confidence: inci.confidence as number,
+      confidence: inci.confidence,
       engineVersion: inciEngineVersion,
       analyzedAt,
     },
     category: {
-      score: category.score as number,
+      score: category.score,
       reasons: categoryReasons,
       values: categoryValues,
     },
     tags: {
-      score: tags.score as number,
+      score: tags.score,
       reasons: tagReasons,
       values: tagValues,
     },
@@ -236,7 +240,7 @@ function parseEvidence(value: unknown): ProductIntelligenceEvidence | null {
   if (!isRecord(value)) return null;
   if (!isString(value.source) || !EVIDENCE_SOURCES.has(value.source)) return null;
   const key = boundedText(value.key, MAX_SHORT_TEXT, true);
-  if (!key || !isFiniteNumber(value.confidence)) return null;
+  if (!key || !isConfidence(value.confidence)) return null;
   if (
     value.direction !== undefined &&
     (!isString(value.direction) || !EVIDENCE_DIRECTIONS.has(value.direction))
@@ -252,7 +256,7 @@ function parseEvidence(value: unknown): ProductIntelligenceEvidence | null {
   return {
     source: value.source as ProductIntelligenceEvidence['source'],
     key,
-    confidence: value.confidence as number,
+    confidence: value.confidence,
     ...(value.direction === undefined
       ? {}
       : { direction: value.direction as ProductIntelligenceEvidence['direction'] }),
@@ -292,6 +296,8 @@ function parseVerification(
 
   const usage = value.usage === undefined ? undefined : parseUsage(value.usage);
   if (value.usage !== undefined && !usage) return null;
+  if (!costMatchesUsage(cost, usage)) return null;
+
   const error =
     value.error === undefined
       ? undefined
@@ -343,7 +349,7 @@ function parseResearchProduct(
     !ingredientFindings ||
     !problemSolving ||
     !cautions ||
-    !isFiniteNumber(value.confidence) ||
+    !isConfidence(value.confidence) ||
     !isString(value.recommendationAction) ||
     !RECOMMENDATION_ACTIONS.has(value.recommendationAction) ||
     !Array.isArray(value.sources) ||
@@ -383,13 +389,16 @@ function parseResearchProduct(
 function parseUsage(value: unknown): ProductIntelligenceOpenAiUsage | null {
   if (!isRecord(value)) return null;
   if (
-    !isFiniteNumber(value.inputTokens) ||
-    !isFiniteNumber(value.cachedInputTokens) ||
-    !isFiniteNumber(value.outputTokens) ||
-    !isFiniteNumber(value.totalTokens)
+    !isTokenCount(value.inputTokens) ||
+    !isTokenCount(value.cachedInputTokens) ||
+    !isTokenCount(value.outputTokens) ||
+    !isTokenCount(value.totalTokens)
   ) {
     return null;
   }
+  if (value.cachedInputTokens > value.inputTokens) return null;
+  if (value.totalTokens < value.inputTokens + value.outputTokens) return null;
+
   return {
     inputTokens: value.inputTokens,
     cachedInputTokens: value.cachedInputTokens,
@@ -400,40 +409,102 @@ function parseUsage(value: unknown): ProductIntelligenceOpenAiUsage | null {
 
 function parseCost(value: unknown): ProductIntelligenceOpenAiCost | null {
   if (!isRecord(value)) return null;
-  const numberKeys = [
-    'estimatedMaximumUsd',
-    'requestLimitUsd',
-    'dailyLimitUsd',
-    'spentTodayUsd',
-    'remainingTodayUsd',
-    'actualUsd',
-    'inputUsd',
-    'cachedInputUsd',
-    'outputUsd',
-  ] as const;
-
   const reason = boundedText(value.reason, MAX_SHORT_TEXT, false);
   if (!isBoolean(value.allowed) || reason === null) return null;
-  if (numberKeys.some((key) => !isFiniteNumber(value[key]))) return null;
+
+  if (
+    !isNonNegativeNumber(value.estimatedMaximumUsd) ||
+    !isNumberInRange(value.requestLimitUsd, 0.001, MAX_REQUEST_LIMIT_USD) ||
+    !isNumberInRange(value.dailyLimitUsd, 0.01, MAX_DAILY_LIMIT_USD) ||
+    !isNonNegativeNumber(value.spentTodayUsd) ||
+    !isNonNegativeNumber(value.remainingTodayUsd) ||
+    !isNonNegativeNumber(value.actualUsd) ||
+    !isNonNegativeNumber(value.inputUsd) ||
+    !isNonNegativeNumber(value.cachedInputUsd) ||
+    !isNonNegativeNumber(value.outputUsd)
+  ) {
+    return null;
+  }
   if (value.currency !== 'USD' || value.pricingVersion !== 'gpt-5.6-luna-2026-08') {
+    return null;
+  }
+
+  if (
+    !approximatelyEqual(
+      value.actualUsd,
+      value.inputUsd + value.cachedInputUsd + value.outputUsd,
+    )
+  ) {
+    return null;
+  }
+  if (value.spentTodayUsd + MONEY_TOLERANCE_USD < value.actualUsd) return null;
+  if (
+    value.spentTodayUsd >
+    value.dailyLimitUsd + value.actualUsd + MONEY_TOLERANCE_USD
+  ) {
+    return null;
+  }
+  if (
+    !approximatelyEqual(
+      value.remainingTodayUsd,
+      Math.max(0, value.dailyLimitUsd - value.spentTodayUsd),
+    )
+  ) {
+    return null;
+  }
+  if (
+    value.allowed &&
+    value.estimatedMaximumUsd > value.requestLimitUsd + MONEY_TOLERANCE_USD
+  ) {
     return null;
   }
 
   return {
     allowed: value.allowed,
     reason,
-    estimatedMaximumUsd: value.estimatedMaximumUsd as number,
-    requestLimitUsd: value.requestLimitUsd as number,
-    dailyLimitUsd: value.dailyLimitUsd as number,
-    spentTodayUsd: value.spentTodayUsd as number,
-    remainingTodayUsd: value.remainingTodayUsd as number,
-    actualUsd: value.actualUsd as number,
-    inputUsd: value.inputUsd as number,
-    cachedInputUsd: value.cachedInputUsd as number,
-    outputUsd: value.outputUsd as number,
+    estimatedMaximumUsd: value.estimatedMaximumUsd,
+    requestLimitUsd: value.requestLimitUsd,
+    dailyLimitUsd: value.dailyLimitUsd,
+    spentTodayUsd: value.spentTodayUsd,
+    remainingTodayUsd: value.remainingTodayUsd,
+    actualUsd: value.actualUsd,
+    inputUsd: value.inputUsd,
+    cachedInputUsd: value.cachedInputUsd,
+    outputUsd: value.outputUsd,
     currency: 'USD',
     pricingVersion: 'gpt-5.6-luna-2026-08',
   };
+}
+
+function costMatchesUsage(
+  cost: ProductIntelligenceOpenAiCost,
+  usage: ProductIntelligenceOpenAiUsage | undefined,
+): boolean {
+  if (!usage) {
+    return (
+      approximatelyEqual(cost.actualUsd, 0) &&
+      approximatelyEqual(cost.inputUsd, 0) &&
+      approximatelyEqual(cost.cachedInputUsd, 0) &&
+      approximatelyEqual(cost.outputUsd, 0)
+    );
+  }
+
+  const uncachedInputTokens = usage.inputTokens - usage.cachedInputTokens;
+  const expectedInputUsd = roundUsd(uncachedInputTokens / 1_000_000);
+  const expectedCachedInputUsd = roundUsd(
+    (usage.cachedInputTokens * 0.1) / 1_000_000,
+  );
+  const expectedOutputUsd = roundUsd((usage.outputTokens * 6) / 1_000_000);
+  const expectedActualUsd = roundUsd(
+    expectedInputUsd + expectedCachedInputUsd + expectedOutputUsd,
+  );
+
+  return (
+    approximatelyEqual(cost.inputUsd, expectedInputUsd) &&
+    approximatelyEqual(cost.cachedInputUsd, expectedCachedInputUsd) &&
+    approximatelyEqual(cost.outputUsd, expectedOutputUsd) &&
+    approximatelyEqual(cost.actualUsd, expectedActualUsd)
+  );
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -503,6 +574,44 @@ function isBoolean(value: unknown): value is boolean {
   return typeof value === 'boolean';
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
+function isScore(value: unknown): value is number {
+  return isNumberInRange(value, 0, 100);
+}
+
+function isConfidence(value: unknown): value is number {
+  return isNumberInRange(value, 0, 1);
+}
+
+function isTokenCount(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= MAX_TOKEN_COUNT
+  );
+}
+
+function isNonNegativeNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function isNumberInRange(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= minimum &&
+    value <= maximum
+  );
+}
+
+function approximatelyEqual(left: number, right: number): boolean {
+  return Math.abs(left - right) <= MONEY_TOLERANCE_USD;
+}
+
+function roundUsd(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
 }
