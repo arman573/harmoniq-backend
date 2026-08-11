@@ -132,7 +132,7 @@ describe('ChatConversationService recommendation journey execution', () => {
     const request = {
       contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
       clientMessageId: 'journey-replay-1',
-      message: { text: 'Schampo för torrt hår' },
+      message: { text: 'Schampo för torra längder' },
     } as const;
 
     const first = await service.handleWithShadow(request);
