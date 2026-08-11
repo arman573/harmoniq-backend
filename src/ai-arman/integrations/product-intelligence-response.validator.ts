@@ -256,7 +256,7 @@ function parseEvidence(value: unknown): ProductIntelligenceEvidence | null {
     ...(value.direction === undefined
       ? {}
       : { direction: value.direction as ProductIntelligenceEvidence['direction'] }),
-    ...(reason === undefined ? {} : { reason }),
+    ...(typeof reason === 'string' ? { reason } : {}),
   };
 }
 
@@ -309,7 +309,7 @@ function parseVerification(
     products,
     ...(usage ? { usage } : {}),
     cost,
-    ...(error === undefined ? {} : { error }),
+    ...(typeof error === 'string' ? { error } : {}),
   };
 }
 
