@@ -162,6 +162,38 @@ describe('HaircareRecommendationJourneyService', () => {
     expect(productLiveFacts.getFacts).not.toHaveBeenCalled();
   });
 
+  it('includes broader recognized hair needs in backend discovery', async () => {
+    const discovery = createDiscovery(false);
+    const enrichment = { enrich: jest.fn() } as unknown as ProductIntelligenceEnrichmentService;
+    const productLiveFacts = { getFacts: jest.fn() } as unknown as ProductLiveFactsClient;
+    const broaderInterpretation: AiArmanInterpretation = {
+      ...interpretation,
+      entities: {
+        ...interpretation.entities,
+        requestedProductTypes: ['conditioner'],
+        needs: [
+          'thin_hair',
+          'damaged_hair',
+          'frizz_control',
+          'oily_scalp',
+          'sensitive_scalp',
+        ],
+        exclusions: [],
+      },
+    };
+
+    const result = await createService(discovery, enrichment, productLiveFacts).prepare(
+      broaderInterpretation,
+    );
+
+    expect(discovery.discover).toHaveBeenCalledWith(
+      'balsam tunt hår skadat hår friss fet hårbotten känslig hårbotten',
+    );
+    expect(result.status).toBe('no_verified_candidates');
+    expect(enrichment.enrich).not.toHaveBeenCalled();
+    expect(productLiveFacts.getFacts).not.toHaveBeenCalled();
+  });
+
   it('passes metadata only for Product Intelligence approved products', async () => {
     const discovery = createDiscovery();
     const approved = {
