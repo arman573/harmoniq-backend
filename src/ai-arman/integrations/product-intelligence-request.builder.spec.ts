@@ -60,6 +60,74 @@ describe('Product Intelligence request builder', () => {
     });
   });
 
+  it('removes dangerous invisible characters from customer text', () => {
+    const request = buildProductIntelligenceBatchRequest(
+      'Jag vill ha\u200B ett milt\u202E schampo',
+      [{ productId: '1001', title: 'Hydrating Shampoo' }],
+    );
+
+    expect(request?.customerNeed.message).toBe('Jag vill ha  ett milt  schampo');
+    expect(request?.customerNeed.message).not.toMatch(/[\u200B\u202E]/);
+  });
+
+  it.each([
+    {
+      label: 'productId over 128 characters',
+      product: { productId: 'p'.repeat(129), title: 'Hydrating Shampoo' },
+    },
+    {
+      label: 'title over 300 characters',
+      product: { productId: '1001', title: 'T'.repeat(301) },
+    },
+    {
+      label: 'zero-width character in productId',
+      product: { productId: '10\u200B01', title: 'Hydrating Shampoo' },
+    },
+    {
+      label: 'bidi override in title',
+      product: { productId: '1001', title: 'Hydrating\u202E Shampoo' },
+    },
+    {
+      label: 'control character in title',
+      product: { productId: '1001', title: 'Hydrating\u0007 Shampoo' },
+    },
+  ])('fails closed for $label', ({ product }) => {
+    expect(
+      buildProductIntelligenceBatchRequest('fuktgivande schampo', [product]),
+    ).toBeNull();
+  });
+
+  it('drops an overlong optional product URL instead of forwarding it', () => {
+    const request = buildProductIntelligenceBatchRequest(
+      'fuktgivande schampo',
+      [
+        {
+          productId: '1001',
+          title: 'Hydrating Shampoo',
+          url: `https://www.harmoniq.se/${'a'.repeat(1100)}`,
+        },
+      ],
+    );
+
+    expect(request).toEqual({
+      contractVersion: PRODUCT_INTELLIGENCE_CONTRACT_VERSION,
+      customerNeed: { message: 'fuktgivande schampo' },
+      products: [{ productId: '1001', title: 'Hydrating Shampoo' }],
+    });
+  });
+
+  it('fails closed when the minimized serialized request exceeds 32 KiB', () => {
+    const products = Array.from({ length: 25 }, (_, index) => ({
+      productId: `product-${index}`,
+      title: 'T'.repeat(300),
+      url: `https://www.harmoniq.se/${'u'.repeat(900)}-${index}`,
+    }));
+
+    expect(
+      buildProductIntelligenceBatchRequest('M'.repeat(1000), products),
+    ).toBeNull();
+  });
+
   it.each([
     ['', [{ productId: '1001', title: 'Hydrating Shampoo' }]],
     ['ok', [{ productId: '1001', title: 'Hydrating Shampoo' }]],
