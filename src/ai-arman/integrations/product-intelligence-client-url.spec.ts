@@ -1,5 +1,9 @@
 import { ProductIntelligenceAuthProvider } from './product-intelligence-auth.provider';
 import { ProductIntelligenceClient } from './product-intelligence.client';
+import type {
+  ProductIntelligenceAuditRecord,
+  ProductIntelligenceAuditSink,
+} from './product-intelligence-observability.store';
 
 const originalEnv = {
   baseUrl: process.env.PRODUCT_INTELLIGENCE_BASE_URL,
@@ -43,6 +47,48 @@ describe('ProductIntelligenceClient URL boundary', () => {
       durationMs: 0,
       analyses: [],
       error: 'product_intelligence_not_configured',
+    });
+  });
+
+  it('fails closed before auth or PI network for an invalid outbound request', async () => {
+    process.env.PRODUCT_INTELLIGENCE_BASE_URL =
+      'https://candidate---service.example.test';
+    process.env.PRODUCT_INTELLIGENCE_AUTH_MODE =
+      'google_metadata_identity_token';
+    process.env.PRODUCT_INTELLIGENCE_AUDIENCE =
+      'https://service.example.test';
+
+    const authProvider = {
+      getHeaders: jest.fn(),
+    } as unknown as ProductIntelligenceAuthProvider;
+    const records: ProductIntelligenceAuditRecord[] = [];
+    const auditSink = {
+      record: jest.fn((record: ProductIntelligenceAuditRecord) => {
+        records.push(record);
+      }),
+    } as ProductIntelligenceAuditSink;
+    const fetchSpy = jest.spyOn(global, 'fetch');
+
+    const result = await new ProductIntelligenceClient(
+      authProvider,
+      auditSink,
+    ).evaluate('ok', [{ productId: 'p1', title: 'Test Shampoo' }]);
+
+    expect(authProvider.getHeaders).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: false,
+      configured: true,
+      durationMs: 0,
+      analyses: [],
+      error: 'product_intelligence_request_invalid',
+    });
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      status: 'request_invalid',
+      authMode: 'google_metadata_identity_token',
+      durationMs: 0,
+      upstreamStatus: null,
     });
   });
 
