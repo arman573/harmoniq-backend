@@ -245,6 +245,117 @@ describe('Product Intelligence response boundary', () => {
     expectContractInvalid(await evaluateResponse(response));
   });
 
+  it.each([
+    ['designation score above 100', 'designation', 'score', 101],
+    ['designation score below zero', 'designation', 'score', -1],
+    ['INCI suitability score above 100', 'inci', 'suitabilityScore', 101],
+    ['INCI confidence above one', 'inci', 'confidence', 1.01],
+    ['evidence confidence below zero', 'evidence', 'confidence', -0.01],
+  ])('rejects invalid numeric semantics: %s', async (_label, section, key, invalid) => {
+    const response = canonicalResponse();
+    const analysis = response.analyses[0] as Record<string, unknown>;
+    if (section === 'evidence') {
+      const evidence = analysis.evidence as Array<Record<string, unknown>>;
+      evidence[0][key] = invalid;
+    } else {
+      const nested = analysis[section] as Record<string, unknown>;
+      nested[key] = invalid;
+    }
+
+    expectContractInvalid(await evaluateResponse(response));
+  });
+
+  it.each([
+    {
+      label: 'negative input tokens',
+      usage: { inputTokens: -1, cachedInputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    },
+    {
+      label: 'fractional output tokens',
+      usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 1.5, totalTokens: 11.5 },
+    },
+    {
+      label: 'cached tokens above input tokens',
+      usage: { inputTokens: 10, cachedInputTokens: 11, outputTokens: 1, totalTokens: 11 },
+    },
+    {
+      label: 'total tokens below input plus output',
+      usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 5, totalTokens: 14 },
+    },
+  ])('rejects invalid OpenAI usage semantics: $label', async ({ usage }) => {
+    const response = canonicalResponse();
+    const verification = response.verification as Record<string, unknown>;
+    verification.usage = usage;
+
+    expectContractInvalid(await evaluateResponse(response));
+  });
+
+  it('accepts internally consistent usage and calculated cost', async () => {
+    const response = canonicalResponse();
+    const verification = response.verification as Record<string, unknown>;
+    verification.usage = {
+      inputTokens: 1000,
+      cachedInputTokens: 200,
+      outputTokens: 100,
+      totalTokens: 1100,
+    };
+    verification.cost = {
+      allowed: true,
+      reason: 'within_budget',
+      estimatedMaximumUsd: 0.01,
+      requestLimitUsd: 0.02,
+      dailyLimitUsd: 2,
+      spentTodayUsd: 0.00142,
+      remainingTodayUsd: 1.99858,
+      actualUsd: 0.00142,
+      inputUsd: 0.0008,
+      cachedInputUsd: 0.00002,
+      outputUsd: 0.0006,
+      currency: 'USD',
+      pricingVersion: 'gpt-5.6-luna-2026-08',
+    };
+
+    const result = await evaluateResponse(response);
+    expect(result.ok).toBe(true);
+    expect(result.verification?.usage?.totalTokens).toBe(1100);
+  });
+
+  it.each([
+    {
+      label: 'negative cost',
+      mutate: (cost: Record<string, unknown>) => {
+        cost.actualUsd = -0.01;
+      },
+    },
+    {
+      label: 'actual cost not equal to components',
+      mutate: (cost: Record<string, unknown>) => {
+        cost.actualUsd = 0.01;
+      },
+    },
+    {
+      label: 'remaining budget inconsistent with spent amount',
+      mutate: (cost: Record<string, unknown>) => {
+        cost.remainingTodayUsd = 0.5;
+      },
+    },
+    {
+      label: 'allowed estimate above request limit',
+      mutate: (cost: Record<string, unknown>) => {
+        cost.allowed = true;
+        cost.estimatedMaximumUsd = 0.2;
+        cost.requestLimitUsd = 0.1;
+      },
+    },
+  ])('rejects invalid cost semantics: $label', async ({ mutate }) => {
+    const response = canonicalResponse();
+    const verification = response.verification as Record<string, unknown>;
+    const cost = verification.cost as Record<string, unknown>;
+    mutate(cost);
+
+    expectContractInvalid(await evaluateResponse(response));
+  });
+
   it('rejects responses whose serialized value exceeds 256 KiB', async () => {
     const response = canonicalResponse({
       ignoredOversizedField: 'X'.repeat(260 * 1024),
