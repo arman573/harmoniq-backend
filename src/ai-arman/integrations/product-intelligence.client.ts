@@ -1,6 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { ProductIntelligenceAuthProvider } from './product-intelligence-auth.provider';
 import { readProductIntelligenceConnectionConfig } from './product-intelligence-connection.config';
+import {
+  ProductIntelligenceAuditSink,
+  type ProductIntelligenceAuditStatus,
+} from './product-intelligence-observability.store';
 import { redactProductIntelligenceResponseSecrets } from './product-intelligence-redaction';
 import { parseProductIntelligenceBatchResponse } from './product-intelligence-response.validator';
 import {
@@ -18,6 +22,8 @@ export class ProductIntelligenceClient {
   constructor(
     private readonly authProvider: ProductIntelligenceAuthProvider =
       new ProductIntelligenceAuthProvider(),
+    @Optional()
+    private readonly auditSink?: ProductIntelligenceAuditSink,
   ) {}
 
   async evaluate(
@@ -26,6 +32,14 @@ export class ProductIntelligenceClient {
   ): Promise<ProductIntelligenceLookupResult> {
     const connection = readProductIntelligenceConnectionConfig();
     if (!connection.ok) {
+      this.recordAudit(
+        connection.error === 'product_intelligence_auth_not_configured'
+          ? 'auth_not_configured'
+          : 'connection_not_configured',
+        'unresolved',
+        0,
+        null,
+      );
       return {
         ok: false,
         configured: false,
@@ -37,6 +51,7 @@ export class ProductIntelligenceClient {
 
     const auth = await this.authProvider.getHeaders(connection.auth);
     if (!auth.ok) {
+      this.recordAudit('auth_failed', connection.auth.mode, 0, null);
       return {
         ok: false,
         configured: false,
@@ -78,10 +93,18 @@ export class ProductIntelligenceClient {
           auth.headers,
         );
       } catch {
+        const durationMs = Date.now() - startedAt;
+        const status = response.ok ? 'contract_invalid' : 'upstream_error';
+        this.recordAudit(
+          status,
+          connection.auth.mode,
+          durationMs,
+          response.status,
+        );
         return {
           ok: false,
           configured: true,
-          durationMs: Date.now() - startedAt,
+          durationMs,
           upstreamStatus: response.status,
           analyses: [],
           error: response.ok
@@ -91,10 +114,17 @@ export class ProductIntelligenceClient {
       }
 
       if (!response.ok) {
+        const durationMs = Date.now() - startedAt;
+        this.recordAudit(
+          'upstream_error',
+          connection.auth.mode,
+          durationMs,
+          response.status,
+        );
         return {
           ok: false,
           configured: true,
-          durationMs: Date.now() - startedAt,
+          durationMs,
           upstreamStatus: response.status,
           analyses: [],
           error: 'product_intelligence_upstream_error',
@@ -103,20 +133,34 @@ export class ProductIntelligenceClient {
 
       const body = parseProductIntelligenceBatchResponse(rawBody);
       if (!body) {
+        const durationMs = Date.now() - startedAt;
+        this.recordAudit(
+          'contract_invalid',
+          connection.auth.mode,
+          durationMs,
+          response.status,
+        );
         return {
           ok: false,
           configured: true,
-          durationMs: Date.now() - startedAt,
+          durationMs,
           upstreamStatus: response.status,
           analyses: [],
           error: 'product_intelligence_contract_invalid',
         };
       }
 
+      const durationMs = Date.now() - startedAt;
+      this.recordAudit(
+        'completed',
+        connection.auth.mode,
+        durationMs,
+        response.status,
+      );
       return {
         ok: true,
         configured: true,
-        durationMs: Date.now() - startedAt,
+        durationMs,
         upstreamStatus: response.status,
         analyses: body.analyses,
         engineVersion: body.engineVersion,
@@ -124,18 +168,47 @@ export class ProductIntelligenceClient {
         verification: body.verification,
       };
     } catch (error) {
+      const durationMs = Date.now() - startedAt;
+      const timedOut = error instanceof Error && error.name === 'AbortError';
+      this.recordAudit(
+        timedOut ? 'request_timeout' : 'request_failed',
+        connection.auth.mode,
+        durationMs,
+        null,
+      );
       return {
         ok: false,
         configured: true,
-        durationMs: Date.now() - startedAt,
+        durationMs,
         analyses: [],
-        error:
-          error instanceof Error && error.name === 'AbortError'
-            ? 'product_intelligence_timeout'
-            : 'product_intelligence_request_failed',
+        error: timedOut
+          ? 'product_intelligence_timeout'
+          : 'product_intelligence_request_failed',
       };
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  private recordAudit(
+    status: ProductIntelligenceAuditStatus,
+    authMode: 'none' | 'google_metadata_identity_token' | 'unresolved',
+    durationMs: number,
+    upstreamStatus: number | null,
+  ): void {
+    if (!this.auditSink) return;
+
+    try {
+      this.auditSink.record({
+        recordedAt: new Date().toISOString(),
+        status,
+        authMode,
+        durationMs: Math.max(0, Math.trunc(durationMs)),
+        upstreamStatus:
+          upstreamStatus === null ? null : Math.trunc(upstreamStatus),
+      });
+    } catch {
+      // Observability must never affect the customer-facing fail-closed path.
     }
   }
 
