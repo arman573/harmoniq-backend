@@ -8,6 +8,7 @@ export type ProductIntelligenceAuditStatus =
   | 'connection_not_configured'
   | 'auth_not_configured'
   | 'auth_failed'
+  | 'request_invalid'
   | 'request_timeout'
   | 'request_failed'
   | 'upstream_error'
