@@ -364,10 +364,10 @@ function detectNeeds(value: string) {
   }
 
   const signals: Array<[RegExp, string]> = [
-    [/\btunt\b|\bfint har\b|\btunna stran\b|\bfina stran\b/, 'thin_hair'],
+    [/\btunt\b|\bfint(?:\s+[a-z0-9-]+){0,3}\s+har\b|\btunna stran\b|\bfina stran\b/, 'thin_hair'],
     [/\bfargat\b|\bfargbehandlat\b|\bfargbehandlade\b/, 'color_treated_hair'],
-    [/fett snabbt|fet harbotten|oljig harbotten|flottig harbotten/, 'oily_scalp'],
-    [/skadat har|slitet har|skora langder|skort har|kemiskt skadat|varmeskadat/, 'damaged_hair'],
+    [/fett snabbt|fet harbotten|\boljig(?:\s+[a-z0-9-]+){0,3}\s+harbotten\b|\bflottig(?:\s+[a-z0-9-]+){0,3}\s+harbotten\b/, 'oily_scalp'],
+    [/skadat har|\bslitet(?:\s+[a-z0-9-]+){0,3}\s+har\b|skora langder|skort har|kemiskt skadat|varmeskadat/, 'damaged_hair'],
     [/friss|frizz/, 'frizz_control'],
     [/kanslig harbotten|irriterad harbotten|lattirriterad harbotten|harbotten blir latt irriterad/, 'sensitive_scalp'],
   ];
