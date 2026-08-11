@@ -359,16 +359,17 @@ function detectNeeds(value: string) {
   ) {
     needs.push('dry_hair_unspecified');
   }
-  if (/\bblekt\b|\bblekta\b|\bblonderat\b/.test(value)) {
+  if (/\bblekt\b|\bblekta\b|\bblonderat\b|\bblonderade\b|\bblekning\b|\bslingat\b/.test(value)) {
     needs.push('bleached_hair');
   }
 
   const signals: Array<[RegExp, string]> = [
-    [/\btunt\b/, 'thin_hair'],
-    [/\bfargat\b/, 'color_treated_hair'],
-    [/fett snabbt|fet harbotten/, 'oily_scalp'],
+    [/\btunt\b|\bfint har\b|\btunna stran\b|\bfina stran\b/, 'thin_hair'],
+    [/\bfargat\b|\bfargbehandlat\b|\bfargbehandlade\b/, 'color_treated_hair'],
+    [/fett snabbt|fet harbotten|oljig harbotten|flottig harbotten/, 'oily_scalp'],
+    [/skadat har|slitet har|skora langder|skort har|kemiskt skadat|varmeskadat/, 'damaged_hair'],
     [/friss|frizz/, 'frizz_control'],
-    [/kanslig harbotten/, 'sensitive_scalp'],
+    [/kanslig harbotten|irriterad harbotten|lattirriterad harbotten|harbotten blir latt irriterad/, 'sensitive_scalp'],
   ];
   for (const [pattern, label] of signals) {
     if (pattern.test(value)) needs.push(label);
