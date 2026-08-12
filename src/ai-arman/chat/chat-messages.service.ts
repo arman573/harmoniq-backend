@@ -370,6 +370,7 @@ function detectNeeds(value: string) {
     [/skadat har|\bslitet(?:\s+[a-z0-9-]+){0,3}\s+har\b|skora langder|skort har|kemiskt skadat|varmeskadat/, 'damaged_hair'],
     [/friss|frizz/, 'frizz_control'],
     [/kanslig harbotten|irriterad harbotten|lattirriterad harbotten|harbotten blir latt irriterad/, 'sensitive_scalp'],
+    [/latt formula|latt produkt|tynger inte ner|inte tynga ner|utan att tynga ner|plattar inte till|inte plattar till|\bviktlos\b|\bweightless\b|\blightweight\b/, 'lightweight_haircare'],
   ];
   for (const [pattern, label] of signals) {
     if (pattern.test(value)) needs.push(label);
