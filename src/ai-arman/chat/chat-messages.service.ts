@@ -3,6 +3,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   AI_ARMAN_CHAT_CONTRACT_VERSION,
   AI_ARMAN_CONVERSATION_STATE_VERSION,
+  AiArmanBeautyDomain,
   AiArmanChatRequest,
   AiArmanChatResponse,
   AiArmanConversationState,
@@ -15,6 +16,12 @@ import {
 } from './chat-messages.types';
 
 const MAX_MESSAGE_LENGTH = 2000;
+const HAIRCARE_PRODUCT_TYPES: AiArmanProductType[] = [
+  'shampoo',
+  'conditioner',
+  'hair_mask',
+  'leave_in',
+];
 
 @Injectable()
 export class ChatMessagesService {
@@ -83,6 +90,7 @@ export class ChatMessagesService {
 
   private interpret(normalized: string): AiArmanInterpretation {
     const requestedProductTypes = detectProductTypes(normalized);
+    const recommendationDomain = detectBeautyDomain(normalized, requestedProductTypes);
     const orderReference = detectOrderReference(normalized);
     const primaryIntent = detectIntent(normalized, requestedProductTypes, orderReference);
     const needs = detectNeeds(normalized);
@@ -100,6 +108,7 @@ export class ChatMessagesService {
     }
     if (
       primaryIntent === 'product_recommendation' &&
+      recommendationDomain === 'haircare' &&
       needs.includes('dry_hair_unspecified') &&
       !needs.includes('dry_lengths') &&
       !needs.includes('dry_scalp')
@@ -126,6 +135,7 @@ export class ChatMessagesService {
         exclusions: detectExclusions(normalized),
         orderReference,
         productReferences: [],
+        recommendationDomain,
       },
       missingFields,
       requiresIdentity,
@@ -135,24 +145,33 @@ export class ChatMessagesService {
 
   private decide(interpretation: AiArmanInterpretation): AiArmanDecision {
     switch (interpretation.primaryIntent) {
-      case 'product_recommendation':
+      case 'product_recommendation': {
+        const haircareReady =
+          interpretation.entities.recommendationDomain === 'haircare' &&
+          interpretation.entities.requestedProductTypes.every((type) =>
+            HAIRCARE_PRODUCT_TYPES.includes(type),
+          );
+        const ready = interpretation.missingFields.length === 0 && haircareReady;
         return {
           owner: 'backend_policy',
           route: 'recommendation',
-          plannedTools: interpretation.missingFields.length
-            ? []
-            : [
+          plannedTools: ready
+            ? [
                 'search_products',
                 'analyze_product_suitability',
                 'get_product_live_facts',
-              ],
+              ]
+            : [],
           executionStatus: 'not_executed_foundation',
           requiresIdentity: false,
           requiresConfirmation: false,
           reasons: interpretation.missingFields.length
             ? ['clarification_required_before_product_search']
-            : ['recommendation_tool_chain_selected_by_backend'],
+            : haircareReady
+              ? ['recommendation_tool_chain_selected_by_backend']
+              : ['specialist_domain_not_enabled_for_tools'],
         };
+      }
       case 'purchased_product_usage':
         return this.foundationDecision(
           'purchased_product_guidance',
@@ -211,7 +230,10 @@ export class ChatMessagesService {
     interpretation: AiArmanInterpretation,
     decision: AiArmanDecision,
   ): AiArmanConversationState {
-    const question = buildQuestion(interpretationQuestionField(interpretation));
+    const question = buildQuestion(
+      interpretationQuestionField(interpretation),
+      interpretation.entities.recommendationDomain ?? null,
+    );
     return {
       stateVersion: AI_ARMAN_CONVERSATION_STATE_VERSION,
       conversationId,
@@ -235,7 +257,10 @@ export class ChatMessagesService {
     interpretation: AiArmanInterpretation,
     decision: AiArmanDecision,
   ): AiArmanResponseBlock[] {
-    const question = buildQuestion(interpretationQuestionField(interpretation));
+    const question = buildQuestion(
+      interpretationQuestionField(interpretation),
+      interpretation.entities.recommendationDomain ?? null,
+    );
     if (question) {
       return [
         {
@@ -243,6 +268,18 @@ export class ChatMessagesService {
           text: 'Jag behöver en liten detalj till innan jag kan gå vidare säkert.',
         },
         question,
+      ];
+    }
+
+    if (
+      decision.route === 'recommendation' &&
+      decision.reasons.includes('specialist_domain_not_enabled_for_tools')
+    ) {
+      return [
+        {
+          type: 'message',
+          text: `Jag har förstått att frågan gäller ${domainLabel(interpretation.entities.recommendationDomain ?? null)}. Området är identifierat, men specialistmotorn får ännu inte köra produktverktyg förrän dess egna kvalitetsregler är verifierade.`,
+        },
       ];
     }
 
@@ -318,7 +355,57 @@ function detectProductTypes(value: string): AiArmanProductType[] {
     matches.push('hair_mask');
   }
   if (value.includes('leave in') || value.includes('leave-in')) matches.push('leave_in');
+
+  if (/ansiktsrengoring|rengoringsgel|rengoringsolja|cleanser/.test(value)) matches.push('cleanser');
+  if (/ansiktskram|dagkram|nattkram|face cream|moisturizer/.test(value)) matches.push('face_cream');
+  if (/\bserum\b/.test(value)) matches.push('serum');
+  if (/\bspf\b|solskydd|solkram/.test(value)) matches.push('spf');
+
+  const fragranceAvoidance = /parfymfri|parfymfritt|utan parfym|ingen parfym|oparfymerad|oparfymerat/.test(value);
+  if (!fragranceAvoidance && /\bparfym\b|eau de parfum|eau de toilette|\bedp\b|\bedt\b/.test(value)) {
+    matches.push('fragrance');
+  }
+
+  if (/\bfoundation\b/.test(value)) matches.push('foundation');
+  if (/\bconcealer\b/.test(value)) matches.push('concealer');
+  if (/lappstift|lipstick/.test(value)) matches.push('lipstick');
+  if (/\bmascara\b/.test(value)) matches.push('mascara');
+
+  if (/nagellack|nail polish/.test(value)) matches.push('nail_polish');
+  if (/baslack|base coat/.test(value)) matches.push('base_coat');
+  if (/topplack|top coat/.test(value)) matches.push('top_coat');
+  if (/nagelbehandling|nail treatment|nagelstarkare/.test(value)) matches.push('nail_treatment');
+
   return [...new Set(matches)];
+}
+
+function detectBeautyDomain(
+  value: string,
+  productTypes: AiArmanProductType[],
+): AiArmanBeautyDomain | null {
+  const typeDomains = unique(
+    productTypes.map(productTypeDomain).filter((domain): domain is AiArmanBeautyDomain => Boolean(domain)),
+  );
+  if (typeDomains.length === 1) return typeDomains[0];
+  if (typeDomains.length > 1) return null;
+
+  if (/harbotten|\bhar\b|harvard|harprodukt/.test(value)) return 'haircare';
+  if (/hudvard|ansikte|ansiktet|hudtyp|hudbarriar|finnar|akne/.test(value)) return 'skincare';
+  if (/makeup|smink|undertone|underton|tackning/.test(value)) return 'makeup';
+  if (/nagel|naglar/.test(value)) return 'nails';
+  if (!/utan parfym|parfymfri|parfymfritt/.test(value) && /parfym|doftfamilj|doftnot/.test(value)) {
+    return 'fragrance';
+  }
+  return null;
+}
+
+function productTypeDomain(type: AiArmanProductType): AiArmanBeautyDomain | null {
+  if (HAIRCARE_PRODUCT_TYPES.includes(type)) return 'haircare';
+  if (['cleanser', 'face_cream', 'serum', 'spf'].includes(type)) return 'skincare';
+  if (type === 'fragrance') return 'fragrance';
+  if (['foundation', 'concealer', 'lipstick', 'mascara'].includes(type)) return 'makeup';
+  if (['nail_polish', 'base_coat', 'top_coat', 'nail_treatment'].includes(type)) return 'nails';
+  return null;
 }
 
 function detectOrderReference(value: string) {
@@ -419,12 +506,14 @@ function interpretationQuestionField(interpretation: AiArmanInterpretation) {
   return interpretation.missingFields[0] ?? null;
 }
 
-function buildQuestion(field: string | null) {
+function buildQuestion(field: string | null, domain: AiArmanBeautyDomain | null) {
   if (field === 'requestedProductType') {
     return {
       type: 'question' as const,
       id: 'requested-product-type',
-      text: 'Vilken typ av hårprodukt söker du?',
+      text: domain === 'haircare'
+        ? 'Vilken typ av hårprodukt söker du?'
+        : 'Vilken typ av produkt söker du?',
       expectedField: field,
       required: true,
     };
@@ -448,4 +537,25 @@ function buildQuestion(field: string | null) {
     };
   }
   return null;
+}
+
+function domainLabel(domain: AiArmanBeautyDomain | null) {
+  switch (domain) {
+    case 'haircare':
+      return 'hårvård';
+    case 'skincare':
+      return 'hudvård';
+    case 'fragrance':
+      return 'parfym';
+    case 'makeup':
+      return 'makeup';
+    case 'nails':
+      return 'naglar';
+    default:
+      return 'produktområdet';
+  }
+}
+
+function unique<T>(values: T[]): T[] {
+  return [...new Set(values)];
 }
