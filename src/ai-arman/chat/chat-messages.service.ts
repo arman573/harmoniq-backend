@@ -379,9 +379,27 @@ function detectNeeds(value: string) {
 
 function detectExclusions(value: string) {
   const exclusions: string[] = [];
-  if (/parfymfri|utan parfym/.test(value)) exclusions.push('fragrance');
-  if (/silikonfri|utan silikon/.test(value)) exclusions.push('silicones');
-  if (/proteinfri|utan protein/.test(value)) exclusions.push('proteins');
+  if (
+    /parfymfri|parfymfritt|utan parfym|ingen parfym|oparfymerad|oparfymerat/.test(
+      value,
+    )
+  ) {
+    exclusions.push('fragrance');
+  }
+  if (
+    /silikonfri|silikonfritt|utan silikon|utan silikoner|inga silikoner/.test(
+      value,
+    )
+  ) {
+    exclusions.push('silicones');
+  }
+  if (
+    /proteinfri|proteinfritt|utan protein|utan proteiner|inga proteiner/.test(
+      value,
+    )
+  ) {
+    exclusions.push('proteins');
+  }
   return exclusions;
 }
 
