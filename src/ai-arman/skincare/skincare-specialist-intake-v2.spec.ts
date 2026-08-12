@@ -94,4 +94,27 @@ describe('AI Arman skincare specialist intake v2', () => {
     ).toContainEqual({ subject: 'aha', reason: 'preference' });
     expect(result.decision.plannedTools).toEqual([]);
   });
+
+  it('does not confuse Swedish har with hair when the customer says they have dry skin', () => {
+    const result = new ChatMessagesService().handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'skincare-intake-v2-har-skin-1',
+      message: { text: 'Jag har torr hud och söker ett serum.' },
+    });
+
+    expect(result.interpretation.entities.recommendationDomain).toBe('skincare');
+    expect(result.interpretation.entities.needs).toContain('dry_skin');
+    expect(result.interpretation.entities.needs).not.toContain('dry_hair_unspecified');
+  });
+
+  it('still recognizes explicit Swedish hair context after har disambiguation', () => {
+    const result = new ChatMessagesService().handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'skincare-intake-v2-hair-1',
+      message: { text: 'Mitt hår är torrt.' },
+    });
+
+    expect(result.interpretation.entities.recommendationDomain).toBe('haircare');
+    expect(result.interpretation.entities.needs).toContain('dry_hair_unspecified');
+  });
 });
