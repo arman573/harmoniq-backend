@@ -59,6 +59,75 @@ describe('ChatConversationService', () => {
     expect(second.decision.plannedTools).toEqual([]);
   });
 
+  it.each([
+    ['Leave-in', 'leave_in'],
+    ['Något jag inte behöver skölja ur.', 'leave_in'],
+    ['En hårinpackning.', 'hair_mask'],
+    ['Balsam.', 'conditioner'],
+  ])(
+    'resolves natural product-type follow-up %s while preserving the need profile',
+    (answer, expectedProductType) => {
+      const service = createService();
+      const first = service.handle({
+        contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+        clientMessageId: `product-type-natural-${expectedProductType}-${answer}`,
+        message: { text: 'Jag har slitet och frissigt hår.' },
+      });
+
+      expect(first.state.status).toBe('collecting');
+      expect(first.state.pendingQuestion?.expectedField).toBe('requestedProductType');
+      expect(first.state.remembered.needs).toEqual(
+        expect.arrayContaining(['damaged_hair', 'frizz_control']),
+      );
+
+      const second = service.handle({
+        contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+        conversationId: first.conversationId,
+        clientMessageId: `product-type-natural-followup-${expectedProductType}-${answer}`,
+        message: { text: answer },
+      });
+
+      expect(second.conversationId).toBe(first.conversationId);
+      expect(second.state.status).toBe('ready_for_tools');
+      expect(second.state.pendingQuestion).toBeNull();
+      expect(second.state.remembered.requestedProductTypes).toEqual([
+        expectedProductType,
+      ]);
+      expect(second.state.remembered.needs).toEqual(
+        expect.arrayContaining(['damaged_hair', 'frizz_control']),
+      );
+      expect(second.decision.plannedTools).toEqual([
+        'search_products',
+        'analyze_product_suitability',
+        'get_product_live_facts',
+      ]);
+    },
+  );
+
+  it('keeps asking when the product-type follow-up is still ambiguous', () => {
+    const service = createService();
+    const first = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'product-type-ambiguous-1',
+      message: { text: 'Jag har slitet och frissigt hår.' },
+    });
+
+    const second = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      conversationId: first.conversationId,
+      clientMessageId: 'product-type-ambiguous-2',
+      message: { text: 'Vet inte riktigt.' },
+    });
+
+    expect(second.state.status).toBe('collecting');
+    expect(second.state.pendingQuestion?.expectedField).toBe('requestedProductType');
+    expect(second.state.remembered.requestedProductTypes).toEqual([]);
+    expect(second.state.remembered.needs).toEqual(
+      expect.arrayContaining(['damaged_hair', 'frizz_control']),
+    );
+    expect(second.decision.plannedTools).toEqual([]);
+  });
+
   it('resolves hair dryness in a follow-up and only then opens the recommendation toolchain', () => {
     const service = createService();
     const first = service.handle({
