@@ -44,9 +44,10 @@ export class SkincareSpecialistChatOrchestrator {
       previousProfile,
       currentProfile,
     );
-    const skincareRoutineActives = removeAvoidedRoutineActives(
+    const skincareRoutineActives = removeUnavailableRoutineActives(
       response.interpretation.entities.skincareRoutineActives ?? [],
       currentProfile.avoidanceContexts,
+      input.message.text,
     );
     const state = {
       ...response.state,
@@ -114,17 +115,43 @@ export function mergeSkincareSpecialistProfiles(
   };
 }
 
-function removeAvoidedRoutineActives(
+function removeUnavailableRoutineActives(
   actives: AiArmanSkincareRoutineActive[],
   avoidanceContexts: SkincareAvoidanceContext[],
+  rawText: string,
 ): AiArmanSkincareRoutineActive[] {
-  const avoidedActives = new Set(
-    avoidanceContexts
+  const unavailableActives = new Set<AiArmanSkincareActive>([
+    ...avoidanceContexts
       .map((item) => avoidanceSubjectToActive(item.subject))
       .filter((active): active is AiArmanSkincareActive => Boolean(active)),
-  );
-  if (avoidedActives.size === 0) return actives;
-  return actives.filter((item) => !avoidedActives.has(item.active));
+    ...detectNegatedOrStoppedRoutineActives(rawText),
+  ]);
+  if (unavailableActives.size === 0) return actives;
+  return actives.filter((item) => !unavailableActives.has(item.active));
+}
+
+function detectNegatedOrStoppedRoutineActives(rawText: string): AiArmanSkincareActive[] {
+  const value = normalize(rawText);
+  const signals: Array<[RegExp, AiArmanSkincareActive]> = [
+    [/retinol|retinal|retinoid|tretinoin/, 'retinoid'],
+    [/\baha\b|glykolsyra|mjolksyra|glycolic acid|lactic acid/, 'aha'],
+    [/\bbha\b|salicylsyra|salicylic acid/, 'bha'],
+    [/\bpha\b|gluconolactone/, 'pha'],
+    [/vitamin c|askorbinsyra|ascorbic acid/, 'vitamin_c'],
+    [/niacinamid|niacinamide/, 'niacinamide'],
+    [/azelainsyra|azelaic acid/, 'azelaic_acid'],
+    [/bensoylperoxid|benzoyl peroxide/, 'benzoyl_peroxide'],
+  ];
+
+  return signals
+    .filter(([pattern]) =>
+      contextualMatch(
+        value,
+        pattern,
+        /anvander inte|anvander ej|inte langre|slutat med|slutade med|har slutat|har slutat med/,
+      ),
+    )
+    .map(([, active]) => active);
 }
 
 function avoidanceSubjectToActive(subject: string): AiArmanSkincareActive | null {
@@ -138,6 +165,24 @@ function avoidanceSubjectToActive(subject: string): AiArmanSkincareActive | null
   return supported.has(subject as AiArmanSkincareActive)
     ? (subject as AiArmanSkincareActive)
     : null;
+}
+
+function contextualMatch(value: string, subject: RegExp, context: RegExp): boolean {
+  const subjectMatch = value.match(subject);
+  if (subjectMatch?.index === undefined) return false;
+  const start = Math.max(0, subjectMatch.index - 48);
+  const end = Math.min(value.length, subjectMatch.index + subjectMatch[0].length + 48);
+  return context.test(value.slice(start, end));
+}
+
+function normalize(value: string): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function clearSkincareSpecialistProfile(
