@@ -813,9 +813,6 @@ function resolveSkincareConcernAnswer(value: string): string[] {
 function detectSkincareRoutineActives(
   value: string,
 ): AiArmanSkincareRoutineActive[] {
-  const normalized = normalizeFollowUpText(value);
-  if (!normalized) return [];
-  const timing = detectRoutineTiming(normalized);
   const signals: Array<[RegExp, AiArmanSkincareActive]> = [
     [/\bretinol\b|\bretinal\b|\bretinoid\b|\btretinoin\b/, 'retinoid'],
     [/\baha\b|glykolsyra|mjolksyra|glycolic acid|lactic acid/, 'aha'],
@@ -826,18 +823,73 @@ function detectSkincareRoutineActives(
     [/azelainsyra|azelaic acid/, 'azelaic_acid'],
     [/bensoylperoxid|benzoyl peroxide/, 'benzoyl_peroxide'],
   ];
+  const actives = signals
+    .flatMap(([pattern, active]) => {
+      const match = value.match(pattern);
+      return match?.index === undefined ? [] : [{ active, index: match.index }];
+    })
+    .sort((left, right) => left.index - right.index);
+  if (actives.length === 0) return [];
 
-  return signals
-    .filter(([pattern]) => pattern.test(normalized))
-    .map(([, active]) => ({ active, timing }));
+  const timings = findRoutineTimingOccurrences(value);
+  if (timings.length === 0) {
+    return actives.map(({ active }) => ({ active, timing: 'unspecified' }));
+  }
+
+  const messageTimings = unique(timings.map((item) => item.timing));
+  if (messageTimings.length === 1) {
+    return actives.map(({ active }) => ({ active, timing: messageTimings[0] }));
+  }
+
+  return actives.map((item, index) => {
+    const previous = actives[index - 1];
+    const next = actives[index + 1];
+    const leftBoundary = previous
+      ? previous.index + Math.floor((item.index - previous.index) / 2)
+      : 0;
+    const rightBoundary = next
+      ? item.index + Math.floor((next.index - item.index) / 2)
+      : value.length;
+    const localTimings = unique(
+      timings
+        .filter(
+          (timing) =>
+            timing.index >= leftBoundary && timing.index < rightBoundary,
+        )
+        .map((timing) => timing.timing),
+    );
+
+    return {
+      active: item.active,
+      timing: localTimings.length === 1 ? localTimings[0] : 'unspecified',
+    };
+  });
 }
 
-function detectRoutineTiming(value: string): AiArmanRoutineTiming {
-  const morning = /morgon|pa morgonen|dagtid/.test(value);
-  const evening = /kvall|pa kvallen|nattetid/.test(value);
-  if (morning && !evening) return 'morning';
-  if (evening && !morning) return 'evening';
-  return 'unspecified';
+function findRoutineTimingOccurrences(value: string): Array<{
+  timing: Exclude<AiArmanRoutineTiming, 'unspecified'>;
+  index: number;
+}> {
+  const signals: Array<{
+    pattern: RegExp;
+    timing: Exclude<AiArmanRoutineTiming, 'unspecified'>;
+  }> = [
+    { pattern: /\bmorgon\b|\bpa morgonen\b|\bdagtid\b/g, timing: 'morning' },
+    { pattern: /\bkvall\b|\bpa kvallen\b|\bnattetid\b/g, timing: 'evening' },
+  ];
+  const result: Array<{
+    timing: Exclude<AiArmanRoutineTiming, 'unspecified'>;
+    index: number;
+  }> = [];
+
+  for (const { pattern, timing } of signals) {
+    pattern.lastIndex = 0;
+    for (const match of value.matchAll(pattern)) {
+      if (match.index === undefined) continue;
+      result.push({ timing, index: match.index });
+    }
+  }
+  return result.sort((left, right) => left.index - right.index);
 }
 
 function mergeSkincareRoutineActives(
