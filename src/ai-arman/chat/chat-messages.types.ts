@@ -1,3 +1,5 @@
+import type { SkincareSpecialistProfile } from '../skincare/skincare-specialist-profile';
+
 export const AI_ARMAN_CHAT_CONTRACT_VERSION = 'ai-arman-chat-v1' as const;
 export const AI_ARMAN_CONVERSATION_STATE_VERSION =
   'ai-arman-conversation-state-v1' as const;
@@ -103,6 +105,7 @@ export type AiArmanInterpretationEntities = {
   productReferences: string[];
   recommendationDomain?: AiArmanBeautyDomain | null;
   skincareRoutineActives?: AiArmanSkincareRoutineActive[];
+  skincareSpecialistProfile?: SkincareSpecialistProfile;
 };
 
 export type AiArmanInterpretationBase = {
@@ -140,6 +143,7 @@ export type AiArmanConversationState = {
     productReferences: string[];
     recommendationDomain?: AiArmanBeautyDomain | null;
     skincareRoutineActives?: AiArmanSkincareRoutineActive[];
+    skincareSpecialistProfile?: SkincareSpecialistProfile;
   };
   pendingQuestion: {
     id: string;
