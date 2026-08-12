@@ -152,6 +152,15 @@ function hasReactionLanguageNearSubject(value: string, subject: RegExp): boolean
 }
 
 function hasSensitivityLanguageNearSubject(value: string, subject: RegExp): boolean {
+  if (
+    contextualMatch(
+      value,
+      subject,
+      /inte kanslig for|inte kanslig mot|inte overkanslig for|inte overkanslig mot/,
+    )
+  ) {
+    return false;
+  }
   return contextualMatch(
     value,
     subject,
