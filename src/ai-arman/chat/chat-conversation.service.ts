@@ -12,6 +12,7 @@ import {
 import { ChatInterpretationShadowOrchestrator } from './chat-interpretation-shadow-orchestrator.service';
 import { ChatMessagesService } from './chat-messages.service';
 import type {
+  AiArmanBeautyDomain,
   AiArmanChatRequest,
   AiArmanChatResponse,
   AiArmanConversationState,
@@ -36,6 +37,13 @@ type RecommendationJourneyStatus =
   | 'live_facts_unavailable'
   | 'no_verified_live_products'
   | 'product_cards_ready';
+
+const HAIRCARE_PRODUCT_TYPES: AiArmanProductType[] = [
+  'shampoo',
+  'conditioner',
+  'hair_mask',
+  'leave_in',
+];
 
 @Injectable()
 export class ChatConversationService {
@@ -171,6 +179,11 @@ export class ChatConversationService {
             ...current.entities.requestedProductTypes,
             resolvedProductType,
           ]),
+          recommendationDomain:
+            current.entities.recommendationDomain ??
+            productTypeDomain(resolvedProductType) ??
+            previous?.remembered.recommendationDomain ??
+            null,
         },
       };
     }
@@ -204,6 +217,10 @@ export class ChatConversationService {
 
     return (
       response.interpretation.primaryIntent === 'product_recommendation' &&
+      response.interpretation.entities.recommendationDomain === 'haircare' &&
+      response.interpretation.entities.requestedProductTypes.every((type) =>
+        HAIRCARE_PRODUCT_TYPES.includes(type),
+      ) &&
       response.interpretation.missingFields.length === 0 &&
       response.state.status === 'ready_for_tools' &&
       response.decision.owner === 'backend_policy' &&
@@ -415,6 +432,10 @@ export class ChatConversationService {
       current.entities.orderReference ??
       previous?.remembered.orderReference ??
       null;
+    const recommendationDomain =
+      current.entities.recommendationDomain ??
+      previous?.remembered.recommendationDomain ??
+      inferDomainFromProductTypes(requestedProductTypes);
 
     const productJourneyContinues =
       previous?.activeJourney === 'before_purchase' ||
@@ -438,6 +459,7 @@ export class ChatConversationService {
     }
     if (
       primaryIntent === 'product_recommendation' &&
+      recommendationDomain === 'haircare' &&
       needs.includes('dry_hair_unspecified') &&
       !needs.includes('dry_lengths') &&
       !needs.includes('dry_scalp')
@@ -458,6 +480,7 @@ export class ChatConversationService {
         exclusions,
         orderReference,
         productReferences,
+        recommendationDomain,
       },
       missingFields: unique(missingFields),
       requiresIdentity:
@@ -476,7 +499,12 @@ export class ChatConversationService {
       return current;
     }
 
-    const ready = interpretation.missingFields.length === 0;
+    const haircareReady =
+      interpretation.entities.recommendationDomain === 'haircare' &&
+      interpretation.entities.requestedProductTypes.every((type) =>
+        HAIRCARE_PRODUCT_TYPES.includes(type),
+      );
+    const ready = interpretation.missingFields.length === 0 && haircareReady;
     return {
       owner: 'backend_policy',
       route: 'recommendation',
@@ -490,9 +518,11 @@ export class ChatConversationService {
       executionStatus: 'not_executed_foundation',
       requiresIdentity: false,
       requiresConfirmation: false,
-      reasons: ready
-        ? ['multi_turn_need_profile_ready_for_backend_tools']
-        : ['clarification_required_before_product_search'],
+      reasons: interpretation.missingFields.length
+        ? ['clarification_required_before_product_search']
+        : haircareReady
+          ? ['multi_turn_need_profile_ready_for_backend_tools']
+          : ['specialist_domain_not_enabled_for_tools'],
     };
   }
 
@@ -537,6 +567,8 @@ export class ChatConversationService {
         exclusions: interpretation.entities.exclusions,
         orderReference: interpretation.entities.orderReference,
         productReferences: interpretation.entities.productReferences,
+        recommendationDomain:
+          interpretation.entities.recommendationDomain ?? null,
       },
       pendingQuestion,
     };
@@ -548,15 +580,20 @@ export class ChatConversationService {
     decision: AiArmanDecision,
   ): AiArmanResponseBlock[] {
     if (interpretation.missingFields.includes('requestedProductType')) {
+      const haircare = interpretation.entities.recommendationDomain === 'haircare';
       return [
         {
           type: 'message',
-          text: 'Jag har sparat det du berättat om håret. Jag behöver bara veta vilken typ av produkt du söker.',
+          text: haircare
+            ? 'Jag har sparat det du berättat om håret. Jag behöver bara veta vilken typ av produkt du söker.'
+            : 'Jag har sparat produktområdet. Jag behöver bara veta vilken typ av produkt du söker.',
         },
         {
           type: 'question',
           id: 'requested-product-type',
-          text: 'Söker du schampo, balsam, hårinpackning eller leave-in?',
+          text: haircare
+            ? 'Söker du schampo, balsam, hårinpackning eller leave-in?'
+            : 'Vilken typ av produkt söker du?',
           expectedField: 'requestedProductType',
           required: true,
         },
@@ -617,6 +654,20 @@ function resolveRequestedProductTypeAnswer(
   }
   if (/\bschampo\b|\bshampoo\b/.test(normalized)) return 'shampoo';
   if (/\bbalsam\b|\bconditioner\b/.test(normalized)) return 'conditioner';
+
+  if (/\bansiktsrengoring\b|\brengoringsgel\b|\brengoringsolja\b|\bcleanser\b/.test(normalized)) return 'cleanser';
+  if (/\bansiktskram\b|\bdagkram\b|\bnattkram\b|\bface cream\b|\bmoisturizer\b/.test(normalized)) return 'face_cream';
+  if (/\bserum\b/.test(normalized)) return 'serum';
+  if (/\bspf\b|\bsolskydd\b|\bsolkram\b/.test(normalized)) return 'spf';
+  if (/\bparfym\b|\beau de parfum\b|\beau de toilette\b|\bedp\b|\bedt\b/.test(normalized)) return 'fragrance';
+  if (/\bfoundation\b/.test(normalized)) return 'foundation';
+  if (/\bconcealer\b/.test(normalized)) return 'concealer';
+  if (/\blappstift\b|\blipstick\b/.test(normalized)) return 'lipstick';
+  if (/\bmascara\b/.test(normalized)) return 'mascara';
+  if (/\bnagellack\b|\bnail polish\b/.test(normalized)) return 'nail_polish';
+  if (/\bbaslack\b|\bbase coat\b/.test(normalized)) return 'base_coat';
+  if (/\btopplack\b|\btop coat\b/.test(normalized)) return 'top_coat';
+  if (/\bnagelbehandling\b|\bnail treatment\b|\bnagelstarkare\b/.test(normalized)) return 'nail_treatment';
   return null;
 }
 
@@ -662,6 +713,26 @@ function normalizeMergedNeeds(values: string[]): string[] {
   return needs;
 }
 
+function inferDomainFromProductTypes(
+  productTypes: AiArmanProductType[],
+): AiArmanBeautyDomain | null {
+  const domains = unique(
+    productTypes
+      .map(productTypeDomain)
+      .filter((domain): domain is AiArmanBeautyDomain => Boolean(domain)),
+  );
+  return domains.length === 1 ? domains[0] : null;
+}
+
+function productTypeDomain(type: AiArmanProductType): AiArmanBeautyDomain | null {
+  if (HAIRCARE_PRODUCT_TYPES.includes(type)) return 'haircare';
+  if (['cleanser', 'face_cream', 'serum', 'spf'].includes(type)) return 'skincare';
+  if (type === 'fragrance') return 'fragrance';
+  if (['foundation', 'concealer', 'lipstick', 'mascara'].includes(type)) return 'makeup';
+  if (['nail_polish', 'base_coat', 'top_coat', 'nail_treatment'].includes(type)) return 'nails';
+  return null;
+}
+
 function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
@@ -669,5 +740,23 @@ function unique<T>(values: T[]): T[] {
 export function isSupportedProductType(
   value: string,
 ): value is AiArmanProductType {
-  return ['shampoo', 'conditioner', 'hair_mask', 'leave_in'].includes(value);
+  return [
+    'shampoo',
+    'conditioner',
+    'hair_mask',
+    'leave_in',
+    'cleanser',
+    'face_cream',
+    'serum',
+    'spf',
+    'fragrance',
+    'foundation',
+    'concealer',
+    'lipstick',
+    'mascara',
+    'nail_polish',
+    'base_coat',
+    'top_coat',
+    'nail_treatment',
+  ].includes(value);
 }
