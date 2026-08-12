@@ -155,7 +155,27 @@ export class ChatConversationService {
     previous: AiArmanConversationState | null,
     messageText: string,
   ): AiArmanInterpretation {
-    if (previous?.pendingQuestion?.expectedField !== 'drynessLocation') {
+    const expectedField = previous?.pendingQuestion?.expectedField;
+
+    if (expectedField === 'requestedProductType') {
+      const resolvedProductType = resolveRequestedProductTypeAnswer(messageText);
+      if (!resolvedProductType) {
+        return current;
+      }
+
+      return {
+        ...current,
+        entities: {
+          ...current.entities,
+          requestedProductTypes: unique([
+            ...current.entities.requestedProductTypes,
+            resolvedProductType,
+          ]),
+        },
+      };
+    }
+
+    if (expectedField !== 'drynessLocation') {
       return current;
     }
 
@@ -573,6 +593,31 @@ export class ChatConversationService {
 
     return current;
   }
+}
+
+function resolveRequestedProductTypeAnswer(
+  value: string,
+): AiArmanProductType | null {
+  const normalized = normalizeFollowUpText(value);
+  if (!normalized) return null;
+
+  if (
+    /\bleave[ -]?in\b/.test(normalized) ||
+    /\butan att sk[oö]lja ur\b/.test(normalized) ||
+    /\binte (?:behover )?sk[oö]lja ur\b/.test(normalized) ||
+    /\binte (?:behover )?sk[oö]ljas ur\b/.test(normalized) ||
+    /\bfar sitta kvar\b/.test(normalized) ||
+    /\bska sitta kvar\b/.test(normalized) ||
+    /\blamna kvar\b/.test(normalized)
+  ) {
+    return 'leave_in';
+  }
+  if (/\bharmask\b|\bharinpackning\b|\binpackning\b|\bhair mask\b/.test(normalized)) {
+    return 'hair_mask';
+  }
+  if (/\bschampo\b|\bshampoo\b/.test(normalized)) return 'shampoo';
+  if (/\bbalsam\b|\bconditioner\b/.test(normalized)) return 'conditioner';
+  return null;
 }
 
 function resolveDrynessLocationAnswer(value: string): string[] {
