@@ -49,7 +49,7 @@ export function extractSkincareSpecialistProfile(
   if (/starka hudbarriaren|starkare hudbarriar|reparera hudbarriaren|barriarstod/.test(value)) {
     barrierSignals.push('barrier_support_requested');
   }
-  if (/huden svider|svider i huden|svider latt|branner i huden/.test(value)) {
+  if (/huden svider|min hud svider|svider i huden|svider latt|branner i huden/.test(value)) {
     barrierSignals.push('stinging');
   }
   if (/huden stramar|stram hud|kanns stram/.test(value)) {
