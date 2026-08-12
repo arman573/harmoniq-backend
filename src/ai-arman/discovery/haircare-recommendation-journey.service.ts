@@ -258,6 +258,7 @@ function buildDiscoveryQuery(interpretation: AiArmanInterpretation): string {
     dry_lengths: 'torra längder',
     frizz_control: 'friss',
     sensitive_scalp: 'känslig hårbotten',
+    lightweight_haircare: 'lätt formula som inte tynger ner',
     fragrance: 'utan parfym',
     silicones: 'utan silikon',
     proteins: 'utan protein',
