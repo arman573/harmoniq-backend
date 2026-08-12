@@ -9,6 +9,7 @@ import type {
 } from '../chat/chat-messages.types';
 import {
   extractSkincareSpecialistProfile,
+  type SkincareActiveIntentContext,
   type SkincareAvoidanceContext,
   type SkincareSpecialistProfile,
 } from './skincare-specialist-profile';
@@ -47,6 +48,7 @@ export class SkincareSpecialistChatOrchestrator {
     const skincareRoutineActives = removeUnavailableRoutineActives(
       response.interpretation.entities.skincareRoutineActives ?? [],
       currentProfile.avoidanceContexts,
+      currentProfile.activeIntentContexts,
       input.message.text,
     );
     const state = {
@@ -112,16 +114,25 @@ export function mergeSkincareSpecialistProfiles(
       ...(previous?.avoidanceContexts ?? []),
       ...current.avoidanceContexts,
     ]),
+    activeIntentContexts: mergeActiveIntentContexts(
+      previous?.activeIntentContexts ?? [],
+      current.activeIntentContexts,
+    ),
   };
 }
 
 function removeUnavailableRoutineActives(
   actives: AiArmanSkincareRoutineActive[],
   avoidanceContexts: SkincareAvoidanceContext[],
+  activeIntentContexts: SkincareActiveIntentContext[],
   rawText: string,
 ): AiArmanSkincareRoutineActive[] {
   const unavailableActives = new Set<AiArmanSkincareActive>([
     ...avoidanceContexts
+      .map((item) => avoidanceSubjectToActive(item.subject))
+      .filter((active): active is AiArmanSkincareActive => Boolean(active)),
+    ...activeIntentContexts
+      .filter((item) => item.intent !== 'current_use')
       .map((item) => avoidanceSubjectToActive(item.subject))
       .filter((active): active is AiArmanSkincareActive => Boolean(active)),
     ...detectNegatedOrStoppedRoutineActives(rawText),
@@ -159,8 +170,11 @@ function avoidanceSubjectToActive(subject: string): AiArmanSkincareActive | null
     'retinoid',
     'aha',
     'bha',
+    'pha',
     'vitamin_c',
     'niacinamide',
+    'azelaic_acid',
+    'benzoyl_peroxide',
   ]);
   return supported.has(subject as AiArmanSkincareActive)
     ? (subject as AiArmanSkincareActive)
@@ -224,4 +238,14 @@ function uniqueAvoidanceContexts(
     seen.add(key);
     return true;
   });
+}
+
+function mergeActiveIntentContexts(
+  previous: SkincareActiveIntentContext[],
+  current: SkincareActiveIntentContext[],
+): SkincareActiveIntentContext[] {
+  const bySubject = new Map<string, SkincareActiveIntentContext>();
+  for (const item of previous) bySubject.set(item.subject, item);
+  for (const item of current) bySubject.set(item.subject, item);
+  return [...bySubject.values()];
 }
