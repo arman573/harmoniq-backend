@@ -38,6 +38,8 @@ import {
 } from './integrations/product-live-facts.client';
 import { readProductLiveFactsProviderConfig } from './integrations/product-live-facts-provider.config';
 import { resolveProductLiveFactsProvider } from './integrations/product-live-facts-provider.resolver';
+import { ReturnsModuleReadClient } from './integrations/returns-module-read.client';
+import { ReturnsModuleReadTools } from './integrations/returns-module-read.tools';
 import { SearchBrainClient } from './integrations/search-brain.client';
 import { VendreProductLiveFactsClient } from './integrations/vendre-product-live-facts.client';
 import { ProductRecommendationCardService } from './recommendation/product-recommendation-card.service';
@@ -102,6 +104,8 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     ProductIntelligenceAuthProvider,
     ProductIntelligenceClient,
     ProductRecommendationCardService,
+    ReturnsModuleReadClient,
+    ReturnsModuleReadTools,
     SearchBrainClient,
     RecommendationScoringService,
     SkincareRoutineSafetyReviewService,
@@ -128,6 +132,8 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     ProductIntelligenceClient,
     ProductLiveFactsClient,
     ProductRecommendationCardService,
+    ReturnsModuleReadClient,
+    ReturnsModuleReadTools,
     SearchBrainClient,
     RecommendationScoringService,
     SkincareRoutineSafetyReviewService,
