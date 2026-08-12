@@ -22,6 +22,13 @@ const HAIRCARE_PRODUCT_TYPES: AiArmanProductType[] = [
   'hair_mask',
   'leave_in',
 ];
+const SKINCARE_NEEDS = [
+  'dry_skin',
+  'oily_skin',
+  'sensitive_skin',
+  'acne_prone_skin',
+  'redness',
+] as const;
 
 @Injectable()
 export class ChatMessagesService {
@@ -114,6 +121,13 @@ export class ChatMessagesService {
       !needs.includes('dry_scalp')
     ) {
       missingFields.push('drynessLocation');
+    }
+    if (
+      primaryIntent === 'product_recommendation' &&
+      recommendationDomain === 'skincare' &&
+      !hasSkincareNeed(needs)
+    ) {
+      missingFields.push('skincareConcern');
     }
     if (
       ['order_status', 'tracking_status', 'return_help', 'claim_help'].includes(primaryIntent) &&
@@ -458,11 +472,20 @@ function detectNeeds(value: string) {
     [/friss|frizz/, 'frizz_control'],
     [/kanslig harbotten|irriterad harbotten|lattirriterad harbotten|harbotten blir latt irriterad/, 'sensitive_scalp'],
     [/latt formula|latt produkt|tynger inte ner|inte tynger ner|inte tynga ner|utan att tynga ner|plattar inte till|inte plattar till|\bviktlos\b|\bweightless\b|\blightweight\b/, 'lightweight_haircare'],
+    [/torr hud|torr i ansiktet|huden ar torr|stram hud|huden stramar/, 'dry_skin'],
+    [/fet hud|oljig hud|blank hud|huden blir blank|blank i ansiktet/, 'oily_skin'],
+    [/kanslig hud|lattirriterad hud|irriterad hud|huden svider latt/, 'sensitive_skin'],
+    [/\bakne\b|finnar|oren hud|blemish/, 'acne_prone_skin'],
+    [/rodnad|rod hud|huden blir rod|rosig hud/, 'redness'],
   ];
   for (const [pattern, label] of signals) {
     if (pattern.test(value)) needs.push(label);
   }
   return [...new Set(needs)];
+}
+
+function hasSkincareNeed(needs: string[]) {
+  return needs.some((need) => SKINCARE_NEEDS.includes(need as (typeof SKINCARE_NEEDS)[number]));
 }
 
 function detectExclusions(value: string) {
@@ -523,6 +546,15 @@ function buildQuestion(field: string | null, domain: AiArmanBeautyDomain | null)
       type: 'question' as const,
       id: 'dryness-location',
       text: 'Känns torrheten främst i hårbotten, i längderna eller både och?',
+      expectedField: field,
+      required: true,
+    };
+  }
+  if (field === 'skincareConcern') {
+    return {
+      type: 'question' as const,
+      id: 'skincare-concern',
+      text: 'Vad vill du främst få hjälp med i huden – till exempel torrhet, blank/fet hud, känslighet/rodnad eller finnar?',
       expectedField: field,
       required: true,
     };
