@@ -108,6 +108,35 @@ describe('ChatConversationService recommendation journey execution', () => {
     );
   });
 
+  it.each([
+    ['Jag söker ett serum för ansiktet.', 'skincare'],
+    ['Jag söker en parfym.', 'fragrance'],
+    ['Jag söker en foundation.', 'makeup'],
+    ['Jag söker ett nagellack.', 'nails'],
+  ])(
+    'does not execute the haircare journey for %s',
+    async (text, expectedDomain) => {
+      const prepare = jest.fn();
+      const service = createService(prepare);
+
+      const response = await service.handleWithShadow({
+        contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+        clientMessageId: `journey-domain-${expectedDomain}`,
+        message: { text },
+      });
+
+      expect(prepare).not.toHaveBeenCalled();
+      expect(response.interpretation.entities.recommendationDomain).toBe(
+        expectedDomain,
+      );
+      expect(response.decision.plannedTools).toEqual([]);
+      expect(response.decision.reasons).toContain(
+        'specialist_domain_not_enabled_for_tools',
+      );
+      expect(response.safety.liveFactsUsed).toBe(false);
+    },
+  );
+
   it('executes the journey after a natural product-type follow-up and preserves prior needs and exclusions', async () => {
     const prepare = jest.fn().mockResolvedValue({
       status: 'no_verified_candidates',
