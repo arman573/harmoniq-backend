@@ -291,6 +291,6 @@ export type AiArmanChatResponse = {
     writesExecuted: false;
     productionActionsEnabled: false;
     htmlAcceptedFromModel: false;
-    skincareRoutineReview: AiArmanSkincareRoutineReview | null;
+    skincareRoutineReview?: AiArmanSkincareRoutineReview | null;
   };
 };
