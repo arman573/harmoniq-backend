@@ -13,6 +13,9 @@ import {
   AiArmanJourney,
   AiArmanProductType,
   AiArmanResponseBlock,
+  AiArmanRoutineTiming,
+  AiArmanSkincareActive,
+  AiArmanSkincareRoutineActive,
 } from './chat-messages.types';
 
 const MAX_MESSAGE_LENGTH = 2000;
@@ -101,6 +104,10 @@ export class ChatMessagesService {
     const orderReference = detectOrderReference(normalized);
     const primaryIntent = detectIntent(normalized, requestedProductTypes, orderReference);
     const needs = detectNeeds(normalized, recommendationDomain);
+    const skincareRoutineActives =
+      recommendationDomain === 'skincare'
+        ? detectSkincareRoutineActives(normalized)
+        : [];
     const requiresIdentity = [
       'order_status',
       'tracking_status',
@@ -150,6 +157,7 @@ export class ChatMessagesService {
         orderReference,
         productReferences: [],
         recommendationDomain,
+        skincareRoutineActives,
       },
       missingFields,
       requiresIdentity,
@@ -437,6 +445,12 @@ function detectIntent(
   if (/retur|returnera|angra kop/.test(value)) return 'return_help';
   if (/sparning|tracking|paket|leverans/.test(value)) return 'tracking_status';
   if (/var ar min bestallning|orderstatus/.test(value) || orderReference) return 'order_status';
+  if (
+    productTypes.length > 0 &&
+    /soker|behover|rekommendera|vilken produkt|produktval|passar/.test(value)
+  ) {
+    return 'product_recommendation';
+  }
   if (/kopte|kopt|anvanda|anvander|hur ofta/.test(value)) return 'purchased_product_usage';
   if (productTypes.length > 0 || /passar|rekommendera|vilken produkt|produktval/.test(value)) {
     return 'product_recommendation';
@@ -491,6 +505,32 @@ function detectNeeds(value: string, domain: AiArmanBeautyDomain | null) {
   }
 
   return [...new Set(needs)];
+}
+
+function detectSkincareRoutineActives(value: string): AiArmanSkincareRoutineActive[] {
+  const timing = detectRoutineTiming(value);
+  const signals: Array<[RegExp, AiArmanSkincareActive]> = [
+    [/\bretinol\b|\bretinal\b|\bretinoid\b|\btretinoin\b/, 'retinoid'],
+    [/\baha\b|glykolsyra|mjolksyra|glycolic acid|lactic acid/, 'aha'],
+    [/\bbha\b|salicylsyra|salicylic acid/, 'bha'],
+    [/\bpha\b|gluconolactone/, 'pha'],
+    [/vitamin c|askorbinsyra|ascorbic acid/, 'vitamin_c'],
+    [/niacinamid|niacinamide/, 'niacinamide'],
+    [/azelainsyra|azelaic acid/, 'azelaic_acid'],
+    [/bensoylperoxid|benzoyl peroxide/, 'benzoyl_peroxide'],
+  ];
+
+  return signals
+    .filter(([pattern]) => pattern.test(value))
+    .map(([, active]) => ({ active, timing }));
+}
+
+function detectRoutineTiming(value: string): AiArmanRoutineTiming {
+  const morning = /morgon|pa morgonen|dagtid/.test(value);
+  const evening = /kvall|pa kvallen|nattetid/.test(value);
+  if (morning && !evening) return 'morning';
+  if (evening && !morning) return 'evening';
+  return 'unspecified';
 }
 
 function hasSkincareNeed(needs: string[]) {
