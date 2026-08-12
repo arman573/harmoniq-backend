@@ -26,6 +26,7 @@ import { ProductCardBlockMapper } from './chat/product-card-block.mapper';
 import { HaircareRecommendationJourneyService } from './discovery/haircare-recommendation-journey.service';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
 import { ProductIntelligenceEnrichmentService } from './discovery/product-intelligence-enrichment.service';
+import { VerifiedCustomerContextStore } from './identity/verified-customer-context.store';
 import { ProductIntelligenceAuthProvider } from './integrations/product-intelligence-auth.provider';
 import { ProductIntelligenceClient } from './integrations/product-intelligence.client';
 import {
@@ -58,6 +59,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     VendreProductLiveFactsClient,
     InMemoryChatInterpretationShadowAuditStore,
     InMemoryProductIntelligenceAuditStore,
+    VerifiedCustomerContextStore,
     {
       provide: ChatConversationResultRepository,
       useExisting: ChatConversationResultStore,
@@ -138,6 +140,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     RecommendationScoringService,
     SkincareRoutineSafetyReviewService,
     SkincareSpecialistChatOrchestrator,
+    VerifiedCustomerContextStore,
   ],
 })
 export class AiArmanModule {}
