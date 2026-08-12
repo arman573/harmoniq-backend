@@ -84,7 +84,7 @@ describe('AI Arman skincare safety review conversation integration', () => {
     expect(second.decision.plannedTools).toEqual([]);
   });
 
-  it('keeps skincare review null outside the skincare domain', () => {
+  it('does not change the safety response shape outside the skincare domain', () => {
     const service = createConversationService();
     const result = service.handle({
       contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
@@ -92,6 +92,6 @@ describe('AI Arman skincare safety review conversation integration', () => {
       message: { text: 'Jag söker schampo för färgat hår.' },
     });
 
-    expect(result.safety.skincareRoutineReview).toBeNull();
+    expect(result.safety.skincareRoutineReview).toBeUndefined();
   });
 });
