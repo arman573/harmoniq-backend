@@ -22,13 +22,18 @@ export class SkincareSpecialistChatOrchestrator {
   ) {}
 
   async handleWithShadow(input: AiArmanChatRequest): Promise<AiArmanChatResponse> {
-    const previousProfile = input.conversationId?.trim()
-      ? this.stateStore.get(input.conversationId.trim())?.remembered
-          .skincareSpecialistProfile
-      : undefined;
+    const previousState = input.conversationId?.trim()
+      ? this.stateStore.get(input.conversationId.trim())
+      : null;
+    const previousProfile = previousState?.remembered.skincareSpecialistProfile;
     const response = await this.conversations.handleWithShadow(input);
+    const effectiveDomain =
+      response.interpretation.entities.recommendationDomain ??
+      response.state.remembered.recommendationDomain ??
+      previousState?.remembered.recommendationDomain ??
+      null;
 
-    if (response.interpretation.entities.recommendationDomain !== 'skincare') {
+    if (effectiveDomain !== 'skincare') {
       const cleaned = clearSkincareSpecialistProfile(response);
       this.stateStore.save(cleaned.state);
       return cleaned;
