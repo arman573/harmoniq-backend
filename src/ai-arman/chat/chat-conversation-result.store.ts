@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { reviewSkincareRoutineSafety } from '../skincare/skincare-routine-safety-review.service';
 import {
   ChatConversationResultRepository,
   type StoredChatResult,
@@ -41,7 +42,7 @@ export class ChatConversationResultStore extends ChatConversationResultRepositor
     const now = Date.now();
     this.pruneExpired(now);
 
-    const snapshot = cloneResponse(response);
+    const snapshot = cloneResponse(withSkincareRoutineReview(response));
     this.results.delete(key);
     this.results.set(key, {
       result: { fingerprint, response: snapshot },
@@ -67,6 +68,27 @@ export class ChatConversationResultStore extends ChatConversationResultRepositor
       this.results.delete(oldestKey);
     }
   }
+}
+
+function withSkincareRoutineReview(
+  response: AiArmanChatResponse,
+): AiArmanChatResponse {
+  const isSkincare =
+    response.interpretation.entities.recommendationDomain === 'skincare';
+  const skincareRoutineReview = isSkincare
+    ? reviewSkincareRoutineSafety({
+        needs: response.interpretation.entities.needs,
+        actives: response.interpretation.entities.skincareRoutineActives ?? [],
+      })
+    : null;
+
+  return {
+    ...response,
+    safety: {
+      ...response.safety,
+      skincareRoutineReview,
+    },
+  };
 }
 
 function cloneResponse(response: AiArmanChatResponse): AiArmanChatResponse {
