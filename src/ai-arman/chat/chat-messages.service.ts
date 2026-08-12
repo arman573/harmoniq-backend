@@ -467,10 +467,10 @@ function detectNeeds(value: string, domain: AiArmanBeautyDomain | null) {
   if (dryLengths) needs.push('dry_lengths');
   if (dryScalp) needs.push('dry_scalp');
   if (
+    domain === 'haircare' &&
     !dryLengths &&
     !dryScalp &&
-    /\btorr(?:t|a)?\b/.test(value) &&
-    /\bhar\b/.test(value)
+    /\btorr(?:t|a)?\b/.test(value)
   ) {
     needs.push('dry_hair_unspecified');
   }
