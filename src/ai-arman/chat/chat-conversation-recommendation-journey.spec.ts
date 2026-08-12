@@ -108,8 +108,27 @@ describe('ChatConversationService recommendation journey execution', () => {
     );
   });
 
+  it('does not execute the haircare journey while skincare needs clarification', async () => {
+    const prepare = jest.fn();
+    const service = createService(prepare);
+
+    const response = await service.handleWithShadow({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'journey-domain-skincare',
+      message: { text: 'Jag söker ett serum för ansiktet.' },
+    });
+
+    expect(prepare).not.toHaveBeenCalled();
+    expect(response.interpretation.entities.recommendationDomain).toBe('skincare');
+    expect(response.interpretation.missingFields).toContain('skincareConcern');
+    expect(response.decision.plannedTools).toEqual([]);
+    expect(response.decision.reasons).toContain(
+      'clarification_required_before_product_search',
+    );
+    expect(response.safety.liveFactsUsed).toBe(false);
+  });
+
   it.each([
-    ['Jag söker ett serum för ansiktet.', 'skincare'],
     ['Jag söker en parfym.', 'fragrance'],
     ['Jag söker en foundation.', 'makeup'],
     ['Jag söker ett nagellack.', 'nails'],
