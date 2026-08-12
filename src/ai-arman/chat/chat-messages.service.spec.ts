@@ -16,6 +16,7 @@ describe('ChatMessagesService', () => {
     });
 
     expect(result.interpretation.primaryIntent).toBe('product_recommendation');
+    expect(result.interpretation.entities.recommendationDomain).toBe('haircare');
     expect(result.interpretation.entities.requestedProductTypes).toEqual(['shampoo']);
     expect(result.interpretation.entities.needs).toEqual(
       expect.arrayContaining(['thin_hair', 'color_treated_hair', 'oily_scalp', 'dry_lengths']),
@@ -105,6 +106,51 @@ describe('ChatMessagesService', () => {
         }),
       ]),
     );
+  });
+
+  it.each([
+    ['Jag söker ett serum för ansiktet.', 'skincare', 'serum'],
+    ['Jag söker en parfym.', 'fragrance', 'fragrance'],
+    ['Jag söker en foundation.', 'makeup', 'foundation'],
+    ['Jag söker ett nagellack.', 'nails', 'nail_polish'],
+  ])(
+    'routes %s to %s without opening haircare tools',
+    (text, expectedDomain, expectedProductType) => {
+      const result = service.handle({
+        contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+        clientMessageId: `domain-${expectedDomain}`,
+        message: { text },
+      });
+
+      expect(result.interpretation.primaryIntent).toBe('product_recommendation');
+      expect(result.interpretation.entities.recommendationDomain).toBe(expectedDomain);
+      expect(result.interpretation.entities.requestedProductTypes).toEqual([
+        expectedProductType,
+      ]);
+      expect(result.interpretation.missingFields).toEqual([]);
+      expect(result.decision.plannedTools).toEqual([]);
+      expect(result.decision.reasons).toContain(
+        'specialist_domain_not_enabled_for_tools',
+      );
+      expect(result.safety.liveFactsUsed).toBe(false);
+    },
+  );
+
+  it('does not confuse fragrance avoidance with the fragrance recommendation domain', () => {
+    const result = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'domain-fragrance-avoidance',
+      message: { text: 'Jag söker leave-in utan parfym.' },
+    });
+
+    expect(result.interpretation.entities.recommendationDomain).toBe('haircare');
+    expect(result.interpretation.entities.requestedProductTypes).toEqual(['leave_in']);
+    expect(result.interpretation.entities.exclusions).toContain('fragrance');
+    expect(result.decision.plannedTools).toEqual([
+      'search_products',
+      'analyze_product_suitability',
+      'get_product_live_facts',
+    ]);
   });
 
   it('generates opaque public identifiers instead of deriving them from the client message ID', () => {
