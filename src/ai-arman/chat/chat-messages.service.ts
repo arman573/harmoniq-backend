@@ -100,7 +100,7 @@ export class ChatMessagesService {
     const recommendationDomain = detectBeautyDomain(normalized, requestedProductTypes);
     const orderReference = detectOrderReference(normalized);
     const primaryIntent = detectIntent(normalized, requestedProductTypes, orderReference);
-    const needs = detectNeeds(normalized);
+    const needs = detectNeeds(normalized, recommendationDomain);
     const requiresIdentity = [
       'order_status',
       'tracking_status',
@@ -445,7 +445,7 @@ function detectIntent(
   return 'unknown';
 }
 
-function detectNeeds(value: string) {
+function detectNeeds(value: string, domain: AiArmanBeautyDomain | null) {
   const needs: string[] = [];
   const dryLengths = /torra langder|torra toppar|framst langderna|mest langderna|langderna(?: ar)? torra/.test(value);
   const dryScalp = /torr harbotten|torr i harbotten|harbotten(?: ar)? torr|framst harbotten|mest harbotten/.test(value);
@@ -481,6 +481,15 @@ function detectNeeds(value: string) {
   for (const [pattern, label] of signals) {
     if (pattern.test(value)) needs.push(label);
   }
+
+  if (domain === 'skincare') {
+    if (/\btorr(?:t|a)?\b|\bstram(?:t|a)?\b/.test(value)) needs.push('dry_skin');
+    if (/\bfet(?:t|a)?\b|\boljig(?:t|a)?\b|\bblank(?:t|a)?\b/.test(value)) needs.push('oily_skin');
+    if (/\bkanslig(?:t|a)?\b|\birriterad(?:e)?\b|\bsvider\b/.test(value)) needs.push('sensitive_skin');
+    if (/\bakne\b|\bfinnar\b|\bblemish(?:es)?\b/.test(value)) needs.push('acne_prone_skin');
+    if (/\brodnad\b|\brod(?:a|t)?\b|\brosig(?:t|a)?\b/.test(value)) needs.push('redness');
+  }
+
   return [...new Set(needs)];
 }
 
