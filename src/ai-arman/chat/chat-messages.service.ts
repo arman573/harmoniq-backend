@@ -411,7 +411,7 @@ function detectBeautyDomain(
   if (typeDomains.length === 1) return typeDomains[0];
   if (typeDomains.length > 1) return null;
 
-  if (/harbotten|harvard|harprodukt|\bharet\b|\bmitt har\b|\bditt har\b|\bsitt har\b/.test(value)) return 'haircare';
+  if (/harbotten|harvard|harprodukt|\bharet\b|\bmitt har\b|\bditt har\b|\bsitt har\b|\b(?:torrt|fargat|fargbehandlat|slitet|skadat|frissigt|tunt|fint|blekt|blonderat)\s+har\b/.test(value)) return 'haircare';
   if (/hudvard|ansikte|ansiktet|hudtyp|hudbarriar|finnar|akne/.test(value)) return 'skincare';
   if (/makeup|smink|undertone|underton|tackning/.test(value)) return 'makeup';
   if (/nagel|naglar/.test(value)) return 'nails';
