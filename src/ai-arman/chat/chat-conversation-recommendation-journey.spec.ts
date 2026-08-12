@@ -108,7 +108,7 @@ describe('ChatConversationService recommendation journey execution', () => {
     );
   });
 
-  it('executes the journey after a natural product-type follow-up and preserves prior needs', async () => {
+  it('executes the journey after a natural product-type follow-up and preserves prior needs and exclusions', async () => {
     const prepare = jest.fn().mockResolvedValue({
       status: 'no_verified_candidates',
       recommendations: [],
@@ -132,7 +132,7 @@ describe('ChatConversationService recommendation journey execution', () => {
       contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
       conversationId: first.conversationId,
       clientMessageId: 'journey-multi-product-type-2',
-      message: { text: 'Något jag inte behöver skölja ur.' },
+      message: { text: 'Leave-in, gärna oparfymerat och utan silikoner.' },
     });
 
     expect(prepare).toHaveBeenCalledTimes(1);
@@ -142,6 +142,9 @@ describe('ChatConversationService recommendation journey execution', () => {
     ]);
     expect(preparedInterpretation.entities.needs).toEqual(
       expect.arrayContaining(['damaged_hair', 'frizz_control']),
+    );
+    expect(preparedInterpretation.entities.exclusions).toEqual(
+      expect.arrayContaining(['fragrance', 'silicones']),
     );
     expect(second.state.status).toBe('ready_for_tools');
     expect(second.decision.executionStatus).toBe('executed_read_only');
