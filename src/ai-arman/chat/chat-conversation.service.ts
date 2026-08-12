@@ -440,20 +440,43 @@ export class ChatConversationService {
     previous: AiArmanConversationState | null,
     messageText: string,
   ): AiArmanInterpretation {
+    const previousDomain = previous?.remembered.recommendationDomain ?? null;
+    const explicitCurrentDomain = current.entities.recommendationDomain ?? null;
+    const domainSwitched = Boolean(
+      previousDomain &&
+        explicitCurrentDomain &&
+        previousDomain !== explicitCurrentDomain,
+    );
+    const previousRequestedProductTypes = domainSwitched
+      ? []
+      : previous?.remembered.requestedProductTypes ?? [];
+    const previousNeeds = domainSwitched
+      ? []
+      : previous?.remembered.needs ?? [];
+    const previousExclusions = domainSwitched
+      ? []
+      : previous?.remembered.exclusions ?? [];
+    const previousProductReferences = domainSwitched
+      ? []
+      : previous?.remembered.productReferences ?? [];
+    const previousSkincareRoutineActives = domainSwitched
+      ? []
+      : previous?.remembered.skincareRoutineActives ?? [];
+
     const requestedProductTypes = unique([
-      ...(previous?.remembered.requestedProductTypes ?? []),
+      ...previousRequestedProductTypes,
       ...current.entities.requestedProductTypes,
     ]);
     const needs = normalizeMergedNeeds([
-      ...(previous?.remembered.needs ?? []),
+      ...previousNeeds,
       ...current.entities.needs,
     ]);
     const exclusions = unique([
-      ...(previous?.remembered.exclusions ?? []),
+      ...previousExclusions,
       ...current.entities.exclusions,
     ]);
     const productReferences = unique([
-      ...(previous?.remembered.productReferences ?? []),
+      ...previousProductReferences,
       ...current.entities.productReferences,
     ]);
     const orderReference =
@@ -461,18 +484,21 @@ export class ChatConversationService {
       previous?.remembered.orderReference ??
       null;
     const recommendationDomain =
-      current.entities.recommendationDomain ??
-      previous?.remembered.recommendationDomain ??
+      explicitCurrentDomain ??
+      previousDomain ??
       inferDomainFromProductTypes(requestedProductTypes);
     const contextualSkincareActives =
       recommendationDomain === 'skincare'
         ? detectSkincareRoutineActives(messageText)
         : [];
-    const skincareRoutineActives = mergeSkincareRoutineActives([
-      ...(previous?.remembered.skincareRoutineActives ?? []),
-      ...(current.entities.skincareRoutineActives ?? []),
-      ...contextualSkincareActives,
-    ]);
+    const skincareRoutineActives =
+      recommendationDomain === 'skincare'
+        ? mergeSkincareRoutineActives([
+            ...previousSkincareRoutineActives,
+            ...(current.entities.skincareRoutineActives ?? []),
+            ...contextualSkincareActives,
+          ])
+        : [];
 
     const productJourneyContinues =
       previous?.activeJourney === 'before_purchase' ||
