@@ -108,6 +108,48 @@ describe('ChatConversationService recommendation journey execution', () => {
     );
   });
 
+  it('executes the journey after a natural product-type follow-up and preserves prior needs', async () => {
+    const prepare = jest.fn().mockResolvedValue({
+      status: 'no_verified_candidates',
+      recommendations: [],
+      productCards: [],
+    });
+    const service = createService(prepare);
+
+    const first = await service.handleWithShadow({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'journey-multi-product-type-1',
+      message: { text: 'Jag har slitet och frissigt hår.' },
+    });
+
+    expect(prepare).not.toHaveBeenCalled();
+    expect(first.state.pendingQuestion?.expectedField).toBe('requestedProductType');
+    expect(first.state.remembered.needs).toEqual(
+      expect.arrayContaining(['damaged_hair', 'frizz_control']),
+    );
+
+    const second = await service.handleWithShadow({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      conversationId: first.conversationId,
+      clientMessageId: 'journey-multi-product-type-2',
+      message: { text: 'Något jag inte behöver skölja ur.' },
+    });
+
+    expect(prepare).toHaveBeenCalledTimes(1);
+    const preparedInterpretation = prepare.mock.calls[0][0];
+    expect(preparedInterpretation.entities.requestedProductTypes).toEqual([
+      'leave_in',
+    ]);
+    expect(preparedInterpretation.entities.needs).toEqual(
+      expect.arrayContaining(['damaged_hair', 'frizz_control']),
+    );
+    expect(second.state.status).toBe('ready_for_tools');
+    expect(second.decision.executionStatus).toBe('executed_read_only');
+    expect(second.decision.reasons).toContain(
+      'recommendation_journey:no_verified_candidates',
+    );
+  });
+
   it('does not execute the recommendation journey for unrelated intents', async () => {
     const prepare = jest.fn();
     const service = createService(prepare);
