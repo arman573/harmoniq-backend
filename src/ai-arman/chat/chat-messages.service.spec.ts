@@ -108,8 +108,25 @@ describe('ChatMessagesService', () => {
     );
   });
 
+  it('routes skincare to a specialist clarification without opening haircare tools', () => {
+    const result = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'domain-skincare',
+      message: { text: 'Jag söker ett serum för ansiktet.' },
+    });
+
+    expect(result.interpretation.primaryIntent).toBe('product_recommendation');
+    expect(result.interpretation.entities.recommendationDomain).toBe('skincare');
+    expect(result.interpretation.entities.requestedProductTypes).toEqual(['serum']);
+    expect(result.interpretation.missingFields).toEqual(['skincareConcern']);
+    expect(result.decision.plannedTools).toEqual([]);
+    expect(result.decision.reasons).toContain(
+      'clarification_required_before_product_search',
+    );
+    expect(result.safety.liveFactsUsed).toBe(false);
+  });
+
   it.each([
-    ['Jag söker ett serum för ansiktet.', 'skincare', 'serum'],
     ['Jag söker en parfym.', 'fragrance', 'fragrance'],
     ['Jag söker en foundation.', 'makeup', 'foundation'],
     ['Jag söker ett nagellack.', 'nails', 'nail_polish'],
