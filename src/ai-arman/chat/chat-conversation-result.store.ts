@@ -73,20 +73,18 @@ export class ChatConversationResultStore extends ChatConversationResultRepositor
 function withSkincareRoutineReview(
   response: AiArmanChatResponse,
 ): AiArmanChatResponse {
-  const isSkincare =
-    response.interpretation.entities.recommendationDomain === 'skincare';
-  const skincareRoutineReview = isSkincare
-    ? reviewSkincareRoutineSafety({
-        needs: response.interpretation.entities.needs,
-        actives: response.interpretation.entities.skincareRoutineActives ?? [],
-      })
-    : null;
+  if (response.interpretation.entities.recommendationDomain !== 'skincare') {
+    return response;
+  }
 
   return {
     ...response,
     safety: {
       ...response.safety,
-      skincareRoutineReview,
+      skincareRoutineReview: reviewSkincareRoutineSafety({
+        needs: response.interpretation.entities.needs,
+        actives: response.interpretation.entities.skincareRoutineActives ?? [],
+      }),
     },
   };
 }
