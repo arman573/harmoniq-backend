@@ -62,6 +62,20 @@ export type AiArmanSkincareRoutineActive = {
   timing: AiArmanRoutineTiming;
 };
 
+export type AiArmanSkincareRoutineReviewFlag =
+  | 'retinoid_with_exfoliating_acid'
+  | 'potentially_irritating_active_timing_unspecified'
+  | 'multiple_potentially_irritating_actives'
+  | 'sensitive_skin_with_potentially_irritating_active';
+
+export type AiArmanSkincareRoutineReview = {
+  version: 'skincare-routine-safety-review-v1';
+  status: 'clear' | 'review_required';
+  flags: AiArmanSkincareRoutineReviewFlag[];
+  requiresReview: boolean;
+  blocksRecommendation: false;
+};
+
 export type AiArmanProductType =
   | 'shampoo'
   | 'conditioner'
@@ -277,5 +291,6 @@ export type AiArmanChatResponse = {
     writesExecuted: false;
     productionActionsEnabled: false;
     htmlAcceptedFromModel: false;
+    skincareRoutineReview: AiArmanSkincareRoutineReview | null;
   };
 };
