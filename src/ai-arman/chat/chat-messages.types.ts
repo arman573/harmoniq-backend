@@ -45,6 +45,23 @@ export type AiArmanBeautyDomain =
   | 'makeup'
   | 'nails';
 
+export type AiArmanSkincareActive =
+  | 'retinoid'
+  | 'aha'
+  | 'bha'
+  | 'pha'
+  | 'vitamin_c'
+  | 'niacinamide'
+  | 'azelaic_acid'
+  | 'benzoyl_peroxide';
+
+export type AiArmanRoutineTiming = 'morning' | 'evening' | 'unspecified';
+
+export type AiArmanSkincareRoutineActive = {
+  active: AiArmanSkincareActive;
+  timing: AiArmanRoutineTiming;
+};
+
 export type AiArmanProductType =
   | 'shampoo'
   | 'conditioner'
@@ -71,6 +88,7 @@ export type AiArmanInterpretationEntities = {
   orderReference: string | null;
   productReferences: string[];
   recommendationDomain?: AiArmanBeautyDomain | null;
+  skincareRoutineActives?: AiArmanSkincareRoutineActive[];
 };
 
 export type AiArmanInterpretationBase = {
@@ -107,6 +125,7 @@ export type AiArmanConversationState = {
     orderReference: string | null;
     productReferences: string[];
     recommendationDomain?: AiArmanBeautyDomain | null;
+    skincareRoutineActives?: AiArmanSkincareRoutineActive[];
   };
   pendingQuestion: {
     id: string;
