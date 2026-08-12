@@ -489,7 +489,7 @@ export class ChatConversationService {
       inferDomainFromProductTypes(requestedProductTypes);
     const contextualSkincareActives =
       recommendationDomain === 'skincare'
-        ? detectSkincareRoutineActives(messageText)
+        ? detectSkincareRoutineActives(normalizeFollowUpText(messageText))
         : [];
     const skincareRoutineActives =
       recommendationDomain === 'skincare'
