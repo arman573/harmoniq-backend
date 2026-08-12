@@ -26,6 +26,13 @@ import { ProductCardBlockMapper } from './chat/product-card-block.mapper';
 import { HaircareRecommendationJourneyService } from './discovery/haircare-recommendation-journey.service';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
 import { ProductIntelligenceEnrichmentService } from './discovery/product-intelligence-enrichment.service';
+import {
+  AccountOrderVerificationProvider,
+  DisabledAccountOrderVerificationProvider,
+  DisabledOrderEmailOtpVerificationProvider,
+  OrderEmailOtpVerificationProvider,
+} from './identity/customer-identity-verification.providers';
+import { CustomerIdentityVerificationService } from './identity/customer-identity-verification.service';
 import { VerifiedCustomerContextStore } from './identity/verified-customer-context.store';
 import { ProductIntelligenceAuthProvider } from './integrations/product-intelligence-auth.provider';
 import { ProductIntelligenceClient } from './integrations/product-intelligence.client';
@@ -60,6 +67,16 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     InMemoryChatInterpretationShadowAuditStore,
     InMemoryProductIntelligenceAuditStore,
     VerifiedCustomerContextStore,
+    DisabledOrderEmailOtpVerificationProvider,
+    DisabledAccountOrderVerificationProvider,
+    {
+      provide: OrderEmailOtpVerificationProvider,
+      useExisting: DisabledOrderEmailOtpVerificationProvider,
+    },
+    {
+      provide: AccountOrderVerificationProvider,
+      useExisting: DisabledAccountOrderVerificationProvider,
+    },
     {
       provide: ChatConversationResultRepository,
       useExisting: ChatConversationResultStore,
@@ -99,6 +116,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     ChatMessagesService,
     ChatPreviewService,
     ChatRequestParser,
+    CustomerIdentityVerificationService,
     ProductCardBlockMapper,
     HaircareRecommendationJourneyService,
     ProductDiscoveryService,
@@ -126,6 +144,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     ChatMessagesService,
     ChatPreviewService,
     ChatRequestParser,
+    CustomerIdentityVerificationService,
     ProductCardBlockMapper,
     HaircareRecommendationJourneyService,
     ProductDiscoveryService,
