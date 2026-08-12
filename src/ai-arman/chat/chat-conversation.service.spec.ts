@@ -134,6 +134,38 @@ describe('ChatConversationService', () => {
     ]);
   });
 
+  it('adds a lightweight preference without inferring thin hair', () => {
+    const service = createService();
+    const first = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'product-type-lightweight-1',
+      message: { text: 'Jag har slitet och frissigt hår.' },
+    });
+
+    const second = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      conversationId: first.conversationId,
+      clientMessageId: 'product-type-lightweight-2',
+      message: { text: 'Leave-in, helst något lätt som inte tynger ner.' },
+    });
+
+    expect(second.state.status).toBe('ready_for_tools');
+    expect(second.state.remembered.requestedProductTypes).toEqual(['leave_in']);
+    expect(second.state.remembered.needs).toEqual(
+      expect.arrayContaining([
+        'damaged_hair',
+        'frizz_control',
+        'lightweight_haircare',
+      ]),
+    );
+    expect(second.state.remembered.needs).not.toContain('thin_hair');
+    expect(second.decision.plannedTools).toEqual([
+      'search_products',
+      'analyze_product_suitability',
+      'get_product_live_facts',
+    ]);
+  });
+
   it('keeps asking when the product-type follow-up is still ambiguous', () => {
     const service = createService();
     const first = service.handle({
