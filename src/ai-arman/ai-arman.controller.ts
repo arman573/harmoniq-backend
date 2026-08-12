@@ -1,6 +1,5 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { AiArmanService } from './ai-arman.service';
-import { ChatConversationService } from './chat/chat-conversation.service';
 import { ChatRequestParser } from './chat/chat-request.parser';
 import { ChatPreviewService } from './chat/chat-preview.service';
 import type { ChatPreviewRequest } from './chat/chat-preview.types';
@@ -8,12 +7,13 @@ import { ProductDiscoveryService } from './discovery/product-discovery.service';
 import { ProductIntelligenceEnrichmentService } from './discovery/product-intelligence-enrichment.service';
 import type { ProductIntelligencePreviewRequest } from './discovery/product-intelligence-enrichment.service';
 import type { RecommendationCandidate } from './recommendation/recommendation.types';
+import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-specialist-chat-orchestrator.service';
 
 @Controller('ai-arman')
 export class AiArmanController {
   constructor(
     private readonly aiArmanService: AiArmanService,
-    private readonly chatConversationService: ChatConversationService,
+    private readonly skincareSpecialistChatOrchestrator: SkincareSpecialistChatOrchestrator,
     private readonly chatRequestParser: ChatRequestParser,
     private readonly chatPreviewService: ChatPreviewService,
     private readonly productDiscoveryService: ProductDiscoveryService,
@@ -28,7 +28,7 @@ export class AiArmanController {
   @Post('chat/messages')
   createChatMessage(@Body() body: unknown) {
     const request = this.chatRequestParser.parse(body);
-    return this.chatConversationService.handleWithShadow(request);
+    return this.skincareSpecialistChatOrchestrator.handleWithShadow(request);
   }
 
   @Get('products/discover')
