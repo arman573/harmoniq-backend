@@ -180,7 +180,7 @@ function contextualMatch(value: string, subject: RegExp, context: RegExp): boole
   const subjectMatch = value.match(subject);
   if (subjectMatch?.index === undefined) return false;
   const start = Math.max(0, subjectMatch.index - 48);
-  const end = Math.min(value.length, subjectMatch.index + subjectMatch[0].length + 48);
+  const end = subjectMatch.index + subjectMatch[0].length;
   return context.test(value.slice(start, end));
 }
 
