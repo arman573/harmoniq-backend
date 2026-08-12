@@ -43,6 +43,7 @@ import { VendreProductLiveFactsClient } from './integrations/vendre-product-live
 import { ProductRecommendationCardService } from './recommendation/product-recommendation-card.service';
 import { RecommendationScoringService } from './recommendation/recommendation-scoring.service';
 import { SkincareRoutineSafetyReviewService } from './skincare/skincare-routine-safety-review.service';
+import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-specialist-chat-orchestrator.service';
 
 @Module({
   controllers: [AiArmanController],
@@ -104,6 +105,7 @@ import { SkincareRoutineSafetyReviewService } from './skincare/skincare-routine-
     SearchBrainClient,
     RecommendationScoringService,
     SkincareRoutineSafetyReviewService,
+    SkincareSpecialistChatOrchestrator,
   ],
   exports: [
     AiArmanService,
@@ -129,6 +131,7 @@ import { SkincareRoutineSafetyReviewService } from './skincare/skincare-routine-
     SearchBrainClient,
     RecommendationScoringService,
     SkincareRoutineSafetyReviewService,
+    SkincareSpecialistChatOrchestrator,
   ],
 })
 export class AiArmanModule {}
