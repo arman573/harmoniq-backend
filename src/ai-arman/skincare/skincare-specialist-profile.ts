@@ -27,15 +27,42 @@ export type SkincareAvoidanceContext = {
   reason: SkincareAvoidanceReason;
 };
 
+export type SkincareActiveIntent =
+  | 'current_use'
+  | 'past_use'
+  | 'stopped_use'
+  | 'not_using'
+  | 'wants_to_start'
+  | 'avoid'
+  | 'prior_reaction'
+  | 'seeking_guidance';
+
+export type SkincareActiveIntentContext = {
+  subject: string;
+  intent: SkincareActiveIntent;
+};
+
 export type SkincareSpecialistProfile = {
   version: 'skincare-specialist-profile-v1';
   barrierSignals: SkincareBarrierSignal[];
   pigmentationConcerns: SkincarePigmentationConcern[];
   routinePositions: SkincareRoutinePosition[];
   avoidanceContexts: SkincareAvoidanceContext[];
+  activeIntentContexts: SkincareActiveIntentContext[];
 };
 
 const MAX_AVOIDANCE_SUBJECT_LENGTH = 80;
+
+const KNOWN_ACTIVE_SUBJECTS: Array<[RegExp, string]> = [
+  [/retinol|retinal|retinoid|tretinoin/, 'retinoid'],
+  [/\baha\b|glykolsyra|mjolksyra|glycolic acid|lactic acid/, 'aha'],
+  [/\bbha\b|salicylsyra|salicylic acid/, 'bha'],
+  [/\bpha\b|gluconolactone/, 'pha'],
+  [/vitamin c|askorbinsyra|ascorbic acid/, 'vitamin_c'],
+  [/niacinamid|niacinamide/, 'niacinamide'],
+  [/azelainsyra|azelaic acid/, 'azelaic_acid'],
+  [/bensoylperoxid|benzoyl peroxide/, 'benzoyl_peroxide'],
+];
 
 export function extractSkincareSpecialistProfile(
   rawText: string,
@@ -94,6 +121,7 @@ export function extractSkincareSpecialistProfile(
     routinePositions:
       routinePositions.length > 0 ? unique(routinePositions) : ['unspecified'],
     avoidanceContexts: uniqueAvoidanceContexts(avoidanceContexts),
+    activeIntentContexts: extractActiveIntentContexts(value),
   };
 }
 
@@ -109,6 +137,11 @@ export function validateSkincareSpecialistProfile(
   for (const item of profile.avoidanceContexts) {
     if (!item.subject.trim() || item.subject.length > MAX_AVOIDANCE_SUBJECT_LENGTH) {
       throw new Error('invalid_skincare_avoidance_subject');
+    }
+  }
+  for (const item of profile.activeIntentContexts) {
+    if (!item.subject.trim() || item.subject.length > MAX_AVOIDANCE_SUBJECT_LENGTH) {
+      throw new Error('invalid_skincare_active_intent_subject');
     }
   }
   return profile;
@@ -141,6 +174,62 @@ function extractAvoidanceContexts(value: string): SkincareAvoidanceContext[] {
   }
 
   return result;
+}
+
+function extractActiveIntentContexts(value: string): SkincareActiveIntentContext[] {
+  const result: SkincareActiveIntentContext[] = [];
+
+  for (const [pattern, subject] of KNOWN_ACTIVE_SUBJECTS) {
+    const subjectMatch = value.match(pattern);
+    if (subjectMatch?.index === undefined) continue;
+    const local = activeIntentContextWindow(value, subjectMatch.index, subjectMatch[0].length);
+    const intent = classifyActiveIntent(local);
+    if (intent) result.push({ subject, intent });
+  }
+
+  return uniqueActiveIntentContexts(result);
+}
+
+function classifyActiveIntent(value: string): SkincareActiveIntent | null {
+  if (/reagerar pa|reagerade pa|fick utslag av|blev rod av|sved av|tal inte|talde inte/.test(value)) {
+    return 'prior_reaction';
+  }
+  if (/slutat med|slutade med|har slutat|pausat|paus med|tog bort/.test(value)) {
+    return 'stopped_use';
+  }
+  if (/anvander inte|anvander ej|inte langre/.test(value)) {
+    return 'not_using';
+  }
+  if (/vill undvika|undvika|vill inte ha|utan/.test(value)) {
+    return 'avoid';
+  }
+  if (
+    /vill borja med|vill borja anvanda|funderar pa att borja med|funderar pa att borja anvanda|kan jag borja med|kan jag borja anvanda|tanker borja med|planerar att borja med/.test(
+      value,
+    )
+  ) {
+    return 'wants_to_start';
+  }
+  if (/vill ha hjalp med|behover hjalp med|fraga om|undrar om/.test(value)) {
+    return 'seeking_guidance';
+  }
+  if (/anvande|brukade anvanda|har anvant/.test(value) && /forut|tidigare|forr/.test(value)) {
+    return 'past_use';
+  }
+  if (/anvander|brukar anvanda|har i min rutin/.test(value)) {
+    return 'current_use';
+  }
+  return null;
+}
+
+function activeIntentContextWindow(
+  value: string,
+  subjectIndex: number,
+  subjectLength: number,
+): string {
+  const start = Math.max(0, subjectIndex - 56);
+  const end = Math.min(value.length, subjectIndex + subjectLength + 24);
+  return value.slice(start, end);
 }
 
 function hasReactionLanguageNearSubject(value: string, subject: RegExp): boolean {
@@ -208,4 +297,12 @@ function uniqueAvoidanceContexts(
     seen.add(key);
     return true;
   });
+}
+
+function uniqueActiveIntentContexts(
+  values: SkincareActiveIntentContext[],
+): SkincareActiveIntentContext[] {
+  const bySubject = new Map<string, SkincareActiveIntentContext>();
+  for (const item of values) bySubject.set(item.subject, item);
+  return [...bySubject.values()];
 }
