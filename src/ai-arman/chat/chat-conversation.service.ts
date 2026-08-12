@@ -21,6 +21,9 @@ import type {
   AiArmanProductCardBlock,
   AiArmanProductType,
   AiArmanResponseBlock,
+  AiArmanRoutineTiming,
+  AiArmanSkincareActive,
+  AiArmanSkincareRoutineActive,
 } from './chat-messages.types';
 import { ProductCardBlockMapper } from './product-card-block.mapper';
 
@@ -125,6 +128,7 @@ export class ChatConversationService {
     const interpretation = this.mergeInterpretation(
       contextualInterpretation,
       previousState,
+      input.message.text,
     );
     const decision = this.decideFromMergedInterpretation(
       current.decision,
@@ -434,6 +438,7 @@ export class ChatConversationService {
   private mergeInterpretation(
     current: AiArmanInterpretation,
     previous: AiArmanConversationState | null,
+    messageText: string,
   ): AiArmanInterpretation {
     const requestedProductTypes = unique([
       ...(previous?.remembered.requestedProductTypes ?? []),
@@ -459,6 +464,15 @@ export class ChatConversationService {
       current.entities.recommendationDomain ??
       previous?.remembered.recommendationDomain ??
       inferDomainFromProductTypes(requestedProductTypes);
+    const contextualSkincareActives =
+      recommendationDomain === 'skincare'
+        ? detectSkincareRoutineActives(messageText)
+        : [];
+    const skincareRoutineActives = mergeSkincareRoutineActives([
+      ...(previous?.remembered.skincareRoutineActives ?? []),
+      ...(current.entities.skincareRoutineActives ?? []),
+      ...contextualSkincareActives,
+    ]);
 
     const productJourneyContinues =
       previous?.activeJourney === 'before_purchase' ||
@@ -515,6 +529,7 @@ export class ChatConversationService {
         orderReference,
         productReferences,
         recommendationDomain,
+        skincareRoutineActives,
       },
       missingFields: unique(missingFields),
       requiresIdentity:
@@ -608,6 +623,8 @@ export class ChatConversationService {
         productReferences: interpretation.entities.productReferences,
         recommendationDomain:
           interpretation.entities.recommendationDomain ?? null,
+        skincareRoutineActives:
+          interpretation.entities.skincareRoutineActives ?? [],
       },
       pendingQuestion,
     };
@@ -765,6 +782,49 @@ function resolveSkincareConcernAnswer(value: string): string[] {
     if (pattern.test(normalized)) needs.push(need);
   }
   return unique(needs);
+}
+
+function detectSkincareRoutineActives(
+  value: string,
+): AiArmanSkincareRoutineActive[] {
+  const normalized = normalizeFollowUpText(value);
+  if (!normalized) return [];
+  const timing = detectRoutineTiming(normalized);
+  const signals: Array<[RegExp, AiArmanSkincareActive]> = [
+    [/\bretinol\b|\bretinal\b|\bretinoid\b|\btretinoin\b/, 'retinoid'],
+    [/\baha\b|glykolsyra|mjolksyra|glycolic acid|lactic acid/, 'aha'],
+    [/\bbha\b|salicylsyra|salicylic acid/, 'bha'],
+    [/\bpha\b|gluconolactone/, 'pha'],
+    [/vitamin c|askorbinsyra|ascorbic acid/, 'vitamin_c'],
+    [/niacinamid|niacinamide/, 'niacinamide'],
+    [/azelainsyra|azelaic acid/, 'azelaic_acid'],
+    [/bensoylperoxid|benzoyl peroxide/, 'benzoyl_peroxide'],
+  ];
+
+  return signals
+    .filter(([pattern]) => pattern.test(normalized))
+    .map(([, active]) => ({ active, timing }));
+}
+
+function detectRoutineTiming(value: string): AiArmanRoutineTiming {
+  const morning = /morgon|pa morgonen|dagtid/.test(value);
+  const evening = /kvall|pa kvallen|nattetid/.test(value);
+  if (morning && !evening) return 'morning';
+  if (evening && !morning) return 'evening';
+  return 'unspecified';
+}
+
+function mergeSkincareRoutineActives(
+  values: AiArmanSkincareRoutineActive[],
+): AiArmanSkincareRoutineActive[] {
+  const byActive = new Map<AiArmanSkincareActive, AiArmanSkincareRoutineActive>();
+  for (const item of values) {
+    const existing = byActive.get(item.active);
+    if (!existing || existing.timing === 'unspecified' || item.timing !== 'unspecified') {
+      byActive.set(item.active, item);
+    }
+  }
+  return [...byActive.values()];
 }
 
 function normalizeFollowUpText(value: string): string {
