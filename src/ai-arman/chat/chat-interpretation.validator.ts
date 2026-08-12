@@ -1,8 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type {
+  AiArmanBeautyDomain,
   AiArmanIntent,
   AiArmanModelInterpretationCandidate,
   AiArmanProductType,
+  AiArmanRoutineTiming,
+  AiArmanSkincareActive,
 } from './chat-messages.types';
 
 const INTENTS: AiArmanIntent[] = [
@@ -17,11 +20,49 @@ const INTENTS: AiArmanIntent[] = [
   'unknown',
 ];
 
+const BEAUTY_DOMAINS: AiArmanBeautyDomain[] = [
+  'haircare',
+  'skincare',
+  'fragrance',
+  'makeup',
+  'nails',
+];
+
 const PRODUCT_TYPES: AiArmanProductType[] = [
   'shampoo',
   'conditioner',
   'hair_mask',
   'leave_in',
+  'cleanser',
+  'face_cream',
+  'serum',
+  'spf',
+  'fragrance',
+  'foundation',
+  'concealer',
+  'lipstick',
+  'mascara',
+  'nail_polish',
+  'base_coat',
+  'top_coat',
+  'nail_treatment',
+];
+
+const SKINCARE_ACTIVES: AiArmanSkincareActive[] = [
+  'retinoid',
+  'aha',
+  'bha',
+  'pha',
+  'vitamin_c',
+  'niacinamide',
+  'azelaic_acid',
+  'benzoyl_peroxide',
+];
+
+const ROUTINE_TIMINGS: AiArmanRoutineTiming[] = [
+  'morning',
+  'evening',
+  'unspecified',
 ];
 
 const MAX_LIST_ITEMS = 20;
@@ -90,13 +131,40 @@ function parseEntities(
   value: unknown,
 ): AiArmanModelInterpretationCandidate['entities'] {
   const entities = asRecord(value, 'interpretation_invalid:entities');
-  assertExactKeys(entities, [
-    'requestedProductTypes',
-    'needs',
-    'exclusions',
-    'orderReference',
-    'productReferences',
-  ]);
+  assertRequiredAllowedKeys(
+    entities,
+    [
+      'requestedProductTypes',
+      'needs',
+      'exclusions',
+      'orderReference',
+      'productReferences',
+    ],
+    [
+      'requestedProductTypes',
+      'needs',
+      'exclusions',
+      'orderReference',
+      'productReferences',
+      'recommendationDomain',
+      'skincareRoutineActives',
+    ],
+  );
+
+  const recommendationDomain =
+    'recommendationDomain' in entities
+      ? parseNullableBeautyDomain(
+          entities.recommendationDomain,
+          'entities.recommendationDomain',
+        )
+      : undefined;
+  const skincareRoutineActives =
+    'skincareRoutineActives' in entities
+      ? parseSkincareRoutineActives(
+          entities.skincareRoutineActives,
+          'entities.skincareRoutineActives',
+        )
+      : undefined;
 
   return {
     requestedProductTypes: parseProductTypeList(
@@ -113,7 +181,55 @@ function parseEntities(
       entities.productReferences,
       'entities.productReferences',
     ),
+    ...(recommendationDomain !== undefined ? { recommendationDomain } : {}),
+    ...(skincareRoutineActives !== undefined ? { skincareRoutineActives } : {}),
   };
+}
+
+function parseNullableBeautyDomain(
+  value: unknown,
+  field: string,
+): AiArmanBeautyDomain | null {
+  if (value === null) return null;
+  if (
+    typeof value !== 'string' ||
+    !BEAUTY_DOMAINS.includes(value as AiArmanBeautyDomain)
+  ) {
+    throw invalid(field);
+  }
+  return value as AiArmanBeautyDomain;
+}
+
+function parseSkincareRoutineActives(
+  value: unknown,
+  field: string,
+): AiArmanModelInterpretationCandidate['entities']['skincareRoutineActives'] {
+  if (!Array.isArray(value) || value.length > MAX_LIST_ITEMS) {
+    throw invalid(field);
+  }
+
+  return value.map((item, index) => {
+    const activeItem = asRecord(item, `interpretation_invalid:${field}.${index}`);
+    assertExactKeys(activeItem, ['active', 'timing']);
+
+    if (
+      typeof activeItem.active !== 'string' ||
+      !SKINCARE_ACTIVES.includes(activeItem.active as AiArmanSkincareActive)
+    ) {
+      throw invalid(`${field}.${index}.active`);
+    }
+    if (
+      typeof activeItem.timing !== 'string' ||
+      !ROUTINE_TIMINGS.includes(activeItem.timing as AiArmanRoutineTiming)
+    ) {
+      throw invalid(`${field}.${index}.timing`);
+    }
+
+    return {
+      active: activeItem.active as AiArmanSkincareActive,
+      timing: activeItem.timing as AiArmanRoutineTiming,
+    };
+  });
 }
 
 function parseIntent(value: unknown, field: string): AiArmanIntent {
@@ -203,6 +319,20 @@ function assertExactKeys(
     actual.length !== expected.length ||
     actual.some((key, index) => key !== expected[index])
   ) {
+    throw invalid('unknown_or_missing_fields');
+  }
+}
+
+function assertRequiredAllowedKeys(
+  value: Record<string, unknown>,
+  requiredKeys: string[],
+  allowedKeys: string[],
+) {
+  const actual = Object.keys(value);
+  if (requiredKeys.some((key) => !actual.includes(key))) {
+    throw invalid('unknown_or_missing_fields');
+  }
+  if (actual.some((key) => !allowedKeys.includes(key))) {
     throw invalid('unknown_or_missing_fields');
   }
 }
