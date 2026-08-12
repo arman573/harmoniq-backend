@@ -48,7 +48,32 @@ AI Arman should help a customer:
 - report a wrong item;
 - provide supporting details and attachments;
 - continue an existing HQR case;
+- receive answers about an active return or claim directly from AI Arman when the answer can be grounded in verified backend facts and policy;
+- have return and claim conversations progressed automatically through the existing guarded returns/claims backend;
 - transfer to human customer service without making the customer repeat everything.
+
+## Return and claim automation target
+
+Return and claim handling is a core AI Arman end-state, not only a link-out or handoff flow.
+
+AI Arman should progressively be able to:
+
+1. understand a customer's return or claim request in free Swedish text;
+2. verify the relevant customer/order context through approved backend identity flows;
+3. read the existing return/claim case and its public history;
+4. answer policy, status and next-step questions from verified backend facts;
+5. ask only the follow-up questions needed to complete the case;
+6. collect reason, affected product, quantity, customer description and supporting evidence;
+7. prepare, create and update return/claim cases through the existing guarded backend after required confirmation;
+8. send and receive case messages so the customer can continue the case inside the AI Arman conversation;
+9. automatically progress deterministic workflow steps when backend policy explicitly permits them;
+10. preserve the full case context when human review is required.
+
+Automation must not mean unrestricted model authority. The language model interprets and communicates, while backend policy remains the authority for actions and case decisions.
+
+AI Arman must not independently approve a claim, issue a refund, grant compensation, waive fees or create other financial/legal outcomes unless a separately approved deterministic backend policy explicitly authorizes that exact action. Otherwise the case must be escalated for human review with all collected context preserved.
+
+The existing return/claim module remains the system of record and execution layer. AI Arman should orchestrate that module rather than build a second independent case system.
 
 ## Persona
 
@@ -109,4 +134,5 @@ The foundation is successful when:
 - live facts are never guessed;
 - unsuitable products are filtered before personalization;
 - after-purchase writes are auditable and idempotent;
+- return and claim conversations can eventually be answered and progressed by AI Arman through the existing guarded case backend instead of requiring a separate manual conversation for every step;
 - uncertain or blocked conversations can be handed to a human with full context.
