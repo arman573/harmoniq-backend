@@ -104,6 +104,36 @@ describe('ChatConversationService', () => {
     },
   );
 
+  it('adds natural follow-up exclusions without losing earlier hair needs', () => {
+    const service = createService();
+    const first = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      clientMessageId: 'product-type-exclusions-1',
+      message: { text: 'Jag har slitet och frissigt hår.' },
+    });
+
+    const second = service.handle({
+      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+      conversationId: first.conversationId,
+      clientMessageId: 'product-type-exclusions-2',
+      message: { text: 'Leave-in, gärna oparfymerat och utan silikoner.' },
+    });
+
+    expect(second.state.status).toBe('ready_for_tools');
+    expect(second.state.remembered.requestedProductTypes).toEqual(['leave_in']);
+    expect(second.state.remembered.needs).toEqual(
+      expect.arrayContaining(['damaged_hair', 'frizz_control']),
+    );
+    expect(second.state.remembered.exclusions).toEqual(
+      expect.arrayContaining(['fragrance', 'silicones']),
+    );
+    expect(second.decision.plannedTools).toEqual([
+      'search_products',
+      'analyze_product_suitability',
+      'get_product_live_facts',
+    ]);
+  });
+
   it('keeps asking when the product-type follow-up is still ambiguous', () => {
     const service = createService();
     const first = service.handle({
