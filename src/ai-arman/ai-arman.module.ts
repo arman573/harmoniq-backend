@@ -42,6 +42,7 @@ import { SearchBrainClient } from './integrations/search-brain.client';
 import { VendreProductLiveFactsClient } from './integrations/vendre-product-live-facts.client';
 import { ProductRecommendationCardService } from './recommendation/product-recommendation-card.service';
 import { RecommendationScoringService } from './recommendation/recommendation-scoring.service';
+import { SkincareRoutineSafetyReviewService } from './skincare/skincare-routine-safety-review.service';
 
 @Module({
   controllers: [AiArmanController],
@@ -102,6 +103,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ProductRecommendationCardService,
     SearchBrainClient,
     RecommendationScoringService,
+    SkincareRoutineSafetyReviewService,
   ],
   exports: [
     AiArmanService,
@@ -126,6 +128,7 @@ import { RecommendationScoringService } from './recommendation/recommendation-sc
     ProductRecommendationCardService,
     SearchBrainClient,
     RecommendationScoringService,
+    SkincareRoutineSafetyReviewService,
   ],
 })
 export class AiArmanModule {}
