@@ -194,6 +194,34 @@ describe('HaircareRecommendationJourneyService', () => {
     expect(productLiveFacts.getFacts).not.toHaveBeenCalled();
   });
 
+  it('propagates lightweight haircare preference into discovery and Product Intelligence', async () => {
+    const discovery = createDiscovery();
+    const enrichment = createEnrichment([]);
+    const productLiveFacts = { getFacts: jest.fn() } as unknown as ProductLiveFactsClient;
+    const lightweightInterpretation: AiArmanInterpretation = {
+      ...interpretation,
+      entities: {
+        ...interpretation.entities,
+        requestedProductTypes: ['leave_in'],
+        needs: ['damaged_hair', 'frizz_control', 'lightweight_haircare'],
+        exclusions: ['fragrance'],
+      },
+    };
+
+    const result = await createService(discovery, enrichment, productLiveFacts).prepare(
+      lightweightInterpretation,
+    );
+
+    const expectedQuery =
+      'leave-in skadat hår friss lätt formula som inte tynger ner utan parfym';
+    expect(discovery.discover).toHaveBeenCalledWith(expectedQuery);
+    expect(enrichment.enrich).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expectedQuery }),
+    );
+    expect(result.status).toBe('no_verified_candidates');
+    expect(productLiveFacts.getFacts).not.toHaveBeenCalled();
+  });
+
   it('passes metadata only for Product Intelligence approved products', async () => {
     const discovery = createDiscovery();
     const approved = {
