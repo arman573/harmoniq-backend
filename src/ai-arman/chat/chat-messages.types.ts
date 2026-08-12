@@ -38,11 +38,31 @@ export type AiArmanJourney =
   | 'customer_service'
   | 'general';
 
+export type AiArmanBeautyDomain =
+  | 'haircare'
+  | 'skincare'
+  | 'fragrance'
+  | 'makeup'
+  | 'nails';
+
 export type AiArmanProductType =
   | 'shampoo'
   | 'conditioner'
   | 'hair_mask'
-  | 'leave_in';
+  | 'leave_in'
+  | 'cleanser'
+  | 'face_cream'
+  | 'serum'
+  | 'spf'
+  | 'fragrance'
+  | 'foundation'
+  | 'concealer'
+  | 'lipstick'
+  | 'mascara'
+  | 'nail_polish'
+  | 'base_coat'
+  | 'top_coat'
+  | 'nail_treatment';
 
 export type AiArmanInterpretationEntities = {
   requestedProductTypes: AiArmanProductType[];
@@ -50,6 +70,7 @@ export type AiArmanInterpretationEntities = {
   exclusions: string[];
   orderReference: string | null;
   productReferences: string[];
+  recommendationDomain?: AiArmanBeautyDomain | null;
 };
 
 export type AiArmanInterpretationBase = {
@@ -85,6 +106,7 @@ export type AiArmanConversationState = {
     exclusions: string[];
     orderReference: string | null;
     productReferences: string[];
+    recommendationDomain?: AiArmanBeautyDomain | null;
   };
   pendingQuestion: {
     id: string;
