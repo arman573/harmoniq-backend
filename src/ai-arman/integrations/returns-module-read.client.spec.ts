@@ -69,6 +69,7 @@ describe('ReturnsModuleReadClient', () => {
 
   it('posts only to the fixed internal read endpoint with dedicated bearer auth', async () => {
     enableClient();
+    const expectedRequest = request();
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -92,7 +93,9 @@ describe('ReturnsModuleReadClient', () => {
       ),
     );
 
-    const result = await new ReturnsModuleReadClient().getCaseContext(request());
+    const result = await new ReturnsModuleReadClient().getCaseContext(
+      expectedRequest,
+    );
 
     expect(result.ok).toBe(true);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -106,7 +109,7 @@ describe('ReturnsModuleReadClient', () => {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${'a'.repeat(64)}`,
     });
-    expect(JSON.parse(String(init?.body))).toEqual(request());
+    expect(JSON.parse(String(init?.body))).toEqual(expectedRequest);
   });
 
   it('fails closed when the upstream response breaks the contract', async () => {
