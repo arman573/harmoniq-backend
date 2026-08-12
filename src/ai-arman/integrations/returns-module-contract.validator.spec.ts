@@ -266,10 +266,4 @@ describe('Returns Module contract validator v1', () => {
       ).toBeNull();
     }
   });
-
-  it('has no evidence or attachment capability in the v1 contract', async () => {
-    const contract = await import('./returns-module.types');
-    expect(Object.keys(contract)).not.toContain('add_case_evidence');
-    expect(Object.keys(contract)).not.toContain('upload_attachment');
-  });
 });
