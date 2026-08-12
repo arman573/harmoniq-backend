@@ -44,6 +44,13 @@ const HAIRCARE_PRODUCT_TYPES: AiArmanProductType[] = [
   'hair_mask',
   'leave_in',
 ];
+const SKINCARE_NEEDS = [
+  'dry_skin',
+  'oily_skin',
+  'sensitive_skin',
+  'acne_prone_skin',
+  'redness',
+] as const;
 
 @Injectable()
 export class ChatConversationService {
@@ -184,6 +191,22 @@ export class ChatConversationService {
             productTypeDomain(resolvedProductType) ??
             previous?.remembered.recommendationDomain ??
             null,
+        },
+      };
+    }
+
+    if (expectedField === 'skincareConcern') {
+      const resolvedNeeds = resolveSkincareConcernAnswer(messageText);
+      if (resolvedNeeds.length === 0) return current;
+      return {
+        ...current,
+        entities: {
+          ...current.entities,
+          needs: unique([...current.entities.needs, ...resolvedNeeds]),
+          recommendationDomain:
+            current.entities.recommendationDomain ??
+            previous?.remembered.recommendationDomain ??
+            'skincare',
         },
       };
     }
@@ -441,6 +464,7 @@ export class ChatConversationService {
       previous?.activeJourney === 'before_purchase' ||
       previous?.pendingQuestion?.expectedField === 'requestedProductType' ||
       previous?.pendingQuestion?.expectedField === 'drynessLocation' ||
+      previous?.pendingQuestion?.expectedField === 'skincareConcern' ||
       current.primaryIntent === 'product_recommendation' ||
       (current.primaryIntent === 'unknown' && needs.length > 0);
 
@@ -448,7 +472,10 @@ export class ChatConversationService {
       ? 'product_recommendation'
       : current.primaryIntent;
     const missingFields = current.missingFields.filter(
-      (field) => field !== 'requestedProductType' && field !== 'drynessLocation',
+      (field) =>
+        field !== 'requestedProductType' &&
+        field !== 'drynessLocation' &&
+        field !== 'skincareConcern',
     );
 
     if (
@@ -465,6 +492,13 @@ export class ChatConversationService {
       !needs.includes('dry_scalp')
     ) {
       missingFields.push('drynessLocation');
+    }
+    if (
+      primaryIntent === 'product_recommendation' &&
+      recommendationDomain === 'skincare' &&
+      !hasSkincareNeed(needs)
+    ) {
+      missingFields.push('skincareConcern');
     }
 
     return {
@@ -544,9 +578,14 @@ export class ChatConversationService {
             id: 'dryness-location',
             expectedField: 'drynessLocation',
           }
-        : current.pendingQuestion?.expectedField === 'verifiedOrderIdentity'
-          ? current.pendingQuestion
-          : null;
+        : interpretation.missingFields.includes('skincareConcern')
+          ? {
+              id: 'skincare-concern',
+              expectedField: 'skincareConcern',
+            }
+          : current.pendingQuestion?.expectedField === 'verifiedOrderIdentity'
+            ? current.pendingQuestion
+            : null;
 
     return {
       ...current,
@@ -611,6 +650,22 @@ export class ChatConversationService {
           id: 'dryness-location',
           text: 'Känns torrheten främst i hårbotten, i längderna eller både och?',
           expectedField: 'drynessLocation',
+          required: true,
+        },
+      ];
+    }
+
+    if (interpretation.missingFields.includes('skincareConcern')) {
+      return [
+        {
+          type: 'message',
+          text: 'Jag har sparat att du söker hudvård. En detalj behövs innan jag kan bedöma vad som passar.',
+        },
+        {
+          type: 'question',
+          id: 'skincare-concern',
+          text: 'Vad vill du främst få hjälp med i huden – till exempel torrhet, blank/fet hud, känslighet/rodnad eller finnar?',
+          expectedField: 'skincareConcern',
           required: true,
         },
       ];
@@ -695,6 +750,23 @@ function resolveDrynessLocationAnswer(value: string): string[] {
   return [];
 }
 
+function resolveSkincareConcernAnswer(value: string): string[] {
+  const normalized = normalizeFollowUpText(value);
+  if (!normalized) return [];
+  const needs: string[] = [];
+  const signals: Array<[RegExp, string]> = [
+    [/torr hud|torr i ansiktet|huden ar torr|\btorr\b|stram hud|stramar/, 'dry_skin'],
+    [/fet hud|oljig hud|blank hud|\bfet\b|\boljig\b|\bblank\b/, 'oily_skin'],
+    [/kanslig hud|lattirriterad hud|irriterad hud|\bkanslig\b|svider latt/, 'sensitive_skin'],
+    [/\bakne\b|finnar|oren hud|blemish/, 'acne_prone_skin'],
+    [/rodnad|rod hud|\brod\b|rosig hud/, 'redness'],
+  ];
+  for (const [pattern, need] of signals) {
+    if (pattern.test(normalized)) needs.push(need);
+  }
+  return unique(needs);
+}
+
 function normalizeFollowUpText(value: string): string {
   return String(value || '')
     .normalize('NFD')
@@ -711,6 +783,12 @@ function normalizeMergedNeeds(values: string[]): string[] {
     return needs.filter((need) => need !== 'dry_hair_unspecified');
   }
   return needs;
+}
+
+function hasSkincareNeed(needs: string[]) {
+  return needs.some((need) =>
+    SKINCARE_NEEDS.includes(need as (typeof SKINCARE_NEEDS)[number]),
+  );
 }
 
 function inferDomainFromProductTypes(
