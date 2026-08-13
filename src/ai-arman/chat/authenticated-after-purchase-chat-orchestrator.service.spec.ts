@@ -22,11 +22,11 @@ const USER: User = {
   role: UserRole.USER,
 };
 
-function request(text: string): AiArmanChatRequest {
+function request(text: string, clientMessageId = 'client-1'): AiArmanChatRequest {
   return {
     contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
     conversationId: 'conversation_123',
-    clientMessageId: 'client-1',
+    clientMessageId,
     message: { text },
   };
 }
@@ -94,15 +94,37 @@ function returnsResponse(intent: 'return_help' | 'claim_help' = 'return_help'): 
   };
 }
 
+function genericFollowUpResponse(): AiArmanChatResponse {
+  const response = returnsResponse();
+  response.interpretation.primaryIntent = 'unknown';
+  response.interpretation.entities.orderReference = null;
+  response.interpretation.requiresIdentity = false;
+  response.decision.route = 'general';
+  response.decision.requiresIdentity = false;
+  response.decision.reasons = ['safe_general_response_without_tool_execution'];
+  response.state.activeJourney = 'general';
+  response.state.remembered.orderReference = null;
+  return response;
+}
+
 function build(params?: {
   response?: AiArmanChatResponse;
+  responses?: AiArmanChatResponse[];
   verifyAndBind?: jest.Mock;
   getCaseStatus?: jest.Mock;
   getCaseMessages?: jest.Mock;
 }) {
   const response = params?.response || returnsResponse();
+  const handleWithShadow = jest.fn();
+  if (params?.responses?.length) {
+    for (const item of params.responses) {
+      handleWithShadow.mockResolvedValueOnce(item);
+    }
+  } else {
+    handleWithShadow.mockResolvedValue(response);
+  }
   const chat = {
-    handleWithShadow: jest.fn().mockResolvedValue(response),
+    handleWithShadow,
   } as unknown as SkincareSpecialistChatOrchestrator;
   const verifyAndBind =
     params?.verifyAndBind ||
@@ -256,6 +278,10 @@ describe('AuthenticatedAfterPurchaseChatOrchestrator', () => {
       caseId: 'HQR-123456',
     });
     expect(result.decision.executionStatus).toBe('executed_read_only');
+    expect(result.decision.plannedTools).toEqual([
+      'get_case_status',
+      'get_case_messages',
+    ]);
     expect(result.blocks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -264,6 +290,150 @@ describe('AuthenticatedAfterPurchaseChatOrchestrator', () => {
         }),
       ]),
     );
+  });
+
+  it('continues a verified returns conversation when a later message only asks what was written last', async () => {
+    const getCaseStatus = jest.fn().mockResolvedValue({
+      ok: true,
+      caseId: 'HQR-123456',
+      orderId: '90250',
+      caseType: 'return',
+      status: 'return_received',
+      statusLabel: 'Retur mottagen',
+      updatedAt: '2026-08-13T09:00:00.000Z',
+    });
+    const getCaseMessages = jest.fn().mockResolvedValue({
+      ok: true,
+      caseId: 'HQR-123456',
+      orderId: '90250',
+      messages: [
+        {
+          id: 'm1',
+          direction: 'outbound',
+          sender: 'HARMONIQ',
+          subject: 'Retur HQR-123456',
+          text: 'Din retur är registrerad.',
+          date: '2026-08-13T08:30:00.000Z',
+        },
+      ],
+    });
+    const { service, verifyAndBind } = build({
+      responses: [returnsResponse(), genericFollowUpResponse()],
+      getCaseStatus,
+      getCaseMessages,
+    });
+
+    await service.handle(
+      request('Vad är status på min retur order 90250?', 'client-1'),
+      USER,
+    );
+    const followUp = await service.handle(
+      request('Vad skrev ni senast?', 'client-2'),
+      USER,
+    );
+
+    expect(verifyAndBind).not.toHaveBeenCalled();
+    expect(getCaseStatus).toHaveBeenLastCalledWith({
+      conversationId: 'conversation_123',
+      userId: 42,
+      orderId: '90250',
+      caseId: 'HQR-123456',
+    });
+    expect(getCaseMessages).toHaveBeenCalledWith({
+      conversationId: 'conversation_123',
+      userId: 42,
+      orderId: '90250',
+      caseId: 'HQR-123456',
+    });
+    expect(followUp.decision.route).toBe('returns_support');
+    expect(followUp.decision.plannedTools).toEqual([
+      'get_case_status',
+      'get_case_messages',
+    ]);
+    expect(followUp.blocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'message',
+          text: expect.stringContaining('Din retur är registrerad.'),
+        }),
+      ]),
+    );
+  });
+
+  it('does not reuse remembered returns context for another authenticated user', async () => {
+    const getCaseStatus = jest.fn().mockResolvedValue({
+      ok: true,
+      caseId: 'HQR-123456',
+      orderId: '90250',
+      caseType: 'return',
+      status: 'return_received',
+      statusLabel: 'Retur mottagen',
+      updatedAt: '2026-08-13T09:00:00.000Z',
+    });
+    const { service } = build({
+      responses: [returnsResponse(), genericFollowUpResponse()],
+      getCaseStatus,
+    });
+
+    await service.handle(
+      request('Vad är status på min retur order 90250?', 'client-1'),
+      USER,
+    );
+    const otherUser = { ...USER, id: 43, email: 'other@example.com' };
+    const followUp = await service.handle(
+      request('Vad är status nu?', 'client-2'),
+      otherUser,
+    );
+
+    expect(getCaseStatus).toHaveBeenCalledTimes(1);
+    expect(followUp.decision.route).toBe('general');
+    expect(followUp.safety.liveFactsUsed).toBe(false);
+  });
+
+  it('does not carry a remembered case id into an explicit different order', async () => {
+    const firstResponse = returnsResponse();
+    const secondResponse = returnsResponse();
+    secondResponse.interpretation.entities.orderReference = '90251';
+    secondResponse.state.remembered.orderReference = '90251';
+    const getCaseStatus = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        caseId: 'HQR-123456',
+        orderId: '90250',
+        caseType: 'return',
+        status: 'return_received',
+        statusLabel: 'Retur mottagen',
+        updatedAt: '2026-08-13T09:00:00.000Z',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        caseId: 'HQR-654321',
+        orderId: '90251',
+        caseType: 'return',
+        status: 'return_requested',
+        statusLabel: 'Retur registrerad',
+        updatedAt: '2026-08-13T10:00:00.000Z',
+      });
+    const { service } = build({
+      responses: [firstResponse, secondResponse],
+      getCaseStatus,
+    });
+
+    await service.handle(
+      request('Vad är status på min retur order 90250?', 'client-1'),
+      USER,
+    );
+    await service.handle(
+      request('Och retur order 90251?', 'client-2'),
+      USER,
+    );
+
+    expect(getCaseStatus).toHaveBeenLastCalledWith({
+      conversationId: 'conversation_123',
+      userId: 42,
+      orderId: '90251',
+    });
   });
 
   it('does not reverify through a different authenticated actor when an existing binding belongs to someone else', async () => {
@@ -284,7 +454,7 @@ describe('AuthenticatedAfterPurchaseChatOrchestrator', () => {
     );
   });
 
-  it('never runs return reads from a non-returns chat intent', async () => {
+  it('never runs return reads from a non-returns chat intent without remembered context', async () => {
     const response = returnsResponse();
     response.interpretation.primaryIntent = 'order_status';
     response.decision.route = 'order_support';
