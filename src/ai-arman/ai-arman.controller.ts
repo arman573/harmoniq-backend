@@ -12,7 +12,7 @@ import { AuthGuard } from '@nestjs/passport';
 import type { Request } from 'express';
 import type { User } from '../users/user.entity';
 import { AiArmanService } from './ai-arman.service';
-import { AuthenticatedAfterPurchaseChatOrchestrator } from './chat/authenticated-after-purchase-chat-orchestrator.service';
+import { AuthenticatedCustomerChatOrchestrator } from './chat/authenticated-customer-chat-orchestrator.service';
 import { ChatRequestParser } from './chat/chat-request.parser';
 import { ChatPreviewService } from './chat/chat-preview.service';
 import type { ChatPreviewRequest } from './chat/chat-preview.types';
@@ -30,7 +30,7 @@ export class AiArmanController {
   constructor(
     private readonly aiArmanService: AiArmanService,
     private readonly skincareSpecialistChatOrchestrator: SkincareSpecialistChatOrchestrator,
-    private readonly authenticatedAfterPurchaseChatOrchestrator: AuthenticatedAfterPurchaseChatOrchestrator,
+    private readonly authenticatedCustomerChatOrchestrator: AuthenticatedCustomerChatOrchestrator,
     private readonly chatRequestParser: ChatRequestParser,
     private readonly chatPreviewService: ChatPreviewService,
     private readonly productDiscoveryService: ProductDiscoveryService,
@@ -56,10 +56,7 @@ export class AiArmanController {
     @Req() req: AuthenticatedRequest,
   ) {
     const request = this.chatRequestParser.parse(body);
-    return this.authenticatedAfterPurchaseChatOrchestrator.handle(
-      request,
-      req.user,
-    );
+    return this.authenticatedCustomerChatOrchestrator.handle(request, req.user);
   }
 
   @Post('identity/account-order/verify')
