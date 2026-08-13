@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AiArmanController } from './ai-arman.controller';
 import { AiArmanService } from './ai-arman.service';
+import { AuthenticatedAfterPurchaseChatOrchestrator } from './chat/authenticated-after-purchase-chat-orchestrator.service';
 import {
   ChatConversationResultRepository,
   ChatConversationStateRepository,
@@ -64,6 +65,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
   controllers: [AiArmanController],
   providers: [
     AiArmanService,
+    AuthenticatedAfterPurchaseChatOrchestrator,
     ChatConversationResultStore,
     ChatConversationStateStore,
     DisabledChatInterpretationShadowConfig,
@@ -152,6 +154,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
   ],
   exports: [
     AiArmanService,
+    AuthenticatedAfterPurchaseChatOrchestrator,
     AuthenticatedAccountOrderAccessService,
     ChatConversationResultRepository,
     ChatConversationStateRepository,
