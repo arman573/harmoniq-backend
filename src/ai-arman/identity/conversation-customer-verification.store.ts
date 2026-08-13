@@ -31,9 +31,14 @@ export class ConversationCustomerVerificationStore {
     ConversationCustomerVerificationBinding
   >();
 
-  bind(input: ConversationCustomerVerificationBinding) {
-    const binding = normalizeBinding(input);
-    this.pruneExpired(Date.now());
+  bind(input: ConversationCustomerVerificationBinding, now = new Date()) {
+    const nowMs = now.getTime();
+    if (!Number.isFinite(nowMs)) {
+      throw new Error('conversation_verification_clock_invalid');
+    }
+
+    const binding = normalizeBinding(input, nowMs);
+    this.pruneExpired(nowMs);
     this.bindings.delete(binding.conversationId);
     this.bindings.set(binding.conversationId, binding);
     this.enforceMaxSize();
@@ -93,6 +98,7 @@ export class ConversationCustomerVerificationStore {
 
 function normalizeBinding(
   input: ConversationCustomerVerificationBinding,
+  nowMs: number,
 ): ConversationCustomerVerificationBinding {
   const conversationId = String(input.conversationId || '').trim();
   const orderId = String(input.orderId || '').trim();
@@ -112,7 +118,7 @@ function normalizeBinding(
   if (!VERIFICATION_ID_PATTERN.test(verificationId)) {
     throw new Error('conversation_verification_id_invalid');
   }
-  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) {
     throw new Error('conversation_verification_expiry_invalid');
   }
 
