@@ -54,7 +54,9 @@ import { resolveProductLiveFactsProvider } from './integrations/product-live-fac
 import { ReturnsModuleReadClient } from './integrations/returns-module-read.client';
 import { ReturnsModuleReadTools } from './integrations/returns-module-read.tools';
 import { SearchBrainClient } from './integrations/search-brain.client';
+import { VendreOrderReadClient } from './integrations/vendre-order-read.client';
 import { VendreProductLiveFactsClient } from './integrations/vendre-product-live-facts.client';
+import { VerifiedOrderReadService } from './integrations/verified-order-read.service';
 import { VerifiedReturnsReadService } from './integrations/verified-returns-read.service';
 import { ProductRecommendationCardService } from './recommendation/product-recommendation-card.service';
 import { RecommendationScoringService } from './recommendation/recommendation-scoring.service';
@@ -78,6 +80,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     DisabledOrderEmailOtpVerificationProvider,
     DisabledAccountOrderVerificationProvider,
     VendreAccountOrderVerificationProvider,
+    VendreOrderReadClient,
     {
       provide: OrderEmailOtpVerificationProvider,
       useExisting: DisabledOrderEmailOtpVerificationProvider,
@@ -150,6 +153,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     RecommendationScoringService,
     SkincareRoutineSafetyReviewService,
     SkincareSpecialistChatOrchestrator,
+    VerifiedOrderReadService,
     VerifiedReturnsReadService,
   ],
   exports: [
@@ -183,7 +187,9 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     RecommendationScoringService,
     SkincareRoutineSafetyReviewService,
     SkincareSpecialistChatOrchestrator,
+    VendreOrderReadClient,
     VerifiedCustomerContextStore,
+    VerifiedOrderReadService,
     VerifiedReturnsReadService,
   ],
 })
