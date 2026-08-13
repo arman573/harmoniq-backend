@@ -7,13 +7,16 @@ const VERIFICATION_ID = 'vcv_123e4567-e89b-12d3-a456-426614174000';
 describe('ConversationCustomerVerificationStore', () => {
   it('binds verification to the exact conversation, authenticated actor and order', () => {
     const store = new ConversationCustomerVerificationStore();
-    store.bind({
-      conversationId: 'conversation_123',
-      userId: 42,
-      orderId: '90250',
-      verificationId: VERIFICATION_ID,
-      expiresAt: EXPIRES_AT,
-    });
+    store.bind(
+      {
+        conversationId: 'conversation_123',
+        userId: 42,
+        orderId: '90250',
+        verificationId: VERIFICATION_ID,
+        expiresAt: EXPIRES_AT,
+      },
+      NOW,
+    );
 
     expect(store.resolve('conversation_123', 42, '90250', NOW)).toEqual({
       ok: true,
@@ -29,13 +32,16 @@ describe('ConversationCustomerVerificationStore', () => {
 
   it('rejects another authenticated actor even with the conversation id', () => {
     const store = new ConversationCustomerVerificationStore();
-    store.bind({
-      conversationId: 'conversation_123',
-      userId: 42,
-      orderId: '90250',
-      verificationId: VERIFICATION_ID,
-      expiresAt: EXPIRES_AT,
-    });
+    store.bind(
+      {
+        conversationId: 'conversation_123',
+        userId: 42,
+        orderId: '90250',
+        verificationId: VERIFICATION_ID,
+        expiresAt: EXPIRES_AT,
+      },
+      NOW,
+    );
 
     expect(store.resolve('conversation_123', 43, '90250', NOW)).toEqual({
       ok: false,
@@ -45,13 +51,16 @@ describe('ConversationCustomerVerificationStore', () => {
 
   it('rejects a different order', () => {
     const store = new ConversationCustomerVerificationStore();
-    store.bind({
-      conversationId: 'conversation_123',
-      userId: 42,
-      orderId: '90250',
-      verificationId: VERIFICATION_ID,
-      expiresAt: EXPIRES_AT,
-    });
+    store.bind(
+      {
+        conversationId: 'conversation_123',
+        userId: 42,
+        orderId: '90250',
+        verificationId: VERIFICATION_ID,
+        expiresAt: EXPIRES_AT,
+      },
+      NOW,
+    );
 
     expect(store.resolve('conversation_123', 42, '90251', NOW)).toEqual({
       ok: false,
@@ -61,13 +70,16 @@ describe('ConversationCustomerVerificationStore', () => {
 
   it('removes expired bindings', () => {
     const store = new ConversationCustomerVerificationStore();
-    store.bind({
-      conversationId: 'conversation_123',
-      userId: 42,
-      orderId: '90250',
-      verificationId: VERIFICATION_ID,
-      expiresAt: EXPIRES_AT,
-    });
+    store.bind(
+      {
+        conversationId: 'conversation_123',
+        userId: 42,
+        orderId: '90250',
+        verificationId: VERIFICATION_ID,
+        expiresAt: EXPIRES_AT,
+      },
+      NOW,
+    );
 
     expect(
       store.resolve(
