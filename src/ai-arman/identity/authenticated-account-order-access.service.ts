@@ -68,13 +68,16 @@ export class AuthenticatedAccountOrderAccessService {
     if (!result.ok) return result;
 
     try {
-      const binding = this.conversationVerificationStore.bind({
-        conversationId,
-        userId,
-        orderId,
-        verificationId: result.context.verificationId,
-        expiresAt: result.context.expiresAt,
-      });
+      const binding = this.conversationVerificationStore.bind(
+        {
+          conversationId,
+          userId,
+          orderId,
+          verificationId: result.context.verificationId,
+          expiresAt: result.context.expiresAt,
+        },
+        input.now,
+      );
 
       return {
         ok: true,
