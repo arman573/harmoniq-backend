@@ -9,8 +9,6 @@ export type SafeVendreOrderRead = {
   statusId: number | null;
   createdAt: string;
   shippingDate: string;
-  trackingReference: string;
-  shipmentReference: string;
   dispatchState: VendreOrderDispatchState;
 };
 
