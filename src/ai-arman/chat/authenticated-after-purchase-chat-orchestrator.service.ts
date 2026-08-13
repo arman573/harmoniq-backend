@@ -22,15 +22,27 @@ import { SkincareSpecialistChatOrchestrator } from '../skincare/skincare-special
 type AuthenticatedChatUser = Pick<User, 'id' | 'email'>;
 type CaseStatusResult = GetCaseStatusToolResult | VerifiedReturnsReadFailure;
 type CaseMessagesResult = GetCaseMessagesToolResult | VerifiedReturnsReadFailure;
+type ReturnsFollowUpKind = 'status' | 'messages';
+type RememberedReturnsContext = {
+  userId: number;
+  orderId: string;
+  intent: 'return_help' | 'claim_help';
+  caseId: string | null;
+  expiresAtMs: number;
+};
 
 const CASE_STATUS_TOOLS: AiArmanToolName[] = ['get_case_status'];
 const CASE_MESSAGES_TOOLS: AiArmanToolName[] = [
   'get_case_status',
   'get_case_messages',
 ];
+const RETURNS_CONTEXT_TTL_MS = 30 * 60 * 1000;
+const MAX_RETURNS_CONTEXTS = 1000;
 
 @Injectable()
 export class AuthenticatedAfterPurchaseChatOrchestrator {
+  private readonly returnsContexts = new Map<string, RememberedReturnsContext>();
+
   constructor(
     private readonly chat: SkincareSpecialistChatOrchestrator,
     private readonly accountOrderAccess: AuthenticatedAccountOrderAccessService,
@@ -45,23 +57,13 @@ export class AuthenticatedAfterPurchaseChatOrchestrator {
   ): Promise<AiArmanChatResponse> {
     const response = await this.chat.handleWithShadow(input);
 
-    if (
-      alreadyHandledReturnsRead(response) ||
-      response.decision.route !== 'returns_support' ||
-      !['return_help', 'claim_help'].includes(
-        response.interpretation.primaryIntent,
-      )
-    ) {
-      return response;
-    }
-
-    const orderId = response.interpretation.entities.orderReference;
-    if (!orderId || response.interpretation.missingFields.length > 0) {
+    if (alreadyHandledReturnsRead(response)) {
       return response;
     }
 
     const userId = Number(user?.id);
     if (!Number.isSafeInteger(userId) || userId <= 0) {
+      if (response.decision.route !== 'returns_support') return response;
       return this.persist(
         input,
         applyFailedClosed(
@@ -72,7 +74,39 @@ export class AuthenticatedAfterPurchaseChatOrchestrator {
       );
     }
 
-    const caseId = extractCaseId(input.message.text);
+    const explicitReturnsIntent =
+      response.decision.route === 'returns_support' &&
+      ['return_help', 'claim_help'].includes(response.interpretation.primaryIntent)
+        ? (response.interpretation.primaryIntent as 'return_help' | 'claim_help')
+        : null;
+    const remembered = this.resolveRememberedContext(
+      response.conversationId,
+      userId,
+    );
+    const followUpKind = detectReturnsFollowUp(input.message.text);
+
+    if (!explicitReturnsIntent && (!remembered || !followUpKind)) {
+      return response;
+    }
+
+    const explicitOrderId = explicitReturnsIntent
+      ? response.interpretation.entities.orderReference
+      : null;
+    const orderId = explicitOrderId ?? remembered?.orderId ?? null;
+    if (!orderId) return response;
+
+    if (explicitReturnsIntent && response.interpretation.missingFields.length > 0) {
+      return response;
+    }
+
+    const intent = explicitReturnsIntent ?? remembered!.intent;
+    const explicitCaseId = extractCaseId(input.message.text);
+    const sameRememberedOrder = remembered?.orderId === orderId;
+    const caseId =
+      explicitCaseId ?? (sameRememberedOrder ? remembered?.caseId ?? undefined : undefined);
+    const wantsMessages =
+      followUpKind === 'messages' || requestsCaseMessages(input.message.text);
+    const plannedTools = wantsMessages ? CASE_MESSAGES_TOOLS : CASE_STATUS_TOOLS;
     const readInput = {
       conversationId: response.conversationId,
       userId,
@@ -96,7 +130,7 @@ export class AuthenticatedAfterPurchaseChatOrchestrator {
       if (!verified.ok) {
         return this.persist(
           input,
-          applyVerificationFailure(response, verified.error),
+          applyVerificationFailure(response, verified.error, plannedTools),
         );
       }
 
@@ -104,10 +138,28 @@ export class AuthenticatedAfterPurchaseChatOrchestrator {
     }
 
     if (!status.ok) {
-      return this.persist(input, applyStatusFailure(response, status));
+      if (status.error === 'case_selection_ambiguous') {
+        this.rememberContext(response.conversationId, {
+          userId,
+          orderId,
+          intent,
+          caseId: null,
+        });
+      }
+      return this.persist(
+        input,
+        applyStatusFailure(response, status, plannedTools),
+      );
     }
 
-    if (!requestsCaseMessages(input.message.text)) {
+    this.rememberContext(response.conversationId, {
+      userId,
+      orderId,
+      intent,
+      caseId: status.caseId,
+    });
+
+    if (!wantsMessages) {
       return this.persist(input, applyStatusSuccess(response, status));
     }
 
@@ -124,6 +176,45 @@ export class AuthenticatedAfterPurchaseChatOrchestrator {
         ? applyMessagesSuccess(response, status, messages)
         : applyMessagesFailure(response, status, messages),
     );
+  }
+
+  private rememberContext(
+    conversationId: string,
+    context: Omit<RememberedReturnsContext, 'expiresAtMs'>,
+    now = Date.now(),
+  ): void {
+    this.pruneExpiredContexts(now);
+    this.returnsContexts.delete(conversationId);
+    this.returnsContexts.set(conversationId, {
+      ...context,
+      expiresAtMs: now + RETURNS_CONTEXT_TTL_MS,
+    });
+    while (this.returnsContexts.size > MAX_RETURNS_CONTEXTS) {
+      const oldest = this.returnsContexts.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.returnsContexts.delete(oldest);
+    }
+  }
+
+  private resolveRememberedContext(
+    conversationId: string,
+    userId: number,
+    now = Date.now(),
+  ): RememberedReturnsContext | null {
+    const context = this.returnsContexts.get(conversationId);
+    if (!context) return null;
+    if (context.expiresAtMs <= now) {
+      this.returnsContexts.delete(conversationId);
+      return null;
+    }
+    if (context.userId !== userId) return null;
+    return { ...context };
+  }
+
+  private pruneExpiredContexts(now: number): void {
+    for (const [key, context] of this.returnsContexts) {
+      if (context.expiresAtMs <= now) this.returnsContexts.delete(key);
+    }
   }
 
   private persist(
@@ -144,14 +235,17 @@ export class AuthenticatedAfterPurchaseChatOrchestrator {
 function applyVerificationFailure(
   response: AiArmanChatResponse,
   error: string,
+  plannedTools: AiArmanToolName[],
 ): AiArmanChatResponse {
   const rejected = error === 'verification_rejected';
   return {
     ...response,
     decision: {
       ...response.decision,
-      plannedTools: CASE_STATUS_TOOLS,
+      route: 'returns_support',
+      plannedTools,
       executionStatus: 'failed_closed',
+      requiresIdentity: true,
       reasons: unique([
         ...response.decision.reasons,
         `verified_returns_read:${error}`,
@@ -182,26 +276,37 @@ function applyVerificationFailure(
 function applyStatusFailure(
   response: AiArmanChatResponse,
   result: Exclude<CaseStatusResult, { ok: true }>,
+  plannedTools: AiArmanToolName[] = CASE_STATUS_TOOLS,
 ): AiArmanChatResponse {
   if (result.error === 'case_not_found') {
-    return applyReadOnlyResult(response, 'case_not_found', [
-      {
-        type: 'message',
-        text: 'Ordern är verifierad, men jag hittar inget befintligt retur- eller reklamationsärende som matchar.',
-      },
-    ]);
+    return applyReadOnlyResult(
+      response,
+      'case_not_found',
+      [
+        {
+          type: 'message',
+          text: 'Ordern är verifierad, men jag hittar inget befintligt retur- eller reklamationsärende som matchar.',
+        },
+      ],
+      plannedTools,
+    );
   }
 
   if (result.error === 'case_selection_ambiguous') {
-    return applyReadOnlyResult(response, 'case_selection_ambiguous', [
-      {
-        type: 'message',
-        text: 'Det finns flera ärenden på den här ordern. Skriv ärendenumret, till exempel HQR-123456, så läser jag rätt ärende utan att gissa.',
-      },
-    ]);
+    return applyReadOnlyResult(
+      response,
+      'case_selection_ambiguous',
+      [
+        {
+          type: 'message',
+          text: 'Det finns flera ärenden på den här ordern. Skriv ärendenumret, till exempel HQR-123456, så läser jag rätt ärende utan att gissa.',
+        },
+      ],
+      plannedTools,
+    );
   }
 
-  return applyFailedClosed(response, result.error, CASE_STATUS_TOOLS);
+  return applyFailedClosed(response, result.error, plannedTools);
 }
 
 function applyStatusSuccess(
@@ -300,8 +405,10 @@ function applyReadOnlyResult(
     ...response,
     decision: {
       ...response.decision,
+      route: 'returns_support',
       plannedTools,
       executionStatus: 'executed_read_only',
+      requiresIdentity: true,
       reasons: unique([
         ...response.decision.reasons,
         `verified_returns_read:${reason}`,
@@ -332,8 +439,10 @@ function applyFailedClosed(
     ...response,
     decision: {
       ...response.decision,
+      route: 'returns_support',
       plannedTools,
       executionStatus: 'failed_closed',
+      requiresIdentity: true,
       reasons: unique([
         ...response.decision.reasons,
         `verified_returns_read:${error}`,
@@ -372,15 +481,35 @@ function extractCaseId(value: string): string | undefined {
   return match?.[0]?.toUpperCase();
 }
 
-function requestsCaseMessages(value: string): boolean {
-  const normalized = String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
+function detectReturnsFollowUp(value: string): ReturnsFollowUpKind | null {
+  const normalized = normalizeFollowUp(value);
+  if (!normalized) return null;
+  if (requestsCaseMessages(normalized)) return 'messages';
+  if (
+    /\bstatus\b|hur gar det|vad hander|vad har hant|nagon uppdatering|uppdatering nu|lage nu/.test(
+      normalized,
+    )
+  ) {
+    return 'status';
+  }
+  return null;
+}
 
-  return /meddeland|arendechat|chatt|historik|konversation|vad har (?:ni|jag) skrivit|senaste svar/.test(
+function requestsCaseMessages(value: string): boolean {
+  const normalized = normalizeFollowUp(value);
+  return /meddeland|arendechat|chatt|historik|konversation|vad har (?:ni|jag) skrivit|senaste svar|vad skrev (?:ni|jag)|vad svarade (?:ni|jag)/.test(
     normalized,
   );
+}
+
+function normalizeFollowUp(value: string): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function caseTypeLabel(value: string): string {
