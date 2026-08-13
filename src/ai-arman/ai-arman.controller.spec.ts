@@ -3,6 +3,7 @@ import type { User } from '../users/user.entity';
 import { UserRole } from '../users/user.entity';
 import { AiArmanController } from './ai-arman.controller';
 import type { AiArmanService } from './ai-arman.service';
+import type { AuthenticatedAfterPurchaseChatOrchestrator } from './chat/authenticated-after-purchase-chat-orchestrator.service';
 import type { ChatRequestParser } from './chat/chat-request.parser';
 import type { ChatPreviewService } from './chat/chat-preview.service';
 import type { ProductDiscoveryService } from './discovery/product-discovery.service';
@@ -10,19 +11,31 @@ import type { ProductIntelligenceEnrichmentService } from './discovery/product-i
 import type { AuthenticatedAccountOrderAccessService } from './identity/authenticated-account-order-access.service';
 import type { SkincareSpecialistChatOrchestrator } from './skincare/skincare-specialist-chat-orchestrator.service';
 
-function controllerWith(verifyAndBind = jest.fn()) {
+function controllerWith(params?: {
+  verifyAndBind?: jest.Mock;
+  parse?: jest.Mock;
+  authenticatedHandle?: jest.Mock;
+}) {
+  const verifyAndBind = params?.verifyAndBind || jest.fn();
+  const parse = params?.parse || jest.fn((value) => value);
+  const authenticatedHandle = params?.authenticatedHandle || jest.fn();
   const access = { verifyAndBind } as unknown as AuthenticatedAccountOrderAccessService;
+  const parser = { parse } as unknown as ChatRequestParser;
+  const authenticatedChat = {
+    handle: authenticatedHandle,
+  } as unknown as AuthenticatedAfterPurchaseChatOrchestrator;
   const controller = new AiArmanController(
     {} as AiArmanService,
     {} as SkincareSpecialistChatOrchestrator,
-    {} as ChatRequestParser,
+    authenticatedChat,
+    parser,
     {} as ChatPreviewService,
     {} as ProductDiscoveryService,
     {} as ProductIntelligenceEnrichmentService,
     access,
   );
 
-  return { controller, verifyAndBind };
+  return { controller, verifyAndBind, parse, authenticatedHandle };
 }
 
 const USER: User = {
@@ -32,7 +45,31 @@ const USER: User = {
   role: UserRole.USER,
 };
 
-describe('AiArmanController account-order verification boundary', () => {
+describe('AiArmanController authenticated boundaries', () => {
+  it('passes only parsed chat input plus the authenticated request user to authenticated chat', async () => {
+    const parsed = {
+      contractVersion: 'ai-arman-chat-v1',
+      clientMessageId: 'client-1',
+      message: { text: 'Vad är status på min retur order 90250?' },
+    };
+    const parse = jest.fn().mockReturnValue(parsed);
+    const authenticatedHandle = jest.fn().mockResolvedValue({ ok: true });
+    const { controller } = controllerWith({ parse, authenticatedHandle });
+
+    const body = {
+      contractVersion: 'ai-arman-chat-v1',
+      clientMessageId: 'client-1',
+      message: { text: 'Vad är status på min retur order 90250?' },
+    };
+
+    await expect(
+      controller.createAuthenticatedChatMessage(body, { user: USER } as never),
+    ).resolves.toEqual({ ok: true });
+
+    expect(parse).toHaveBeenCalledWith(body);
+    expect(authenticatedHandle).toHaveBeenCalledWith(parsed, USER);
+  });
+
   it('passes only the authenticated request user plus conversation and order to the access service', async () => {
     const verifyAndBind = jest.fn().mockResolvedValue({
       ok: true,
@@ -40,7 +77,7 @@ describe('AiArmanController account-order verification boundary', () => {
       orderId: '90250',
       expiresAt: '2026-08-13T10:15:00.000Z',
     });
-    const { controller } = controllerWith(verifyAndBind);
+    const { controller } = controllerWith({ verifyAndBind });
 
     await expect(
       controller.verifyAuthenticatedAccountOrder(
