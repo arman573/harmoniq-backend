@@ -158,6 +158,7 @@ export type AiArmanToolName =
   | 'get_order'
   | 'get_tracking_status'
   | 'get_case_status'
+  | 'get_case_messages'
   | 'prepare_return_case'
   | 'prepare_claim_case'
   | 'handoff_to_customer_service';
