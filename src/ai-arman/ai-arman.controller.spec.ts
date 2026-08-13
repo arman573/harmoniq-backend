@@ -3,7 +3,7 @@ import type { User } from '../users/user.entity';
 import { UserRole } from '../users/user.entity';
 import { AiArmanController } from './ai-arman.controller';
 import type { AiArmanService } from './ai-arman.service';
-import type { AuthenticatedAfterPurchaseChatOrchestrator } from './chat/authenticated-after-purchase-chat-orchestrator.service';
+import type { AuthenticatedCustomerChatOrchestrator } from './chat/authenticated-customer-chat-orchestrator.service';
 import type { ChatRequestParser } from './chat/chat-request.parser';
 import type { ChatPreviewService } from './chat/chat-preview.service';
 import type { ProductDiscoveryService } from './discovery/product-discovery.service';
@@ -23,7 +23,7 @@ function controllerWith(params?: {
   const parser = { parse } as unknown as ChatRequestParser;
   const authenticatedChat = {
     handle: authenticatedHandle,
-  } as unknown as AuthenticatedAfterPurchaseChatOrchestrator;
+  } as unknown as AuthenticatedCustomerChatOrchestrator;
   const controller = new AiArmanController(
     {} as AiArmanService,
     {} as SkincareSpecialistChatOrchestrator,
