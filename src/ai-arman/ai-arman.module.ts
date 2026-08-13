@@ -27,6 +27,8 @@ import { HaircareRecommendationJourneyService } from './discovery/haircare-recom
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
 import { ProductIntelligenceEnrichmentService } from './discovery/product-intelligence-enrichment.service';
 import { readAccountOrderVerificationConfig } from './identity/account-order-verification.config';
+import { AuthenticatedAccountOrderAccessService } from './identity/authenticated-account-order-access.service';
+import { ConversationCustomerVerificationStore } from './identity/conversation-customer-verification.store';
 import {
   AccountOrderVerificationProvider,
   DisabledAccountOrderVerificationProvider,
@@ -52,6 +54,7 @@ import { ReturnsModuleReadClient } from './integrations/returns-module-read.clie
 import { ReturnsModuleReadTools } from './integrations/returns-module-read.tools';
 import { SearchBrainClient } from './integrations/search-brain.client';
 import { VendreProductLiveFactsClient } from './integrations/vendre-product-live-facts.client';
+import { VerifiedReturnsReadService } from './integrations/verified-returns-read.service';
 import { ProductRecommendationCardService } from './recommendation/product-recommendation-card.service';
 import { RecommendationScoringService } from './recommendation/recommendation-scoring.service';
 import { SkincareRoutineSafetyReviewService } from './skincare/skincare-routine-safety-review.service';
@@ -69,6 +72,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     InMemoryChatInterpretationShadowAuditStore,
     InMemoryProductIntelligenceAuditStore,
     VerifiedCustomerContextStore,
+    ConversationCustomerVerificationStore,
     DisabledOrderEmailOtpVerificationProvider,
     DisabledAccountOrderVerificationProvider,
     VendreAccountOrderVerificationProvider,
@@ -122,6 +126,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
           vendre,
         }).provider,
     },
+    AuthenticatedAccountOrderAccessService,
     ChatConversationService,
     ChatInterpretationShadowOrchestrator,
     ChatInterpretationShadowService,
@@ -143,9 +148,11 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     RecommendationScoringService,
     SkincareRoutineSafetyReviewService,
     SkincareSpecialistChatOrchestrator,
+    VerifiedReturnsReadService,
   ],
   exports: [
     AiArmanService,
+    AuthenticatedAccountOrderAccessService,
     ChatConversationResultRepository,
     ChatConversationStateRepository,
     ChatConversationService,
@@ -157,6 +164,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     ChatMessagesService,
     ChatPreviewService,
     ChatRequestParser,
+    ConversationCustomerVerificationStore,
     CustomerIdentityVerificationService,
     ProductCardBlockMapper,
     HaircareRecommendationJourneyService,
@@ -173,6 +181,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     SkincareRoutineSafetyReviewService,
     SkincareSpecialistChatOrchestrator,
     VerifiedCustomerContextStore,
+    VerifiedReturnsReadService,
   ],
 })
 export class AiArmanModule {}
