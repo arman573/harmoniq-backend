@@ -26,6 +26,7 @@ import { ProductCardBlockMapper } from './chat/product-card-block.mapper';
 import { HaircareRecommendationJourneyService } from './discovery/haircare-recommendation-journey.service';
 import { ProductDiscoveryService } from './discovery/product-discovery.service';
 import { ProductIntelligenceEnrichmentService } from './discovery/product-intelligence-enrichment.service';
+import { readAccountOrderVerificationConfig } from './identity/account-order-verification.config';
 import {
   AccountOrderVerificationProvider,
   DisabledAccountOrderVerificationProvider,
@@ -33,6 +34,7 @@ import {
   OrderEmailOtpVerificationProvider,
 } from './identity/customer-identity-verification.providers';
 import { CustomerIdentityVerificationService } from './identity/customer-identity-verification.service';
+import { VendreAccountOrderVerificationProvider } from './identity/vendre-account-order-verification.provider';
 import { VerifiedCustomerContextStore } from './identity/verified-customer-context.store';
 import { ProductIntelligenceAuthProvider } from './integrations/product-intelligence-auth.provider';
 import { ProductIntelligenceClient } from './integrations/product-intelligence.client';
@@ -69,13 +71,24 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     VerifiedCustomerContextStore,
     DisabledOrderEmailOtpVerificationProvider,
     DisabledAccountOrderVerificationProvider,
+    VendreAccountOrderVerificationProvider,
     {
       provide: OrderEmailOtpVerificationProvider,
       useExisting: DisabledOrderEmailOtpVerificationProvider,
     },
     {
       provide: AccountOrderVerificationProvider,
-      useExisting: DisabledAccountOrderVerificationProvider,
+      inject: [
+        DisabledAccountOrderVerificationProvider,
+        VendreAccountOrderVerificationProvider,
+      ],
+      useFactory: (
+        disabled: DisabledAccountOrderVerificationProvider,
+        vendre: VendreAccountOrderVerificationProvider,
+      ) =>
+        readAccountOrderVerificationConfig().activationAllowed
+          ? vendre
+          : disabled,
     },
     {
       provide: ChatConversationResultRepository,
