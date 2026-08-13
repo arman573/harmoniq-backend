@@ -1,5 +1,7 @@
 import { Test } from '@nestjs/testing';
 import { AiArmanModule } from './ai-arman.module';
+import { AuthenticatedAccountOrderAccessService } from './identity/authenticated-account-order-access.service';
+import { ConversationCustomerVerificationStore } from './identity/conversation-customer-verification.store';
 import {
   AccountOrderVerificationProvider,
   DisabledAccountOrderVerificationProvider,
@@ -10,6 +12,7 @@ import {
   ProductLiveFactsClient,
 } from './integrations/product-live-facts.client';
 import { VendreProductLiveFactsClient } from './integrations/vendre-product-live-facts.client';
+import { VerifiedReturnsReadService } from './integrations/verified-returns-read.service';
 
 const ENV_KEYS = [
   'AI_ARMAN_PRODUCT_LIVE_FACTS_PROVIDER',
@@ -140,6 +143,24 @@ describe('AiArmanModule guarded provider wiring', () => {
 
     expect(selected).toBe(vendre);
     expect(selected).toBeInstanceOf(VendreAccountOrderVerificationProvider);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await moduleRef.close();
+  });
+
+  it('wires authenticated account verification and verified returns reads without bootstrap requests', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch');
+    const moduleRef = await compileAiArmanModule();
+
+    expect(moduleRef.get(ConversationCustomerVerificationStore)).toBeInstanceOf(
+      ConversationCustomerVerificationStore,
+    );
+    expect(moduleRef.get(AuthenticatedAccountOrderAccessService)).toBeInstanceOf(
+      AuthenticatedAccountOrderAccessService,
+    );
+    expect(moduleRef.get(VerifiedReturnsReadService)).toBeInstanceOf(
+      VerifiedReturnsReadService,
+    );
     expect(fetchSpy).not.toHaveBeenCalled();
 
     await moduleRef.close();
