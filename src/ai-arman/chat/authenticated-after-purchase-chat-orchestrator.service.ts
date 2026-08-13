@@ -9,6 +9,7 @@ import type {
   AiArmanChatRequest,
   AiArmanChatResponse,
   AiArmanResponseBlock,
+  AiArmanToolName,
 } from './chat-messages.types';
 import type {
   GetCaseMessagesToolResult,
@@ -21,6 +22,12 @@ import { SkincareSpecialistChatOrchestrator } from '../skincare/skincare-special
 type AuthenticatedChatUser = Pick<User, 'id' | 'email'>;
 type CaseStatusResult = GetCaseStatusToolResult | VerifiedReturnsReadFailure;
 type CaseMessagesResult = GetCaseMessagesToolResult | VerifiedReturnsReadFailure;
+
+const CASE_STATUS_TOOLS: AiArmanToolName[] = ['get_case_status'];
+const CASE_MESSAGES_TOOLS: AiArmanToolName[] = [
+  'get_case_status',
+  'get_case_messages',
+];
 
 @Injectable()
 export class AuthenticatedAfterPurchaseChatOrchestrator {
@@ -57,7 +64,11 @@ export class AuthenticatedAfterPurchaseChatOrchestrator {
     if (!Number.isSafeInteger(userId) || userId <= 0) {
       return this.persist(
         input,
-        applyFailedClosed(response, 'authenticated_identity_invalid'),
+        applyFailedClosed(
+          response,
+          'authenticated_identity_invalid',
+          CASE_STATUS_TOOLS,
+        ),
       );
     }
 
@@ -139,7 +150,7 @@ function applyVerificationFailure(
     ...response,
     decision: {
       ...response.decision,
-      plannedTools: ['get_case_status'],
+      plannedTools: CASE_STATUS_TOOLS,
       executionStatus: 'failed_closed',
       reasons: unique([
         ...response.decision.reasons,
@@ -190,7 +201,7 @@ function applyStatusFailure(
     ]);
   }
 
-  return applyFailedClosed(response, result.error);
+  return applyFailedClosed(response, result.error, CASE_STATUS_TOOLS);
 }
 
 function applyStatusSuccess(
@@ -244,7 +255,12 @@ function applyMessagesSuccess(
     }
   }
 
-  return applyReadOnlyResult(response, 'case_messages', blocks);
+  return applyReadOnlyResult(
+    response,
+    'case_messages',
+    blocks,
+    CASE_MESSAGES_TOOLS,
+  );
 }
 
 function applyMessagesFailure(
@@ -252,8 +268,13 @@ function applyMessagesFailure(
   status: Extract<CaseStatusResult, { ok: true }>,
   result: Exclude<CaseMessagesResult, { ok: true }>,
 ): AiArmanChatResponse {
+  const failed = applyFailedClosed(
+    response,
+    result.error,
+    CASE_MESSAGES_TOOLS,
+  );
   return {
-    ...applyFailedClosed(response, result.error),
+    ...failed,
     blocks: [
       {
         type: 'message',
@@ -273,12 +294,13 @@ function applyReadOnlyResult(
   response: AiArmanChatResponse,
   reason: string,
   blocks: AiArmanResponseBlock[],
+  plannedTools: AiArmanToolName[] = CASE_STATUS_TOOLS,
 ): AiArmanChatResponse {
   return {
     ...response,
     decision: {
       ...response.decision,
-      plannedTools: ['get_case_status'],
+      plannedTools,
       executionStatus: 'executed_read_only',
       reasons: unique([
         ...response.decision.reasons,
@@ -297,6 +319,7 @@ function applyReadOnlyResult(
 function applyFailedClosed(
   response: AiArmanChatResponse,
   error: string,
+  plannedTools: AiArmanToolName[],
 ): AiArmanChatResponse {
   const verificationError = [
     'verification_not_found',
@@ -309,7 +332,7 @@ function applyFailedClosed(
     ...response,
     decision: {
       ...response.decision,
-      plannedTools: ['get_case_status'],
+      plannedTools,
       executionStatus: 'failed_closed',
       reasons: unique([
         ...response.decision.reasons,
