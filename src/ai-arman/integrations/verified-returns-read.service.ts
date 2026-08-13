@@ -6,6 +6,7 @@ import {
   GetCaseStatusToolResult,
   ReturnsModuleReadTools,
 } from './returns-module-read.tools';
+import type { ReturnsModuleVerifiedCustomerContext } from './returns-module.types';
 
 export type VerifiedReturnsReadInput = {
   conversationId: string;
@@ -57,8 +58,10 @@ export class VerifiedReturnsReadService {
     });
   }
 
-  private resolveVerifiedContext(input: VerifiedReturnsReadInput):
-    | { ok: true; context: ReturnType<VerifiedCustomerContextStore['resolve']> extends infer T ? T extends { ok: true; context: infer C } ? C : never : never }
+  private resolveVerifiedContext(
+    input: VerifiedReturnsReadInput,
+  ):
+    | { ok: true; context: ReturnsModuleVerifiedCustomerContext }
     | VerifiedReturnsReadFailure {
     const binding = this.conversationVerificationStore.resolve(
       input.conversationId,
