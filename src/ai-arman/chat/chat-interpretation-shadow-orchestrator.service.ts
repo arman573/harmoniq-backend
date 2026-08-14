@@ -8,12 +8,14 @@ import {
   type AiArmanInterpretationProviderResult,
 } from './chat-interpretation.provider';
 import {
+  ChatInterpretationPromotionService,
+  type ChatInterpretationPromotionDecision,
+} from './chat-interpretation-promotion.service';
+import {
   ChatInterpretationShadowAuditSink,
   type ChatInterpretationShadowAuditRecord,
 } from './chat-interpretation-shadow-audit.store';
-import {
-  ChatInterpretationShadowConfig,
-} from './chat-interpretation-shadow.config';
+import { ChatInterpretationShadowConfig } from './chat-interpretation-shadow.config';
 import {
   ChatInterpretationShadowService,
   type ChatInterpretationShadowComparison,
@@ -54,6 +56,7 @@ export type ChatInterpretationShadowRunResult =
   | {
       status: 'completed';
       comparison: ChatInterpretationShadowComparison;
+      promotion: ChatInterpretationPromotionDecision | null;
       usage: ChatInterpretationShadowUsage;
     }
   | {
@@ -95,6 +98,8 @@ export class ChatInterpretationShadowOrchestrator {
     private readonly provider?: ChatInterpretationProvider,
     @Optional()
     private readonly auditSink?: ChatInterpretationShadowAuditSink,
+    @Optional()
+    private readonly promotionService?: ChatInterpretationPromotionService,
   ) {}
 
   async run(
@@ -194,6 +199,10 @@ export class ChatInterpretationShadowOrchestrator {
       }
 
       const comparison = this.shadow.compare(deterministic, result.candidate);
+      const promotion =
+        comparison.status === 'valid_candidate' && this.promotionService
+          ? this.promotionService.evaluate(deterministic, result.candidate)
+          : null;
 
       this.recordAudit(metadata, {
         status: 'completed',
@@ -209,6 +218,7 @@ export class ChatInterpretationShadowOrchestrator {
       return {
         status: 'completed',
         comparison,
+        promotion,
         usage,
       };
     } catch (error) {
