@@ -1,9 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import type { User } from '../../users/user.entity';
 import { AuthenticatedAccountOrderAccessService } from '../identity/authenticated-account-order-access.service';
+import type { TrackingReadResult } from '../integrations/tracking-read.types';
 import type { VendreOrderReadResult } from '../integrations/vendre-order-read.types';
 import type { VerifiedOrderReadFailure } from '../integrations/verified-order-read.service';
 import { VerifiedOrderReadService } from '../integrations/verified-order-read.service';
+import type { VerifiedTrackingReadFailure } from '../integrations/verified-tracking-read.service';
+import { VerifiedTrackingReadService } from '../integrations/verified-tracking-read.service';
 import { AuthenticatedAfterPurchaseChatOrchestrator } from './authenticated-after-purchase-chat-orchestrator.service';
 import {
   ChatConversationResultRepository,
@@ -16,6 +19,7 @@ import type {
 
 type AuthenticatedChatUser = Pick<User, 'id' | 'email'>;
 type OrderReadResult = VendreOrderReadResult | VerifiedOrderReadFailure;
+type TrackingResult = TrackingReadResult | VerifiedTrackingReadFailure;
 type RememberedOrderContext = {
   userId: number;
   orderId: string;
@@ -33,6 +37,7 @@ export class AuthenticatedCustomerChatOrchestrator {
     private readonly afterPurchase: AuthenticatedAfterPurchaseChatOrchestrator,
     private readonly accountOrderAccess: AuthenticatedAccountOrderAccessService,
     private readonly verifiedOrderRead: VerifiedOrderReadService,
+    private readonly verifiedTrackingRead: VerifiedTrackingReadService,
     private readonly resultStore: ChatConversationResultRepository,
     private readonly stateStore: ChatConversationStateRepository,
   ) {}
@@ -42,20 +47,82 @@ export class AuthenticatedCustomerChatOrchestrator {
     user: AuthenticatedChatUser,
   ): Promise<AiArmanChatResponse> {
     const response = await this.afterPurchase.handle(input, user);
-    if (alreadyHandledOrderRead(response) || alreadyHandledReturnsRead(response)) {
+    if (
+      alreadyHandledOrderRead(response) ||
+      alreadyHandledReturnsRead(response) ||
+      alreadyHandledTrackingRead(response)
+    ) {
       return response;
     }
 
     const userId = Number(user?.id);
     if (!Number.isSafeInteger(userId) || userId <= 0) return response;
 
-    const explicitOrderStatus =
-      response.decision.route === 'order_support' &&
-      response.interpretation.primaryIntent === 'order_status';
     const remembered = this.resolveRememberedContext(
       response.conversationId,
       userId,
     );
+    const explicitTracking =
+      response.decision.route === 'order_support' &&
+      response.interpretation.primaryIntent === 'tracking_status';
+    const trackingFollowUp = isTrackingStatusFollowUp(input.message.text);
+
+    if (explicitTracking || (remembered && trackingFollowUp)) {
+      if (
+        explicitTracking &&
+        response.interpretation.missingFields.length > 0 &&
+        !remembered
+      ) {
+        return response;
+      }
+
+      const explicitOrderId = explicitTracking
+        ? response.interpretation.entities.orderReference
+        : null;
+      const orderId = explicitOrderId ?? remembered?.orderId ?? null;
+      if (!orderId) return response;
+
+      let tracking = await this.verifiedTrackingRead.getTracking({
+        conversationId: response.conversationId,
+        userId,
+        orderId,
+      });
+
+      if (
+        !tracking.ok &&
+        (tracking.error === 'verification_not_found' ||
+          tracking.error === 'verification_expired')
+      ) {
+        const verified = await this.accountOrderAccess.verifyAndBind({
+          user: user as User,
+          conversationId: response.conversationId,
+          orderId,
+        });
+        if (!verified.ok) {
+          return this.persist(
+            input,
+            applyTrackingVerificationFailure(response, verified.error),
+          );
+        }
+
+        tracking = await this.verifiedTrackingRead.getTracking({
+          conversationId: response.conversationId,
+          userId,
+          orderId,
+        });
+      }
+
+      if (!tracking.ok) {
+        return this.persist(input, applyTrackingReadFailure(response, tracking));
+      }
+
+      this.rememberContext(response.conversationId, { userId, orderId });
+      return this.persist(input, applyTrackingReadSuccess(response, tracking));
+    }
+
+    const explicitOrderStatus =
+      response.decision.route === 'order_support' &&
+      response.interpretation.primaryIntent === 'order_status';
     const followUp = isOrderStatusFollowUp(input.message.text);
 
     if (!explicitOrderStatus && (!remembered || !followUp)) return response;
@@ -157,6 +224,158 @@ export class AuthenticatedCustomerChatOrchestrator {
     if (!stored) return response;
     return this.resultStore.save(key, stored.fingerprint, response);
   }
+}
+
+function applyTrackingReadSuccess(
+  response: AiArmanChatResponse,
+  result: Extract<TrackingResult, { ok: true }>,
+): AiArmanChatResponse {
+  const tracking = result.tracking;
+  const label =
+    tracking.shipmentStatus ||
+    tracking.message ||
+    (tracking.deliveryType === 'pickup'
+      ? 'Beställningen hämtas i salong.'
+      : 'Paketspårning är tillgänglig.');
+  const status =
+    tracking.shipmentStatus ||
+    (tracking.deliveryType === 'pickup' ? 'pickup' : 'available');
+
+  return {
+    ...response,
+    decision: {
+      ...response.decision,
+      route: 'order_support',
+      plannedTools: ['get_tracking_status'],
+      executionStatus: 'executed_read_only',
+      requiresIdentity: true,
+      reasons: unique([
+        ...response.decision.reasons,
+        'verified_tracking_read:tracking_status',
+        'writes_remain_disabled',
+      ]),
+    },
+    blocks: [
+      {
+        type: 'message',
+        text: tracking.message || `Spårningsstatus för order ${tracking.orderId}: ${label}`,
+      },
+      {
+        type: 'tracking_card',
+        orderNumber: tracking.orderId,
+        carrier: tracking.carrier,
+        trackingStatus: status,
+        trackingLabel: label,
+        trackingUrl: tracking.trackingUrl,
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+    safety: {
+      ...response.safety,
+      liveFactsUsed: true,
+      writesExecuted: false,
+      productionActionsEnabled: false,
+    },
+  };
+}
+
+function applyTrackingVerificationFailure(
+  response: AiArmanChatResponse,
+  error: string,
+): AiArmanChatResponse {
+  const rejected = error === 'verification_rejected';
+  return {
+    ...response,
+    decision: {
+      ...response.decision,
+      route: 'order_support',
+      plannedTools: ['get_tracking_status'],
+      executionStatus: 'failed_closed',
+      requiresIdentity: true,
+      reasons: unique([
+        ...response.decision.reasons,
+        `verified_tracking_read:${error}`,
+        'writes_remain_disabled',
+      ]),
+    },
+    blocks: [
+      {
+        type: 'message',
+        text: rejected
+          ? 'Jag kunde inte verifiera att den inloggade kunden äger den här ordern, så jag visar ingen spårningsinformation.'
+          : 'Jag kan inte verifiera orderåtkomsten säkert just nu, så jag visar ingen spårningsinformation.',
+      },
+      {
+        type: 'error_notice',
+        code: rejected
+          ? 'tracking_order_ownership_not_verified'
+          : 'tracking_verification_temporarily_unavailable',
+        text: rejected
+          ? 'Orderägarskapet kunde inte verifieras.'
+          : 'Orderverifieringen är inte tillgänglig just nu.',
+        retryable: !rejected,
+      },
+    ],
+  };
+}
+
+function applyTrackingReadFailure(
+  response: AiArmanChatResponse,
+  result: Exclude<TrackingResult, { ok: true }>,
+): AiArmanChatResponse {
+  const verificationError = [
+    'verification_not_found',
+    'verification_expired',
+    'verification_actor_mismatch',
+    'verification_order_mismatch',
+  ].includes(result.error);
+  const notFound = result.error === 'tracking_not_found';
+
+  return {
+    ...response,
+    decision: {
+      ...response.decision,
+      route: 'order_support',
+      plannedTools: ['get_tracking_status'],
+      executionStatus: notFound ? 'executed_read_only' : 'failed_closed',
+      requiresIdentity: true,
+      reasons: unique([
+        ...response.decision.reasons,
+        `verified_tracking_read:${result.error}`,
+        'writes_remain_disabled',
+      ]),
+    },
+    blocks: [
+      {
+        type: 'message',
+        text: verificationError
+          ? 'Jag kan inte använda den sparade orderverifieringen för den här förfrågan. Ingen spårningsinformation visas.'
+          : notFound
+            ? 'Ordern är verifierad, men det finns ingen aktiv paketspårning ännu.'
+            : 'Jag kan inte läsa paketspårningen säkert just nu. Ingen osäker information visas.',
+      },
+      ...(!notFound
+        ? [
+            {
+              type: 'error_notice' as const,
+              code: verificationError
+                ? 'verified_tracking_context_required'
+                : 'tracking_status_temporarily_unavailable',
+              text: verificationError
+                ? 'Ordern behöver verifieras på nytt för den här konversationen.'
+                : 'Paketspårningen är inte tillgänglig just nu.',
+              retryable: true,
+            },
+          ]
+        : []),
+    ],
+    safety: {
+      ...response.safety,
+      liveFactsUsed: notFound,
+      writesExecuted: false,
+      productionActionsEnabled: false,
+    },
+  };
 }
 
 function applyOrderReadSuccess(
@@ -296,17 +515,29 @@ function applyOrderReadFailure(
   };
 }
 
+function isTrackingStatusFollowUp(value: string): boolean {
+  const normalized = normalizeFollowUp(value);
+  if (!normalized) return false;
+  return /^(?:har paketet kommit langre(?: nu)?|har den kommit langre(?: nu)?|var ar paketet(?: nu)?|nagot nytt med paketet|och paketet(?: nu)?|sparning(?: nu)?)[?.! ]*$/.test(
+    normalized,
+  );
+}
+
 function isOrderStatusFollowUp(value: string): boolean {
-  const normalized = String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
+  const normalized = normalizeFollowUp(value);
   if (!normalized) return false;
 
   return /^(?:vad ar status(?: nu)?|har det hant nagot(?: nu)?|nagot nytt|hur gar det(?: med den)?|och nu|status nu)[?.! ]*$/.test(
     normalized,
   );
+}
+
+function normalizeFollowUp(value: string): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
 }
 
 function alreadyHandledOrderRead(response: AiArmanChatResponse): boolean {
@@ -318,6 +549,12 @@ function alreadyHandledOrderRead(response: AiArmanChatResponse): boolean {
 function alreadyHandledReturnsRead(response: AiArmanChatResponse): boolean {
   return response.decision.reasons.some((reason) =>
     reason.startsWith('verified_returns_read:'),
+  );
+}
+
+function alreadyHandledTrackingRead(response: AiArmanChatResponse): boolean {
+  return response.decision.reasons.some((reason) =>
+    reason.startsWith('verified_tracking_read:'),
   );
 }
 
