@@ -55,10 +55,12 @@ import { resolveProductLiveFactsProvider } from './integrations/product-live-fac
 import { ReturnsModuleReadClient } from './integrations/returns-module-read.client';
 import { ReturnsModuleReadTools } from './integrations/returns-module-read.tools';
 import { SearchBrainClient } from './integrations/search-brain.client';
+import { TrackingReadClient } from './integrations/tracking-read.client';
 import { VendreOrderReadClient } from './integrations/vendre-order-read.client';
 import { VendreProductLiveFactsClient } from './integrations/vendre-product-live-facts.client';
 import { VerifiedOrderReadService } from './integrations/verified-order-read.service';
 import { VerifiedReturnsReadService } from './integrations/verified-returns-read.service';
+import { VerifiedTrackingReadService } from './integrations/verified-tracking-read.service';
 import { ProductRecommendationCardService } from './recommendation/product-recommendation-card.service';
 import { RecommendationScoringService } from './recommendation/recommendation-scoring.service';
 import { SkincareRoutineSafetyReviewService } from './skincare/skincare-routine-safety-review.service';
@@ -83,6 +85,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     DisabledAccountOrderVerificationProvider,
     VendreAccountOrderVerificationProvider,
     VendreOrderReadClient,
+    TrackingReadClient,
     {
       provide: OrderEmailOtpVerificationProvider,
       useExisting: DisabledOrderEmailOtpVerificationProvider,
@@ -157,6 +160,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     SkincareSpecialistChatOrchestrator,
     VerifiedOrderReadService,
     VerifiedReturnsReadService,
+    VerifiedTrackingReadService,
   ],
   exports: [
     AiArmanService,
@@ -194,6 +198,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     VerifiedCustomerContextStore,
     VerifiedOrderReadService,
     VerifiedReturnsReadService,
+    VerifiedTrackingReadService,
   ],
 })
 export class AiArmanModule {}
