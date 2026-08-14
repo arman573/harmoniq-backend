@@ -98,7 +98,10 @@ const MODEL_OUTPUT_SCHEMA = {
       maxItems: 8,
       items: { type: 'string', maxLength: 120 },
     },
-    recommendationDomain: { type: ['string', 'null'] },
+    recommendationDomain: {
+      type: ['string', 'null'],
+      enum: [...BEAUTY_DOMAINS, null],
+    },
   },
   required: [
     'primaryIntent',
@@ -160,20 +163,27 @@ export class AiArmanModelInterpretationClient {
         }),
       });
 
+      if (response.status === 401 || response.status === 403) {
+        return { ok: false, error: 'model_interpretation_authentication' };
+      }
+      if (response.status === 429) {
+        return { ok: false, error: 'model_interpretation_quota' };
+      }
       if (!response.ok) {
         return { ok: false, error: 'model_interpretation_unavailable' };
       }
 
       const body = await readBoundedJson(response);
       const outputText = extractOutputText(body);
-      if (!outputText) {
+      const usage = extractUsage(body);
+      if (!outputText || !usage) {
         return { ok: false, error: 'model_interpretation_invalid' };
       }
 
       const parsed = JSON.parse(outputText) as unknown;
       const candidate = projectCandidate(parsed);
       return candidate
-        ? { ok: true, candidate }
+        ? { ok: true, candidate, usage }
         : { ok: false, error: 'model_interpretation_invalid' };
     } catch {
       return { ok: false, error: 'model_interpretation_unavailable' };
@@ -247,6 +257,26 @@ function extractOutputText(body: unknown): string | null {
 
   const joined = texts.join('').trim();
   return joined || null;
+}
+
+function extractUsage(
+  body: unknown,
+): { inputTokens: number; outputTokens: number } | null {
+  if (!isRecord(body) || !isRecord(body.usage)) return null;
+  const inputTokens = body.usage.input_tokens;
+  const outputTokens = body.usage.output_tokens;
+  if (
+    !Number.isInteger(inputTokens) ||
+    !Number.isInteger(outputTokens) ||
+    Number(inputTokens) < 0 ||
+    Number(outputTokens) < 0
+  ) {
+    return null;
+  }
+  return {
+    inputTokens: Number(inputTokens),
+    outputTokens: Number(outputTokens),
+  };
 }
 
 function projectCandidate(value: unknown): AiArmanModelInterpretationCandidate | null {
