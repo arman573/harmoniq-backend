@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - '.github/workflows/ai-arman-foundation-ci.yml'
+      - '.dockerignore'
       - 'Dockerfile.ai-arman-candidate'
       - 'docs/ai-arman/**'
       - 'src/ai-arman/**'
@@ -25,6 +26,7 @@ on:
       - feature/ai-arman-foundation-v1
     paths:
       - '.github/workflows/ai-arman-foundation-ci.yml'
+      - '.dockerignore'
       - 'Dockerfile.ai-arman-candidate'
       - 'docs/ai-arman/**'
       - 'src/ai-arman/**'
