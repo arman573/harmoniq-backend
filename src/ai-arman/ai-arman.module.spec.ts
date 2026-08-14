@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { AiArmanModule } from './ai-arman.module';
+import { ChatInterpretationProvider } from './chat/chat-interpretation.provider';
 import { AuthenticatedAccountOrderAccessService } from './identity/authenticated-account-order-access.service';
 import { ConversationCustomerVerificationStore } from './identity/conversation-customer-verification.store';
 import {
@@ -15,6 +16,7 @@ import { TrackingReadClient } from './integrations/tracking-read.client';
 import { VendreProductLiveFactsClient } from './integrations/vendre-product-live-facts.client';
 import { VerifiedReturnsReadService } from './integrations/verified-returns-read.service';
 import { VerifiedTrackingReadService } from './integrations/verified-tracking-read.service';
+import { OpenAiChatInterpretationProvider } from './model/openai-chat-interpretation.provider';
 
 const ENV_KEYS = [
   'AI_ARMAN_PRODUCT_LIVE_FACTS_PROVIDER',
@@ -24,6 +26,10 @@ const ENV_KEYS = [
   'AI_ARMAN_TRACKING_READ_ENABLED',
   'AI_ARMAN_TRACKING_READ_BASE_URL',
   'AI_ARMAN_TRACKING_READ_TIMEOUT_MS',
+  'AI_ARMAN_MODEL_INTERPRETATION_ENABLED',
+  'AI_ARMAN_MODEL_INTERPRETATION_TIMEOUT_MS',
+  'AI_ARMAN_OPENAI_MODEL',
+  'OPENAI_API_KEY',
   'VENDRE_API_BASE_URL',
   'VENDRE_API_KEY',
 ] as const;
@@ -170,6 +176,23 @@ describe('AiArmanModule guarded provider wiring', () => {
     expect(moduleRef.get(VerifiedTrackingReadService)).toBeInstanceOf(
       VerifiedTrackingReadService,
     );
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await moduleRef.close();
+  });
+
+  it('wires the OpenAI interpretation provider but never calls it at bootstrap, even when credentials exist', async () => {
+    process.env.AI_ARMAN_MODEL_INTERPRETATION_ENABLED = 'true';
+    process.env.AI_ARMAN_OPENAI_MODEL = 'gpt-test-pinned';
+    process.env.OPENAI_API_KEY = 'configured';
+    const fetchSpy = jest.spyOn(global, 'fetch');
+    const moduleRef = await compileAiArmanModule();
+
+    const selected = moduleRef.get(ChatInterpretationProvider);
+    const openAi = moduleRef.get(OpenAiChatInterpretationProvider);
+
+    expect(selected).toBe(openAi);
+    expect(selected).toBeInstanceOf(OpenAiChatInterpretationProvider);
     expect(fetchSpy).not.toHaveBeenCalled();
 
     await moduleRef.close();
