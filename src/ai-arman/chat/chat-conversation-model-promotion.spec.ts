@@ -119,7 +119,7 @@ describe('ChatConversationService guarded model promotion', () => {
     const response = await service.handleWithShadow({
       contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
       clientMessageId: 'promotion-product-1',
-      message: { text: 'Mitt hår är slitet och frissigt. Vad hade du valt?' },
+      message: { text: 'Jag har slitet och frissigt hår. Vad hade du valt?' },
     });
 
     expect(response.interpretation).toMatchObject({
