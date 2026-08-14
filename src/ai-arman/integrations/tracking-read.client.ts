@@ -11,6 +11,11 @@ const DEFAULT_TIMEOUT_MS = 1500;
 const MAX_RESPONSE_BYTES = 128_000;
 const MAX_TEXT_LENGTH = 2_048;
 
+type TrackingProjectionResult =
+  | { kind: 'ok'; tracking: TrackingReadOrder }
+  | { kind: 'not_found' }
+  | { kind: 'invalid' };
+
 @Injectable()
 export class TrackingReadClient {
   async getTracking(orderId: string): Promise<TrackingReadResult> {
@@ -51,15 +56,15 @@ export class TrackingReadClient {
       }
 
       const body = await readBoundedJson(response);
-      const tracking = projectTrackingResponse(body, normalizedOrderId);
-      if (!tracking) {
-        return { ok: false, error: 'tracking_not_found' };
+      const projection = projectTrackingResponse(body, normalizedOrderId);
+      if (projection.kind === 'invalid') {
+        return { ok: false, error: 'tracking_read_unavailable' };
       }
-      if (!tracking.available) {
+      if (projection.kind === 'not_found' || !projection.tracking.available) {
         return { ok: false, error: 'tracking_not_found' };
       }
 
-      return { ok: true, tracking };
+      return { ok: true, tracking: projection.tracking };
     } catch {
       return { ok: false, error: 'tracking_read_unavailable' };
     } finally {
@@ -71,25 +76,28 @@ export class TrackingReadClient {
 function projectTrackingResponse(
   body: unknown,
   expectedOrderId: string,
-): TrackingReadOrder | null {
+): TrackingProjectionResult {
   if (!isRecord(body) || body.ok !== true || !Array.isArray(body.orders)) {
-    return null;
+    return { kind: 'invalid' };
   }
 
   const candidate = body.orders.find(
     (item) =>
       isRecord(item) && normalizeOrderId(item.orderId) === expectedOrderId,
   );
-  if (!isRecord(candidate)) return null;
+  if (!candidate) return { kind: 'not_found' };
+  if (!isRecord(candidate)) return { kind: 'invalid' };
 
   const deliveryType = readDeliveryType(candidate.deliveryType);
   const available = candidate.available;
-  if (!deliveryType || typeof available !== 'boolean') return null;
+  if (!deliveryType || typeof available !== 'boolean') {
+    return { kind: 'invalid' };
+  }
 
   const deliveryMethod = readNullableString(candidate.deliveryMethod);
   const carrier = readNullableString(candidate.carrier);
   const shipmentStatus = readNullableString(candidate.shipmentStatus);
-  const trackingUrl = readNullableString(candidate.trackingUrl);
+  const trackingUrl = readNullableHttpsUrl(candidate.trackingUrl);
   const parcelNo = readNullableString(candidate.parcelNo);
   const message = readNullableString(candidate.message);
 
@@ -101,19 +109,22 @@ function projectTrackingResponse(
     parcelNo === undefined ||
     message === undefined
   ) {
-    return null;
+    return { kind: 'invalid' };
   }
 
   return {
-    orderId: expectedOrderId,
-    deliveryMethod,
-    deliveryType,
-    carrier,
-    shipmentStatus,
-    trackingUrl,
-    parcelNo,
-    available,
-    message,
+    kind: 'ok',
+    tracking: {
+      orderId: expectedOrderId,
+      deliveryMethod,
+      deliveryType,
+      carrier,
+      shipmentStatus,
+      trackingUrl,
+      parcelNo,
+      available,
+      message,
+    },
   };
 }
 
@@ -143,6 +154,22 @@ function readNullableString(value: unknown): string | null | undefined {
   const normalized = value.trim();
   if (Buffer.byteLength(normalized, 'utf8') > MAX_TEXT_LENGTH) return undefined;
   return normalized;
+}
+
+function readNullableHttpsUrl(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  const normalized = readNullableString(value);
+  if (normalized === undefined || normalized === null || !normalized) {
+    return normalized;
+  }
+
+  try {
+    const url = new URL(normalized);
+    if (url.protocol !== 'https:' || url.username || url.password) return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 async function readBoundedJson(response: Response): Promise<unknown> {
