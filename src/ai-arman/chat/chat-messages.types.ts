@@ -238,7 +238,7 @@ export type AiArmanTrackingCardBlock = {
   trackingStatus: string;
   trackingLabel: string;
   trackingUrl: string | null;
-  updatedAt: string;
+  readAt: string;
 };
 
 export type AiArmanPurchasedProductCardBlock = {

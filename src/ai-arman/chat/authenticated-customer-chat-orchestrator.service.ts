@@ -267,7 +267,7 @@ function applyTrackingReadSuccess(
         trackingStatus: status,
         trackingLabel: label,
         trackingUrl: tracking.trackingUrl,
-        updatedAt: new Date().toISOString(),
+        readAt: new Date().toISOString(),
       },
     ],
     safety: {

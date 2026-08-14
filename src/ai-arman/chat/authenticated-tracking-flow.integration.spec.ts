@@ -147,7 +147,7 @@ describe('authenticated tracking flow integration', () => {
       trackingLabel: 'På väg',
       trackingUrl:
         'https://www.dbschenker.com/app/tracking-public?refNumber=ABC123',
-      updatedAt: expect.any(String),
+      readAt: expect.any(String),
     });
     expect(result.safety.liveFactsUsed).toBe(true);
     expect(result.safety.writesExecuted).toBe(false);
