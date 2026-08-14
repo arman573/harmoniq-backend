@@ -19,6 +19,7 @@ import {
 import {
   ChatInterpretationShadowConfig,
   DisabledChatInterpretationShadowConfig,
+  EnvChatInterpretationShadowConfig,
 } from './chat/chat-interpretation-shadow.config';
 import { ChatInterpretationShadowOrchestrator } from './chat/chat-interpretation-shadow-orchestrator.service';
 import { ChatInterpretationShadowService } from './chat/chat-interpretation-shadow.service';
@@ -84,6 +85,7 @@ import { AiArmanWidgetPreviewService } from './widget/ai-arman-widget-preview.se
     ChatConversationResultStore,
     ChatConversationStateStore,
     DisabledChatInterpretationShadowConfig,
+    EnvChatInterpretationShadowConfig,
     DisabledProductLiveFactsClient,
     VendreProductLiveFactsClient,
     InMemoryChatInterpretationShadowAuditStore,
@@ -129,7 +131,7 @@ import { AiArmanWidgetPreviewService } from './widget/ai-arman-widget-preview.se
     },
     {
       provide: ChatInterpretationShadowConfig,
-      useExisting: DisabledChatInterpretationShadowConfig,
+      useExisting: EnvChatInterpretationShadowConfig,
     },
     {
       provide: ChatInterpretationShadowAuditSink,
