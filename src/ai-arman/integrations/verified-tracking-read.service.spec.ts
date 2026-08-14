@@ -76,6 +76,14 @@ function issueAndBind(
 }
 
 describe('VerifiedTrackingReadService', () => {
+  beforeEach(() => {
+    jest.useFakeTimers().setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('fails closed before tracking read when verification is missing', async () => {
     const { service, getTracking } = build();
 
@@ -111,7 +119,7 @@ describe('VerifiedTrackingReadService', () => {
       NOW,
     );
 
-    jest.useFakeTimers().setSystemTime(new Date('2026-08-14T10:02:00.000Z'));
+    jest.setSystemTime(new Date('2026-08-14T10:02:00.000Z'));
     await expect(
       service.getTracking({
         conversationId: 'conversation_123',
@@ -120,7 +128,6 @@ describe('VerifiedTrackingReadService', () => {
       }),
     ).resolves.toEqual({ ok: false, error: 'verification_expired' });
     expect(getTracking).not.toHaveBeenCalled();
-    jest.useRealTimers();
   });
 
   it('does not allow another authenticated user to reuse the conversation binding', async () => {
