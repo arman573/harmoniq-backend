@@ -69,11 +69,16 @@ import { ProductRecommendationCardService } from './recommendation/product-recom
 import { RecommendationScoringService } from './recommendation/recommendation-scoring.service';
 import { SkincareRoutineSafetyReviewService } from './skincare/skincare-routine-safety-review.service';
 import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-specialist-chat-orchestrator.service';
+import { AiArmanWidgetPreviewConfig } from './widget/ai-arman-widget-preview.config';
+import { AiArmanWidgetPreviewController } from './widget/ai-arman-widget-preview.controller';
+import { AiArmanWidgetPreviewService } from './widget/ai-arman-widget-preview.service';
 
 @Module({
-  controllers: [AiArmanController],
+  controllers: [AiArmanController, AiArmanWidgetPreviewController],
   providers: [
     AiArmanService,
+    AiArmanWidgetPreviewConfig,
+    AiArmanWidgetPreviewService,
     AuthenticatedAfterPurchaseChatOrchestrator,
     AuthenticatedCustomerChatOrchestrator,
     ChatConversationResultStore,
@@ -175,6 +180,8 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
   ],
   exports: [
     AiArmanService,
+    AiArmanWidgetPreviewConfig,
+    AiArmanWidgetPreviewService,
     AuthenticatedAfterPurchaseChatOrchestrator,
     AuthenticatedCustomerChatOrchestrator,
     AuthenticatedAccountOrderAccessService,
