@@ -52,6 +52,11 @@ function openAiResponse(output: unknown, status = 200): Response {
           ],
         },
       ],
+      usage: {
+        input_tokens: 41,
+        output_tokens: 17,
+        total_tokens: 58,
+      },
     }),
     {
       status,
@@ -83,7 +88,7 @@ describe('AiArmanModelInterpretationClient', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('uses Responses API structured output without response storage and returns only a candidate', async () => {
+  it('uses Responses API structured output without response storage and returns candidate plus usage', async () => {
     allowModel();
     const fetchSpy = jest
       .spyOn(global, 'fetch')
@@ -115,15 +120,13 @@ describe('AiArmanModelInterpretationClient', () => {
         requiresIdentity: true,
         requiresHumanReview: false,
       },
+      usage: { inputTokens: 41, outputTokens: 17 },
     });
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, options] = fetchSpy.mock.calls[0];
     expect(String(url)).toBe('https://api.openai.com/v1/responses');
-    expect(options).toMatchObject({
-      method: 'POST',
-      redirect: 'error',
-    });
+    expect(options).toMatchObject({ method: 'POST', redirect: 'error' });
     const requestBody = JSON.parse(String(options?.body));
     expect(requestBody.model).toBe('gpt-test-pinned');
     expect(requestBody.store).toBe(false);
@@ -185,23 +188,22 @@ describe('AiArmanModelInterpretationClient', () => {
 
     await expect(
       new AiArmanModelInterpretationClient().interpret({ text: 'Ta bort min order' }),
-    ).resolves.toEqual({
-      ok: false,
-      error: 'model_interpretation_invalid',
-    });
+    ).resolves.toEqual({ ok: false, error: 'model_interpretation_invalid' });
   });
 
-  it('fails closed on upstream errors without exposing upstream details', async () => {
+  it.each([
+    [401, 'model_interpretation_authentication'],
+    [403, 'model_interpretation_authentication'],
+    [429, 'model_interpretation_quota'],
+    [500, 'model_interpretation_unavailable'],
+  ])('classifies upstream HTTP %i without exposing response details', async (status, error) => {
     allowModel();
     jest
       .spyOn(global, 'fetch')
-      .mockResolvedValue(new Response('secret upstream details', { status: 500 }));
+      .mockResolvedValue(new Response('secret upstream details', { status }));
 
     await expect(
       new AiArmanModelInterpretationClient().interpret({ text: 'Hej' }),
-    ).resolves.toEqual({
-      ok: false,
-      error: 'model_interpretation_unavailable',
-    });
+    ).resolves.toEqual({ ok: false, error });
   });
 });
