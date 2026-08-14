@@ -42,4 +42,18 @@ describe('AI Arman Beta 0 widget preview', () => {
     expect(html).toContain('!url.username && !url.password');
     expect(html).toContain("anchor.rel = 'noopener noreferrer'");
   });
+
+  it('fails closed when the backend response contract is incompatible', () => {
+    const html = new AiArmanWidgetPreviewService().render();
+    expect(html).toContain('function isCompatibleChatResponse(result)');
+    expect(html).toContain('result.contractVersion === CONTRACT_VERSION');
+    expect(html).toContain("throw new Error('chat_contract_mismatch')");
+  });
+
+  it('renders purchased-product links through the same HTTPS safety gate', () => {
+    const html = new AiArmanWidgetPreviewService().render();
+    expect(html).toContain("case 'purchased_product_card':");
+    expect(html).toContain("block.productUrl ? { href: block.productUrl, label: 'Visa produkt' } : null");
+    expect(html).toContain("isSafeHttpsUrl(link.href)");
+  });
 });
