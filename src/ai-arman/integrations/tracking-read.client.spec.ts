@@ -180,7 +180,40 @@ describe('TrackingReadClient', () => {
     fetchSpy.mockResolvedValueOnce(jsonResponse({ ok: true, orders: 'wrong' }));
     await expect(new TrackingReadClient().getTracking('90250')).resolves.toEqual({
       ok: false,
+      error: 'tracking_read_unavailable',
+    });
+  });
+
+  it('treats a valid envelope without the requested order as not found', async () => {
+    allowRead();
+    jest.spyOn(global, 'fetch').mockResolvedValue(
+      jsonResponse({ ok: true, orders: [validTracking({ orderId: 90251 })] }),
+    );
+
+    await expect(new TrackingReadClient().getTracking('90250')).resolves.toEqual({
+      ok: false,
       error: 'tracking_not_found',
+    });
+  });
+
+  it('rejects unsafe or malformed tracking URLs', async () => {
+    allowRead();
+    const fetchSpy = jest.spyOn(global, 'fetch');
+
+    fetchSpy.mockResolvedValueOnce(
+      jsonResponse({ ok: true, orders: [validTracking({ trackingUrl: 'http://example.test/parcel' })] }),
+    );
+    await expect(new TrackingReadClient().getTracking('90250')).resolves.toEqual({
+      ok: false,
+      error: 'tracking_read_unavailable',
+    });
+
+    fetchSpy.mockResolvedValueOnce(
+      jsonResponse({ ok: true, orders: [validTracking({ trackingUrl: 'not-a-url' })] }),
+    );
+    await expect(new TrackingReadClient().getTracking('90250')).resolves.toEqual({
+      ok: false,
+      error: 'tracking_read_unavailable',
     });
   });
 
