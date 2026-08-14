@@ -23,10 +23,14 @@ const USER: User = {
   role: UserRole.USER,
 };
 
-function request(text: string, clientMessageId: string): AiArmanChatRequest {
+function request(
+  text: string,
+  clientMessageId: string,
+  conversationId?: string,
+): AiArmanChatRequest {
   return {
     contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
-    conversationId: 'conversation_123',
+    ...(conversationId ? { conversationId } : {}),
     clientMessageId,
     message: { text },
   };
@@ -63,12 +67,12 @@ function build() {
     stateStore,
   );
 
-  const verifyAndBind = jest.fn().mockResolvedValue({
+  const verifyAndBind = jest.fn().mockImplementation(async (input) => ({
     ok: true,
-    conversationId: 'conversation_123',
-    orderId: '90250',
+    conversationId: input.conversationId,
+    orderId: input.orderId,
     expiresAt: 'future',
-  });
+  }));
   const accountAccess = {
     verifyAndBind,
   } as unknown as AuthenticatedAccountOrderAccessService;
@@ -152,7 +156,7 @@ describe('authenticated tracking flow integration', () => {
     expect(built.verifyAndBind).toHaveBeenCalledTimes(1);
     expect(built.verifyAndBind).toHaveBeenCalledWith({
       user: USER,
-      conversationId: 'conversation_123',
+      conversationId: result.conversationId,
       orderId: '90250',
     });
     expect(built.getTracking).toHaveBeenCalledTimes(2);
@@ -164,12 +168,16 @@ describe('authenticated tracking flow integration', () => {
   it('reuses the verified order for a natural tracking follow-up in the same user conversation', async () => {
     const built = build();
 
-    await built.service.handle(
+    const first = await built.service.handle(
       request('Var är mitt paket för order 90250?', 'tracking-1'),
       USER,
     );
     const followUp = await built.service.handle(
-      request('Har paketet kommit längre nu?', 'tracking-2'),
+      request(
+        'Har paketet kommit längre nu?',
+        'tracking-2',
+        first.conversationId,
+      ),
       USER,
     );
 
@@ -185,7 +193,7 @@ describe('authenticated tracking flow integration', () => {
   it('does not let another authenticated user inherit the remembered order', async () => {
     const built = build();
 
-    await built.service.handle(
+    const first = await built.service.handle(
       request('Var är mitt paket för order 90250?', 'tracking-1'),
       USER,
     );
@@ -196,7 +204,11 @@ describe('authenticated tracking flow integration', () => {
       email: 'other@example.com',
     };
     const followUp = await built.service.handle(
-      request('Har paketet kommit längre nu?', 'tracking-2'),
+      request(
+        'Har paketet kommit längre nu?',
+        'tracking-2',
+        first.conversationId,
+      ),
       otherUser,
     );
 
