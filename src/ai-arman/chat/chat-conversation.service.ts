@@ -9,6 +9,7 @@ import {
   ChatConversationResultRepository,
   ChatConversationStateRepository,
 } from './chat-conversation.repositories';
+import type { ChatInterpretationPromotionProposal } from './chat-interpretation-promotion.service';
 import { ChatInterpretationShadowOrchestrator } from './chat-interpretation-shadow-orchestrator.service';
 import { ChatMessagesService } from './chat-messages.service';
 import type {
@@ -17,7 +18,9 @@ import type {
   AiArmanChatResponse,
   AiArmanConversationState,
   AiArmanDecision,
+  AiArmanIntent,
   AiArmanInterpretation,
+  AiArmanJourney,
   AiArmanProductCardBlock,
   AiArmanProductType,
   AiArmanResponseBlock,
@@ -54,6 +57,13 @@ const SKINCARE_NEEDS = [
   'acne_prone_skin',
   'redness',
 ] as const;
+const IDENTITY_REQUIRED_INTENTS: AiArmanIntent[] = [
+  'purchased_product_usage',
+  'order_status',
+  'tracking_status',
+  'return_help',
+  'claim_help',
+];
 
 @Injectable()
 export class ChatConversationService {
@@ -76,18 +86,31 @@ export class ChatConversationService {
   async handleWithShadow(
     input: AiArmanChatRequest,
   ): Promise<AiArmanChatResponse> {
-    const processed = this.process(input);
+    let processed = this.process(input);
 
     if (processed.replayed) {
       return processed.response;
     }
 
     if (this.shadowOrchestrator) {
-      await this.shadowOrchestrator.run(processed.response.interpretation, {
-        text: input.message.text,
-        locale: 'sv-SE',
-        previousState: processed.previousState,
-      });
+      const shadowResult = await this.shadowOrchestrator.run(
+        processed.response.interpretation,
+        {
+          text: input.message.text,
+          locale: 'sv-SE',
+          previousState: processed.previousState,
+        },
+      );
+
+      if (
+        shadowResult.status === 'completed' &&
+        shadowResult.promotion?.status === 'promote'
+      ) {
+        processed = this.applyModelPromotion(
+          processed,
+          shadowResult.promotion.proposal,
+        );
+      }
     }
 
     if (
@@ -230,6 +253,200 @@ export class ChatConversationService {
         ...current.entities,
         needs: unique([...current.entities.needs, ...resolvedNeeds]),
       },
+    };
+  }
+
+  private applyModelPromotion(
+    processed: ProcessedChatMessage,
+    proposal: ChatInterpretationPromotionProposal,
+  ): ProcessedChatMessage {
+    const interpretation = this.buildPromotedInterpretation(
+      processed.response.interpretation,
+      proposal,
+    );
+    const decision = this.decidePromotedInterpretation(interpretation);
+    const mergedState = this.mergeState(
+      processed.response.state,
+      processed.previousState,
+      interpretation,
+      decision,
+    );
+    const state: AiArmanConversationState = {
+      ...mergedState,
+      activeJourney: journeyForIntent(interpretation.primaryIntent),
+    };
+    const blocks = this.composeBlocks(
+      processed.response.blocks,
+      interpretation,
+      decision,
+    );
+    const response: AiArmanChatResponse = {
+      ...processed.response,
+      interpretation,
+      decision,
+      state,
+      blocks,
+      safety: {
+        ...processed.response.safety,
+        aiModelUsed: true,
+      },
+    };
+
+    this.stateStore.save(state);
+
+    return {
+      ...processed,
+      response: this.resultStore.save(
+        processed.idempotencyKey,
+        processed.fingerprint,
+        response,
+      ),
+    };
+  }
+
+  private buildPromotedInterpretation(
+    current: AiArmanInterpretation,
+    proposal: ChatInterpretationPromotionProposal,
+  ): AiArmanInterpretation {
+    const primaryIntent = proposal.primaryIntent;
+    const requestedProductTypes =
+      primaryIntent === 'product_recommendation'
+        ? unique([
+            ...current.entities.requestedProductTypes,
+            ...proposal.requestedProductTypes,
+          ])
+        : current.entities.requestedProductTypes;
+    const recommendationDomain =
+      primaryIntent === 'product_recommendation'
+        ? proposal.recommendationDomain ??
+          current.entities.recommendationDomain ??
+          inferDomainFromProductTypes(requestedProductTypes)
+        : current.entities.recommendationDomain ?? null;
+    const missingFields = current.missingFields.filter(
+      (field) =>
+        ![
+          'requestedProductType',
+          'drynessLocation',
+          'skincareConcern',
+          'verifiedOrderIdentity',
+        ].includes(field),
+    );
+
+    if (
+      primaryIntent === 'product_recommendation' &&
+      requestedProductTypes.length === 0
+    ) {
+      missingFields.push('requestedProductType');
+    }
+    if (
+      primaryIntent === 'product_recommendation' &&
+      recommendationDomain === 'haircare' &&
+      current.entities.needs.includes('dry_hair_unspecified') &&
+      !current.entities.needs.includes('dry_lengths') &&
+      !current.entities.needs.includes('dry_scalp')
+    ) {
+      missingFields.push('drynessLocation');
+    }
+    if (
+      primaryIntent === 'product_recommendation' &&
+      recommendationDomain === 'skincare' &&
+      !hasSkincareNeed(current.entities.needs)
+    ) {
+      missingFields.push('skincareConcern');
+    }
+    if (
+      IDENTITY_REQUIRED_INTENTS.includes(primaryIntent) &&
+      !current.entities.orderReference
+    ) {
+      missingFields.push('verifiedOrderIdentity');
+    }
+
+    return {
+      ...current,
+      source: 'model_promoted',
+      primaryIntent,
+      secondaryIntents: proposal.secondaryIntents,
+      confidence: proposal.confidence,
+      entities: {
+        ...current.entities,
+        requestedProductTypes,
+        recommendationDomain,
+      },
+      missingFields: unique(missingFields),
+      requiresIdentity:
+        current.requiresIdentity || IDENTITY_REQUIRED_INTENTS.includes(primaryIntent),
+      requiresHumanReview: primaryIntent === 'human_handoff',
+    };
+  }
+
+  private decidePromotedInterpretation(
+    interpretation: AiArmanInterpretation,
+  ): AiArmanDecision {
+    switch (interpretation.primaryIntent) {
+      case 'product_recommendation':
+        return this.decideFromMergedInterpretation(
+          this.foundationDecision('recommendation', false, [
+            'model_semantics_revalidated_by_backend',
+          ]),
+          interpretation,
+        );
+      case 'purchased_product_usage':
+        return this.foundationDecision('purchased_product_guidance', true, [
+          'verified_order_and_product_context_required',
+          'model_semantics_revalidated_by_backend',
+        ]);
+      case 'order_status':
+        return this.foundationDecision('order_support', true, [
+          'verified_identity_required_before_get_order',
+          'model_semantics_revalidated_by_backend',
+        ]);
+      case 'tracking_status':
+        return this.foundationDecision('order_support', true, [
+          'verified_identity_required_before_get_tracking_status',
+          'model_semantics_revalidated_by_backend',
+        ]);
+      case 'return_help':
+      case 'claim_help':
+        return this.foundationDecision('returns_support', true, [
+          'verified_identity_required_before_case_preparation',
+          'writes_remain_disabled',
+          'model_semantics_revalidated_by_backend',
+        ]);
+      case 'human_handoff':
+        return {
+          owner: 'backend_policy',
+          route: 'human_support',
+          plannedTools: ['handoff_to_customer_service'],
+          executionStatus: 'not_executed_foundation',
+          requiresIdentity: false,
+          requiresConfirmation: false,
+          reasons: [
+            'human_handoff_requested',
+            'integration_not_executed_in_foundation',
+            'model_semantics_revalidated_by_backend',
+          ],
+        };
+      default:
+        return this.foundationDecision('general', false, [
+          'safe_general_response_without_tool_execution',
+          'model_semantics_revalidated_by_backend',
+        ]);
+    }
+  }
+
+  private foundationDecision(
+    route: AiArmanDecision['route'],
+    requiresIdentity: boolean,
+    reasons: string[],
+  ): AiArmanDecision {
+    return {
+      owner: 'backend_policy',
+      route,
+      plannedTools: [],
+      executionStatus: 'not_executed_foundation',
+      requiresIdentity,
+      requiresConfirmation: false,
+      reasons,
     };
   }
 
@@ -624,8 +841,11 @@ export class ChatConversationService {
               id: 'skincare-concern',
               expectedField: 'skincareConcern',
             }
-          : current.pendingQuestion?.expectedField === 'verifiedOrderIdentity'
-            ? current.pendingQuestion
+          : interpretation.missingFields.includes('verifiedOrderIdentity')
+            ? {
+                id: 'verified-order-identity',
+                expectedField: 'verifiedOrderIdentity',
+              }
             : null;
 
     return {
@@ -714,6 +934,22 @@ export class ChatConversationService {
       ];
     }
 
+    if (interpretation.missingFields.includes('verifiedOrderIdentity')) {
+      return [
+        {
+          type: 'message',
+          text: 'För att läsa order- eller kunduppgifter behöver vi först verifiera ordern genom det godkända backendflödet.',
+        },
+        {
+          type: 'question',
+          id: 'verified-order-identity',
+          text: 'Verifiera ordern säkert innan vi går vidare.',
+          expectedField: 'verifiedOrderIdentity',
+          required: true,
+        },
+      ];
+    }
+
     if (
       interpretation.primaryIntent === 'product_recommendation' &&
       decision.plannedTools.length > 0
@@ -722,6 +958,39 @@ export class ChatConversationService {
         {
           type: 'message',
           text: 'Tack, nu har jag ett sammanhängande behov. Backend kan gå vidare till kandidatsökning och kvalitetsgranskning.',
+        },
+      ];
+    }
+
+    if (decision.route === 'order_support' || decision.route === 'returns_support') {
+      return [
+        {
+          type: 'message',
+          text: 'Jag kan hjälpa med detta när ordern har verifierats genom det godkända backendflödet. Ingen orderinformation har hämtats ännu.',
+        },
+      ];
+    }
+
+    if (decision.route === 'purchased_product_guidance') {
+      return [
+        {
+          type: 'message',
+          text: 'Jag kan hjälpa med en köpt produkt när ordern och produkten har verifierats genom backend.',
+        },
+      ];
+    }
+
+    if (decision.route === 'human_support') {
+      return [
+        {
+          type: 'message',
+          text: 'Jag kan förbereda en överlämning till kundservice med sammanhanget bevarat.',
+        },
+        {
+          type: 'support_handoff',
+          status: 'not_configured',
+          reason: 'foundation_only',
+          transcriptPreserved: true,
         },
       ];
     }
@@ -947,6 +1216,17 @@ function productTypeDomain(type: AiArmanProductType): AiArmanBeautyDomain | null
   if (['foundation', 'concealer', 'lipstick', 'mascara'].includes(type)) return 'makeup';
   if (['nail_polish', 'base_coat', 'top_coat', 'nail_treatment'].includes(type)) return 'nails';
   return null;
+}
+
+function journeyForIntent(intent: AiArmanIntent): AiArmanJourney {
+  if (intent === 'product_recommendation') return 'before_purchase';
+  if (['purchased_product_usage', 'order_status', 'tracking_status'].includes(intent)) {
+    return 'after_purchase';
+  }
+  if (['return_help', 'claim_help', 'human_handoff'].includes(intent)) {
+    return 'customer_service';
+  }
+  return 'general';
 }
 
 function unique<T>(values: T[]): T[] {
