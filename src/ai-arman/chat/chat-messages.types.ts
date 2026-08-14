@@ -121,7 +121,7 @@ export type AiArmanInterpretationBase = {
 };
 
 export type AiArmanInterpretation = AiArmanInterpretationBase & {
-  source: 'deterministic_fallback';
+  source: 'deterministic_fallback' | 'model_promoted';
 };
 
 export type AiArmanModelInterpretationCandidate = AiArmanInterpretationBase & {
@@ -291,7 +291,7 @@ export type AiArmanChatResponse = {
   decision: AiArmanDecision;
   blocks: AiArmanResponseBlock[];
   safety: {
-    aiModelUsed: false;
+    aiModelUsed: boolean;
     liveFactsUsed: boolean;
     writesExecuted: false;
     productionActionsEnabled: false;
