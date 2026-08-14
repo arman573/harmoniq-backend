@@ -11,6 +11,7 @@ import { ChatConversationResultStore } from './chat/chat-conversation-result.sto
 import { ChatConversationStateStore } from './chat/chat-conversation-state.store';
 import { ChatConversationService } from './chat/chat-conversation.service';
 import { ChatInterpretationProvider } from './chat/chat-interpretation.provider';
+import { ChatInterpretationPromotionService } from './chat/chat-interpretation-promotion.service';
 import {
   ChatInterpretationShadowAuditSink,
   InMemoryChatInterpretationShadowAuditStore,
@@ -147,6 +148,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     },
     AuthenticatedAccountOrderAccessService,
     ChatConversationService,
+    ChatInterpretationPromotionService,
     ChatInterpretationShadowOrchestrator,
     ChatInterpretationShadowService,
     ChatInterpretationValidator,
@@ -180,6 +182,7 @@ import { SkincareSpecialistChatOrchestrator } from './skincare/skincare-speciali
     ChatConversationStateRepository,
     ChatConversationService,
     ChatInterpretationProvider,
+    ChatInterpretationPromotionService,
     ChatInterpretationShadowAuditSink,
     ChatInterpretationShadowConfig,
     ChatInterpretationShadowOrchestrator,
