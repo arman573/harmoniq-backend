@@ -160,6 +160,15 @@ export class AiArmanWidgetPreviewService {
       scrollToBottom();
     }
 
+    function isSafeHttpsUrl(value) {
+      try {
+        const url = new URL(value);
+        return url.protocol === 'https:' && !url.username && !url.password;
+      } catch (_) {
+        return false;
+      }
+    }
+
     function renderCard(title, rows, link) {
       const card = document.createElement('section');
       card.className = 'card';
@@ -173,7 +182,7 @@ export class AiArmanWidgetPreviewService {
         row.textContent = text;
         card.appendChild(row);
       });
-      if (link && typeof link.href === 'string' && /^https:\/\//i.test(link.href)) {
+      if (link && typeof link.href === 'string' && isSafeHttpsUrl(link.href)) {
         const anchor = document.createElement('a');
         anchor.href = link.href;
         anchor.target = '_blank';
