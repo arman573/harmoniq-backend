@@ -6,11 +6,18 @@ on:
       - main
     paths:
       - '.github/workflows/ai-arman-foundation-ci.yml'
+      - 'Dockerfile.ai-arman-candidate'
       - 'docs/ai-arman/**'
       - 'src/ai-arman/**'
+      - 'src/ai-arman-candidate.module.ts'
+      - 'src/ai-arman-candidate.module.spec.ts'
+      - 'src/main-ai-arman-candidate.ts'
+      - 'src/http-port.ts'
+      - 'src/http-port.spec.ts'
       - 'src/app.module.ts'
       - 'package.json'
       - 'package-lock.json'
+      - 'nest-cli.json'
       - 'tsconfig.json'
       - 'tsconfig.build.json'
   push:
@@ -18,11 +25,18 @@ on:
       - feature/ai-arman-foundation-v1
     paths:
       - '.github/workflows/ai-arman-foundation-ci.yml'
+      - 'Dockerfile.ai-arman-candidate'
       - 'docs/ai-arman/**'
       - 'src/ai-arman/**'
+      - 'src/ai-arman-candidate.module.ts'
+      - 'src/ai-arman-candidate.module.spec.ts'
+      - 'src/main-ai-arman-candidate.ts'
+      - 'src/http-port.ts'
+      - 'src/http-port.spec.ts'
       - 'src/app.module.ts'
       - 'package.json'
       - 'package-lock.json'
+      - 'nest-cli.json'
       - 'tsconfig.json'
       - 'tsconfig.build.json'
 
@@ -57,3 +71,50 @@ jobs:
 
       - name: Build TypeScript
         run: npm run build
+
+      - name: Build isolated candidate container
+        run: docker build -f Dockerfile.ai-arman-candidate -t ai-arman-candidate:ci .
+
+      - name: Smoke test isolated candidate container
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CONTAINER_ID="$(docker run -d \
+            -p 18080:8080 \
+            -e PORT=8080 \
+            -e AI_ARMAN_WIDGET_PREVIEW_ENABLED=false \
+            -e AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false \
+            -e AI_ARMAN_MODEL_SHADOW_ENABLED=false \
+            -e AI_ARMAN_MODEL_PROMOTION_ENABLED=false \
+            ai-arman-candidate:ci)"
+
+          cleanup() {
+            docker logs "$CONTAINER_ID" || true
+            docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..30}; do
+            if curl --silent --fail http://127.0.0.1:18080/ai-arman/foundation \
+              > "$RUNNER_TEMP/ai-arman-foundation.json"; then
+              break
+            fi
+            sleep 1
+          done
+
+          jq -e '
+            .ok == true and
+            .service == "ai-arman" and
+            .phase == "foundation-v1" and
+            .productionActionsEnabled == false
+          ' "$RUNNER_TEMP/ai-arman-foundation.json" >/dev/null
+
+          WIDGET_STATUS="$(curl --silent --output "$RUNNER_TEMP/widget-disabled.txt" \
+            --write-out '%{http_code}' \
+            http://127.0.0.1:18080/ai-arman/widget/beta0-preview)"
+
+          if [[ "$WIDGET_STATUS" != "404" ]]; then
+            echo "Expected disabled widget preview to return 404, got $WIDGET_STATUS." >&2
+            exit 1
+          fi
