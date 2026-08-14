@@ -1,0 +1,83 @@
+name: AI Arman GCP read-only preflight
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  preflight:
+    if: github.event.pull_request.head.ref == 'feature/ai-arman-foundation-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: harmoniq-210513
+      GCP_REGION: europe-north1
+      WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+      CANDIDATE_SERVICE: harmoniq-ai-arman-beta0
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate with Google Cloud Workload Identity
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Verify project access
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECT="$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectId)')"
+          if [[ "$PROJECT" != "$GCP_PROJECT_ID" ]]; then
+            echo "Unexpected project identity." >&2
+            exit 1
+          fi
+          echo "project_access=ok"
+
+      - name: Check candidate service existence without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gcloud run services describe "$CANDIDATE_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format='value(metadata.name)' \
+            >"$RUNNER_TEMP/service-name.txt" 2>"$RUNNER_TEMP/service-error.txt"; then
+            SERVICE_NAME="$(cat "$RUNNER_TEMP/service-name.txt")"
+            if [[ "$SERVICE_NAME" != "$CANDIDATE_SERVICE" ]]; then
+              echo "Unexpected candidate service identity." >&2
+              exit 1
+            fi
+            echo "candidate_service_present=true"
+          else
+            if grep -qiE 'not found|was not found' "$RUNNER_TEMP/service-error.txt"; then
+              echo "candidate_service_present=false"
+            else
+              cat "$RUNNER_TEMP/service-error.txt" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Confirm read-only boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '## AI Arman GCP preflight'
+            echo
+            echo '- GCP project access: verified'
+            echo '- Region: `europe-north1`'
+            echo '- Candidate service checked: `harmoniq-ai-arman-beta0`'
+            echo '- Cloud Run mutation performed: no'
+            echo '- Production traffic changed: no'
+          } >> "$GITHUB_STEP_SUMMARY"
