@@ -169,6 +169,15 @@ export class AiArmanWidgetPreviewService {
       }
     }
 
+    function isCompatibleChatResponse(result) {
+      return !!result
+        && typeof result === 'object'
+        && result.contractVersion === CONTRACT_VERSION
+        && typeof result.conversationId === 'string'
+        && result.conversationId.length > 0
+        && Array.isArray(result.blocks);
+    }
+
     function renderCard(title, rows, link) {
       const card = document.createElement('section');
       card.className = 'card';
@@ -221,7 +230,11 @@ export class AiArmanWidgetPreviewService {
           if (Array.isArray(block.cards)) block.cards.forEach(renderProductCard);
           return;
         case 'purchased_product_card':
-          renderCard(safe(block.title), ['Order ' + safe(block.orderNumber)]);
+          renderCard(
+            safe(block.title),
+            ['Order ' + safe(block.orderNumber)],
+            block.productUrl ? { href: block.productUrl, label: 'Visa produkt' } : null
+          );
           return;
         case 'safety_notice':
         case 'error_notice':
@@ -284,8 +297,9 @@ export class AiArmanWidgetPreviewService {
         });
         if (!response.ok) throw new Error('chat_request_failed_' + response.status);
         const result = await response.json();
-        if (typeof result.conversationId === 'string') conversationId = result.conversationId;
-        if (Array.isArray(result.blocks) && result.blocks.length) {
+        if (!isCompatibleChatResponse(result)) throw new Error('chat_contract_mismatch');
+        conversationId = result.conversationId;
+        if (result.blocks.length) {
           result.blocks.forEach(renderBlock);
         } else {
           appendText('notice', 'Jag fick inget visningsbart svar. Försök igen.');
