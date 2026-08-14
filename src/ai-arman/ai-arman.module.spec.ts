@@ -11,14 +11,19 @@ import {
   DisabledProductLiveFactsClient,
   ProductLiveFactsClient,
 } from './integrations/product-live-facts.client';
+import { TrackingReadClient } from './integrations/tracking-read.client';
 import { VendreProductLiveFactsClient } from './integrations/vendre-product-live-facts.client';
 import { VerifiedReturnsReadService } from './integrations/verified-returns-read.service';
+import { VerifiedTrackingReadService } from './integrations/verified-tracking-read.service';
 
 const ENV_KEYS = [
   'AI_ARMAN_PRODUCT_LIVE_FACTS_PROVIDER',
   'AI_ARMAN_PRODUCT_LIVE_FACTS_ENABLED',
   'AI_ARMAN_VENDRE_ACCOUNT_ORDER_VERIFICATION_ENABLED',
   'AI_ARMAN_VENDRE_ACCOUNT_ORDER_TIMEOUT_MS',
+  'AI_ARMAN_TRACKING_READ_ENABLED',
+  'AI_ARMAN_TRACKING_READ_BASE_URL',
+  'AI_ARMAN_TRACKING_READ_TIMEOUT_MS',
   'VENDRE_API_BASE_URL',
   'VENDRE_API_KEY',
 ] as const;
@@ -148,7 +153,7 @@ describe('AiArmanModule guarded provider wiring', () => {
     await moduleRef.close();
   });
 
-  it('wires authenticated account verification and verified returns reads without bootstrap requests', async () => {
+  it('wires authenticated account verification, verified returns and verified tracking without bootstrap requests', async () => {
     const fetchSpy = jest.spyOn(global, 'fetch');
     const moduleRef = await compileAiArmanModule();
 
@@ -160,6 +165,10 @@ describe('AiArmanModule guarded provider wiring', () => {
     );
     expect(moduleRef.get(VerifiedReturnsReadService)).toBeInstanceOf(
       VerifiedReturnsReadService,
+    );
+    expect(moduleRef.get(TrackingReadClient)).toBeInstanceOf(TrackingReadClient);
+    expect(moduleRef.get(VerifiedTrackingReadService)).toBeInstanceOf(
+      VerifiedTrackingReadService,
     );
     expect(fetchSpy).not.toHaveBeenCalled();
 
