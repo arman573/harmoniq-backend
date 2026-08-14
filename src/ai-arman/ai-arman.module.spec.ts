@@ -1,6 +1,10 @@
 import { Test } from '@nestjs/testing';
 import { AiArmanModule } from './ai-arman.module';
 import { ChatInterpretationProvider } from './chat/chat-interpretation.provider';
+import {
+  ChatInterpretationShadowConfig,
+  EnvChatInterpretationShadowConfig,
+} from './chat/chat-interpretation-shadow.config';
 import { AuthenticatedAccountOrderAccessService } from './identity/authenticated-account-order-access.service';
 import { ConversationCustomerVerificationStore } from './identity/conversation-customer-verification.store';
 import {
@@ -28,6 +32,7 @@ const ENV_KEYS = [
   'AI_ARMAN_TRACKING_READ_TIMEOUT_MS',
   'AI_ARMAN_MODEL_INTERPRETATION_ENABLED',
   'AI_ARMAN_MODEL_INTERPRETATION_TIMEOUT_MS',
+  'AI_ARMAN_MODEL_SHADOW_ENABLED',
   'AI_ARMAN_OPENAI_MODEL',
   'OPENAI_API_KEY',
   'VENDRE_API_BASE_URL',
@@ -176,6 +181,51 @@ describe('AiArmanModule guarded provider wiring', () => {
     expect(moduleRef.get(VerifiedTrackingReadService)).toBeInstanceOf(
       VerifiedTrackingReadService,
     );
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await moduleRef.close();
+  });
+
+  it('wires the env-driven shadow config but keeps it disabled by default', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch');
+    const moduleRef = await compileAiArmanModule();
+
+    const selected = moduleRef.get(ChatInterpretationShadowConfig);
+    const envDriven = moduleRef.get(EnvChatInterpretationShadowConfig);
+
+    expect(selected).toBe(envDriven);
+    expect(selected).toBeInstanceOf(EnvChatInterpretationShadowConfig);
+    expect(selected.isEnabled()).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await moduleRef.close();
+  });
+
+  it('does not enable model shadow from interpretation credentials alone', async () => {
+    process.env.AI_ARMAN_MODEL_INTERPRETATION_ENABLED = 'true';
+    process.env.AI_ARMAN_OPENAI_MODEL = 'gpt-test-pinned';
+    process.env.OPENAI_API_KEY = 'configured';
+    const fetchSpy = jest.spyOn(global, 'fetch');
+    const moduleRef = await compileAiArmanModule();
+
+    const selected = moduleRef.get(ChatInterpretationShadowConfig);
+
+    expect(selected).toBeInstanceOf(EnvChatInterpretationShadowConfig);
+    expect(selected.isEnabled()).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await moduleRef.close();
+  });
+
+  it('enables model shadow only after the explicit shadow opt-in without a bootstrap request', async () => {
+    process.env.AI_ARMAN_MODEL_SHADOW_ENABLED = 'true';
+    const fetchSpy = jest.spyOn(global, 'fetch');
+    const moduleRef = await compileAiArmanModule();
+
+    const selected = moduleRef.get(ChatInterpretationShadowConfig);
+
+    expect(selected).toBeInstanceOf(EnvChatInterpretationShadowConfig);
+    expect(selected.isEnabled()).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
 
     await moduleRef.close();
