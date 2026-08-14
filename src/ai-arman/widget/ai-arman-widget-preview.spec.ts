@@ -35,9 +35,11 @@ describe('AI Arman Beta 0 widget preview', () => {
     expect(html).not.toContain('document.write(');
   });
 
-  it('only permits HTTPS outbound links in structured cards', () => {
+  it('only permits credential-free HTTPS outbound links in structured cards', () => {
     const html = new AiArmanWidgetPreviewService().render();
-    expect(html).toContain('/^https:\\/\\//i.test(link.href)');
+    expect(html).toContain('function isSafeHttpsUrl(value)');
+    expect(html).toContain("url.protocol === 'https:'");
+    expect(html).toContain('!url.username && !url.password');
     expect(html).toContain("anchor.rel = 'noopener noreferrer'");
   });
 });
