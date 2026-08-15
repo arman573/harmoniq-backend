@@ -1,0 +1,61 @@
+name: AI Arman GCP read-only preflight
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - ".github/workflows/ai-arman-gcp-readonly-preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: harmoniq-210513
+  GCP_REGION: europe-north1
+  CANDIDATE_SERVICE: harmoniq-ai-arman-beta0
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  PREFLIGHT_SERVICE_ACCOUNT: github-pickup-deployer@harmoniq-210513.iam.gserviceaccount.com
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud with WIF
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.PREFLIGHT_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Read-only GCP preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "project=$(gcloud config get-value project 2>/dev/null)"
+          echo "region=${GCP_REGION}"
+          echo "::group::Cloud Run candidate lookup"
+          if gcloud run services describe "$CANDIDATE_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(metadata.name,status.url)' > /tmp/candidate-service.txt 2>/tmp/candidate-service.err; then
+            echo "candidate_service_exists=true"
+            cat /tmp/candidate-service.txt
+          else
+            if grep -qiE 'not found|does not exist' /tmp/candidate-service.err; then
+              echo "candidate_service_exists=false"
+            else
+              cat /tmp/candidate-service.err >&2
+              exit 1
+            fi
+          fi
+          echo "::endgroup::"
+          echo "::group::Artifact Registry repositories"
+          gcloud artifacts repositories list --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='table(name,format,location)' --limit=100
+          echo "::endgroup::"
+          echo "Read-only preflight complete. No GCP resources were modified."
