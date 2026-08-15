@@ -1,0 +1,180 @@
+name: AI Arman beta0 GCP preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_preflight:
+        description: Type VERIFY_AI_ARMAN_BETA0_GCP
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ai-arman-beta0-gcp-preflight
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  ARTIFACT_REPOSITORY: harmoniq-containers
+  SERVICE_NAME: harmoniq-ai-arman-beta0
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+
+jobs:
+  preflight:
+    name: Read-only identity and deployment preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Enforce manual gate and exact branch
+        shell: bash
+        env:
+          CONFIRM_PREFLIGHT: ${{ inputs.confirm_preflight }}
+        run: |
+          set -euo pipefail
+          test "$CONFIRM_PREFLIGHT" = "VERIFY_AI_ARMAN_BETA0_GCP"
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate with dedicated AI Arman deployer
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Verify identities and exact resources
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
+
+          DEPLOY_EMAIL="$(gcloud iam service-accounts describe "$DEPLOY_SERVICE_ACCOUNT" \
+            --project "$PROJECT_ID" --format='value(email)')"
+          RUNTIME_EMAIL="$(gcloud iam service-accounts describe "$RUNTIME_SERVICE_ACCOUNT" \
+            --project "$PROJECT_ID" --format='value(email)')"
+          test "$DEPLOY_EMAIL" = "$DEPLOY_SERVICE_ACCOUNT"
+          test "$RUNTIME_EMAIL" = "$RUNTIME_SERVICE_ACCOUNT"
+
+          REPOSITORY_FORMAT="$(gcloud artifacts repositories describe "$ARTIFACT_REPOSITORY" \
+            --location "$REGION" --project "$PROJECT_ID" --format='value(format)')"
+          test "$REPOSITORY_FORMAT" = "DOCKER"
+
+      - name: Verify least-privilege deployment permissions read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          PROJECT_BODY='{"permissions":["run.services.create","run.services.get","run.services.update"]}'
+          PROJECT_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/project-permissions.json" \
+            --write-out '%{http_code}' \
+            --request POST \
+            "https://cloudresourcemanager.googleapis.com/v1/projects/${PROJECT_ID}:testIamPermissions" \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$PROJECT_BODY")"
+          test "$PROJECT_CODE" = "200"
+
+          for permission in run.services.create run.services.get run.services.update; do
+            jq -e --arg permission "$permission" '.permissions | index($permission) != null' \
+              "$RUNNER_TEMP/project-permissions.json" >/dev/null
+          done
+
+          RUNTIME_BODY='{"permissions":["iam.serviceAccounts.actAs"]}'
+          RUNTIME_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/runtime-permissions.json" \
+            --write-out '%{http_code}' \
+            --request POST \
+            "https://iam.googleapis.com/v1/projects/-/serviceAccounts/${RUNTIME_SERVICE_ACCOUNT}:testIamPermissions" \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$RUNTIME_BODY")"
+          test "$RUNTIME_CODE" = "200"
+          jq -e '.permissions | index("iam.serviceAccounts.actAs") != null' \
+            "$RUNNER_TEMP/runtime-permissions.json" >/dev/null
+
+          REPOSITORY_RESOURCE="projects/${PROJECT_ID}/locations/${REGION}/repositories/${ARTIFACT_REPOSITORY}"
+          REPOSITORY_BODY='{"permissions":["artifactregistry.repositories.downloadArtifacts","artifactregistry.repositories.uploadArtifacts"]}'
+          REPOSITORY_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/repository-permissions.json" \
+            --write-out '%{http_code}' \
+            --request POST \
+            "https://artifactregistry.googleapis.com/v1/${REPOSITORY_RESOURCE}:testIamPermissions" \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$REPOSITORY_BODY")"
+          test "$REPOSITORY_CODE" = "200"
+
+          for permission in artifactregistry.repositories.downloadArtifacts artifactregistry.repositories.uploadArtifacts; do
+            jq -e --arg permission "$permission" '.permissions | index($permission) != null' \
+              "$RUNNER_TEMP/repository-permissions.json" >/dev/null
+          done
+
+      - name: Verify target service boundary if it already exists
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/service.json" 2>/dev/null; then
+            EXISTING_RUNTIME="$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/service.json")"
+            test "$EXISTING_RUNTIME" = "$RUNTIME_SERVICE_ACCOUNT"
+
+            for flag in \
+              AI_ARMAN_WIDGET_PREVIEW_ENABLED \
+              AI_ARMAN_MODEL_INTERPRETATION_ENABLED \
+              AI_ARMAN_MODEL_SHADOW_ENABLED \
+              AI_ARMAN_MODEL_PROMOTION_ENABLED; do
+              VALUE="$(jq -r --arg flag "$flag" '.spec.template.spec.containers[0].env[]? | select(.name == $flag) | .value' "$RUNNER_TEMP/service.json")"
+              test "$VALUE" = "false"
+            done
+
+            gcloud run services get-iam-policy "$SERVICE_NAME" \
+              --project "$PROJECT_ID" --region "$REGION" --format=json \
+              > "$RUNNER_TEMP/service-iam.json"
+
+            if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' \
+              "$RUNNER_TEMP/service-iam.json" >/dev/null; then
+              echo "Target service is publicly invocable; refusing preflight." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Report safe preflight result
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## AI Arman beta0 GCP preflight"
+            echo
+            echo "- Exact branch gate: PASS"
+            echo "- Dedicated deploy identity: PASS"
+            echo "- Dedicated runtime identity: PASS"
+            echo "- Artifact Registry repository: PASS"
+            echo "- Cloud Run create/get/update permissions: PASS"
+            echo "- Runtime actAs permission: PASS"
+            echo "- Artifact upload/download permissions: PASS"
+            echo "- Mutations performed: NONE"
+            echo "- Candidate deployed: NO"
+          } >> "$GITHUB_STEP_SUMMARY"
