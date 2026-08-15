@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - '.github/workflows/ai-arman-foundation-ci.yml'
+      - '.github/workflows/ai-arman-beta0-gcp-preflight.yml'
+      - '.github/workflows/ai-arman-beta0-candidate-deploy.yml'
       - '.dockerignore'
       - 'Dockerfile.ai-arman-candidate'
       - 'docs/ai-arman/**'
@@ -26,6 +28,8 @@ on:
       - feature/ai-arman-foundation-v1
     paths:
       - '.github/workflows/ai-arman-foundation-ci.yml'
+      - '.github/workflows/ai-arman-beta0-gcp-preflight.yml'
+      - '.github/workflows/ai-arman-beta0-candidate-deploy.yml'
       - '.dockerignore'
       - 'Dockerfile.ai-arman-candidate'
       - 'docs/ai-arman/**'
