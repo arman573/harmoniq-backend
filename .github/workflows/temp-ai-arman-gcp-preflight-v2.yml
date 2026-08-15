@@ -1,0 +1,129 @@
+name: TEMP AI Arman GCP preflight v2
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/temp-ai-arman-gcp-preflight-v2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: temp-ai-arman-gcp-preflight-v2
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  READ_SERVICE_ACCOUNT: github-pickup-deployer@harmoniq-210513.iam.gserviceaccount.com
+  TARGET_SERVICE: harmoniq-ai-arman-beta0
+
+jobs:
+  provider-auth:
+    name: Verify provider acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Direct WIF authentication
+        id: direct_auth
+        continue-on-error: true
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ''
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Report provider result
+        shell: bash
+        env:
+          AUTH_OUTCOME: ${{ steps.direct_auth.outcome }}
+        run: |
+          set -euo pipefail
+          echo "providerAuth=$AUTH_OUTCOME"
+          echo "mutationsPerformed=false"
+          echo "cloudRunChanged=false"
+          echo "trafficChanged=false"
+
+  service-account-preflight:
+    name: Read-only service-account preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate through existing read identity
+        id: sa_auth
+        continue-on-error: true
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.READ_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        if: steps.sa_auth.outcome == 'success'
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Read GCP metadata only
+        if: steps.sa_auth.outcome == 'success'
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "activeAccount=$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          echo "activeProject=$(gcloud config get-value project 2>/dev/null || true)"
+
+          probe() {
+            local name="$1"
+            shift
+            if "$@" > "$RUNNER_TEMP/${name}.out" 2> "$RUNNER_TEMP/${name}.err"; then
+              echo "$name=true"
+              head -n 20 "$RUNNER_TEMP/${name}.out" || true
+            else
+              echo "$name=false"
+              tail -n 3 "$RUNNER_TEMP/${name}.err" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g'
+              echo
+            fi
+          }
+
+          probe artifactRepositories \
+            gcloud artifacts repositories list \
+              --project="$PROJECT_ID" \
+              --location="$REGION" \
+              --format='value(name)'
+
+          probe cloudRunServices \
+            gcloud run services list \
+              --project="$PROJECT_ID" \
+              --region="$REGION" \
+              --platform=managed \
+              --format='value(metadata.name)'
+
+          probe targetService \
+            gcloud run services describe "$TARGET_SERVICE" \
+              --project="$PROJECT_ID" \
+              --region="$REGION" \
+              --platform=managed \
+              --format='value(metadata.name)'
+
+      - name: Report service-account result
+        if: always()
+        shell: bash
+        env:
+          AUTH_OUTCOME: ${{ steps.sa_auth.outcome }}
+        run: |
+          set -euo pipefail
+          echo "serviceAccountAuth=$AUTH_OUTCOME"
+          echo "mutationsPerformed=false"
+          echo "cloudRunChanged=false"
+          echo "trafficChanged=false"
