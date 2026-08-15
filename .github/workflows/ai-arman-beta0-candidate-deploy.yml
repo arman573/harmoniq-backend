@@ -95,6 +95,14 @@ jobs:
             http://127.0.0.1:18080/ai-arman/widget/beta0-preview)"
           test "$WIDGET_STATUS" = "404"
 
+          docker logs "$CONTAINER_ID" > "$RUNNER_TEMP/candidate.log" 2>&1
+          if grep -Eqi '(127\.0\.0\.1|localhost).*(5432|postgres)|ECONNREFUSED.*5432|postgres.*(127\.0\.0\.1|localhost)' \
+            "$RUNNER_TEMP/candidate.log"; then
+            echo "Detected localhost/Postgres startup attempt in isolated candidate." >&2
+            cat "$RUNNER_TEMP/candidate.log" >&2
+            exit 1
+          fi
+
   deploy-private-candidate:
     name: Deploy private beta0 candidate
     needs: verify-source
@@ -116,7 +124,7 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Verify dedicated identities and private boundary
+      - name: Verify dedicated identity and exact resources before mutation
         shell: bash
         run: |
           set -euo pipefail
@@ -124,32 +132,58 @@ jobs:
           ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
           test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
 
-          DEPLOY_EMAIL="$(gcloud iam service-accounts describe "$DEPLOY_SERVICE_ACCOUNT" \
-            --project "$PROJECT_ID" --format='value(email)')"
-          RUNTIME_EMAIL="$(gcloud iam service-accounts describe "$RUNTIME_SERVICE_ACCOUNT" \
-            --project "$PROJECT_ID" --format='value(email)')"
-          test "$DEPLOY_EMAIL" = "$DEPLOY_SERVICE_ACCOUNT"
-          test "$RUNTIME_EMAIL" = "$RUNTIME_SERVICE_ACCOUNT"
-
           REPOSITORY_FORMAT="$(gcloud artifacts repositories describe "$ARTIFACT_REPOSITORY" \
             --location "$REGION" --project "$PROJECT_ID" --format='value(format)')"
           test "$REPOSITORY_FORMAT" = "DOCKER"
+
+          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          PROJECT_BODY='{"permissions":["run.services.create","run.services.get","run.services.update"]}'
+          curl --silent --show-error --fail \
+            --output "$RUNNER_TEMP/project-permissions.json" \
+            --request POST \
+            "https://cloudresourcemanager.googleapis.com/v1/projects/${PROJECT_ID}:testIamPermissions" \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$PROJECT_BODY"
+
+          for permission in run.services.create run.services.get run.services.update; do
+            jq -e --arg permission "$permission" '.permissions | index($permission) != null' \
+              "$RUNNER_TEMP/project-permissions.json" >/dev/null
+          done
+
+          RUNTIME_BODY='{"permissions":["iam.serviceAccounts.actAs"]}'
+          curl --silent --show-error --fail \
+            --output "$RUNNER_TEMP/runtime-permissions.json" \
+            --request POST \
+            "https://iam.googleapis.com/v1/projects/-/serviceAccounts/${RUNTIME_SERVICE_ACCOUNT}:testIamPermissions" \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$RUNTIME_BODY"
+          jq -e '.permissions | index("iam.serviceAccounts.actAs") != null' \
+            "$RUNNER_TEMP/runtime-permissions.json" >/dev/null
+
+          REPOSITORY_RESOURCE="projects/${PROJECT_ID}/locations/${REGION}/repositories/${ARTIFACT_REPOSITORY}"
+          REPOSITORY_BODY='{"permissions":["artifactregistry.repositories.downloadArtifacts","artifactregistry.repositories.uploadArtifacts"]}'
+          curl --silent --show-error --fail \
+            --output "$RUNNER_TEMP/repository-permissions.json" \
+            --request POST \
+            "https://artifactregistry.googleapis.com/v1/${REPOSITORY_RESOURCE}:testIamPermissions" \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$REPOSITORY_BODY"
+
+          for permission in artifactregistry.repositories.downloadArtifacts artifactregistry.repositories.uploadArtifacts; do
+            jq -e --arg permission "$permission" '.permissions | index($permission) != null' \
+              "$RUNNER_TEMP/repository-permissions.json" >/dev/null
+          done
 
           if gcloud run services describe "$SERVICE_NAME" \
             --project "$PROJECT_ID" --region "$REGION" --format=json \
             > "$RUNNER_TEMP/existing-service.json" 2>/dev/null; then
             EXISTING_RUNTIME="$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/existing-service.json")"
             test "$EXISTING_RUNTIME" = "$RUNTIME_SERVICE_ACCOUNT"
-
-            gcloud run services get-iam-policy "$SERVICE_NAME" \
-              --project "$PROJECT_ID" --region "$REGION" --format=json \
-              > "$RUNNER_TEMP/existing-service-iam.json"
-
-            if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' \
-              "$RUNNER_TEMP/existing-service-iam.json" >/dev/null; then
-              echo "Existing target service is public; refusing deploy." >&2
-              exit 1
-            fi
           fi
 
       - name: Build and push immutable candidate image
@@ -175,7 +209,7 @@ jobs:
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy private candidate with all activation flags disabled
+      - name: Deploy private candidate with foundation startup probe
         id: deploy
         shell: bash
         env:
@@ -195,6 +229,7 @@ jobs:
             --no-allow-unauthenticated \
             --ingress all \
             --port 8080 \
+            --startup-probe "httpGet.path=/ai-arman/foundation,httpGet.port=8080,initialDelaySeconds=0,failureThreshold=12,timeoutSeconds=2,periodSeconds=5" \
             --cpu 1 \
             --memory 512Mi \
             --min-instances 0 \
@@ -209,13 +244,15 @@ jobs:
             --project "$PROJECT_ID" --region "$REGION" --format=json \
             > "$RUNNER_TEMP/service.json"
 
-          SERVICE_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/service.json")"
           REVISION="$(jq -r '.status.latestReadyRevisionName // empty' "$RUNNER_TEMP/service.json")"
           DEPLOYED_RUNTIME="$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/service.json")"
+          STARTUP_PATH="$(jq -r '.spec.template.spec.containers[0].startupProbe.httpGet.path // empty' "$RUNNER_TEMP/service.json")"
+          STARTUP_PORT="$(jq -r '.spec.template.spec.containers[0].startupProbe.httpGet.port // empty' "$RUNNER_TEMP/service.json")"
 
-          test -n "$SERVICE_URL"
           test -n "$REVISION"
           test "$DEPLOYED_RUNTIME" = "$RUNTIME_SERVICE_ACCOUNT"
+          test "$STARTUP_PATH" = "/ai-arman/foundation"
+          test "$STARTUP_PORT" = "8080"
 
           for flag in \
             AI_ARMAN_WIDGET_PREVIEW_ENABLED \
@@ -226,10 +263,9 @@ jobs:
             test "$VALUE" = "false"
           done
 
-          echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
           echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify service is not publicly invocable
+      - name: Verify private IAM boundary
         shell: bash
         run: |
           set -euo pipefail
@@ -243,74 +279,11 @@ jobs:
             exit 1
           fi
 
-      - name: Verify foundation and disabled widget from candidate URL
-        shell: bash
-        env:
-          SERVICE_URL: ${{ steps.deploy.outputs.service_url }}
-        run: |
-          set -euo pipefail
-
-          ID_TOKEN="$(gcloud auth print-identity-token --audiences="$SERVICE_URL")"
-          test -n "$ID_TOKEN"
-          echo "::add-mask::$ID_TOKEN"
-
-          for attempt in {1..20}; do
-            FOUNDATION_STATUS="$(curl --silent --show-error \
-              --header "Authorization: Bearer $ID_TOKEN" \
-              --output "$RUNNER_TEMP/foundation.json" \
-              --write-out '%{http_code}' \
-              "$SERVICE_URL/ai-arman/foundation")"
-            if [[ "$FOUNDATION_STATUS" = "200" ]]; then
-              break
-            fi
-            if [[ "$attempt" = "20" ]]; then
-              echo "Foundation endpoint did not become healthy: HTTP $FOUNDATION_STATUS" >&2
-              exit 1
-            fi
-            sleep 3
-          done
-
-          jq -e '
-            .ok == true and
-            .service == "ai-arman" and
-            .phase == "foundation-v1" and
-            .productionActionsEnabled == false
-          ' "$RUNNER_TEMP/foundation.json" >/dev/null
-
-          WIDGET_STATUS="$(curl --silent --show-error \
-            --header "Authorization: Bearer $ID_TOKEN" \
-            --output "$RUNNER_TEMP/widget.json" \
-            --write-out '%{http_code}' \
-            "$SERVICE_URL/ai-arman/widget/beta0-preview")"
-          test "$WIDGET_STATUS" = "404"
-
-      - name: Verify startup logs contain no localhost Postgres attempt
-        shell: bash
-        env:
-          REVISION: ${{ steps.deploy.outputs.revision }}
-        run: |
-          set -euo pipefail
-          gcloud logging read \
-            "resource.type=cloud_run_revision AND resource.labels.service_name=${SERVICE_NAME} AND resource.labels.revision_name=${REVISION}" \
-            --project "$PROJECT_ID" \
-            --freshness 20m \
-            --limit 200 \
-            --format='value(textPayload,jsonPayload.message)' \
-            > "$RUNNER_TEMP/revision.log" || true
-
-          if grep -Eqi '(127\.0\.0\.1|localhost).*(5432|postgres)|ECONNREFUSED.*5432|postgres.*(127\.0\.0\.1|localhost)' \
-            "$RUNNER_TEMP/revision.log"; then
-            echo "Detected localhost/Postgres startup attempt." >&2
-            cat "$RUNNER_TEMP/revision.log" >&2
-            exit 1
-          fi
-
       - name: Publish candidate deployment summary
         shell: bash
         env:
           IMAGE: ${{ steps.image.outputs.image }}
           DIGEST: ${{ steps.image.outputs.digest }}
-          SERVICE_URL: ${{ steps.deploy.outputs.service_url }}
           REVISION: ${{ steps.deploy.outputs.revision }}
         run: |
           set -euo pipefail
@@ -322,13 +295,13 @@ jobs:
             echo "- Image: \`$IMAGE\`"
             echo "- Digest: \`$DIGEST\`"
             echo "- Private unauthenticated boundary: PASS"
-            echo "- Foundation endpoint: PASS"
-            echo "- productionActionsEnabled: false"
-            echo "- Widget preview: disabled"
+            echo "- Foundation startup probe: PASS"
+            echo "- productionActionsEnabled: false verified in local candidate smoke"
+            echo "- Widget preview: disabled verified in local candidate smoke"
             echo "- Model interpretation: disabled"
             echo "- Model shadow: disabled"
             echo "- Model promotion: disabled"
-            echo "- Localhost/Postgres startup attempt: not detected"
+            echo "- Localhost/Postgres startup attempt: not detected in isolated candidate smoke"
             echo
             echo "No model activation, public exposure, production action, or PR merge is performed by this workflow."
           } >> "$GITHUB_STEP_SUMMARY"
