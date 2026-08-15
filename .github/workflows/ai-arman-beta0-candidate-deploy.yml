@@ -124,7 +124,7 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Verify dedicated identity and exact resources before mutation
+      - name: Verify dedicated identity and exact permissions before mutation
         shell: bash
         run: |
           set -euo pipefail
@@ -139,7 +139,7 @@ jobs:
           ACCESS_TOKEN="$(gcloud auth print-access-token)"
           echo "::add-mask::$ACCESS_TOKEN"
 
-          PROJECT_BODY='{"permissions":["run.services.create","run.services.get","run.services.update"]}'
+          PROJECT_BODY='{"permissions":["run.services.create","run.services.get","run.services.update","run.operations.get","run.services.getIamPolicy"]}'
           curl --silent --show-error --fail \
             --output "$RUNNER_TEMP/project-permissions.json" \
             --request POST \
@@ -148,7 +148,12 @@ jobs:
             --header 'Content-Type: application/json' \
             --data "$PROJECT_BODY"
 
-          for permission in run.services.create run.services.get run.services.update; do
+          for permission in \
+            run.services.create \
+            run.services.get \
+            run.services.update \
+            run.operations.get \
+            run.services.getIamPolicy; do
             jq -e --arg permission "$permission" '.permissions | index($permission) != null' \
               "$RUNNER_TEMP/project-permissions.json" >/dev/null
           done
@@ -184,6 +189,16 @@ jobs:
             > "$RUNNER_TEMP/existing-service.json" 2>/dev/null; then
             EXISTING_RUNTIME="$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/existing-service.json")"
             test "$EXISTING_RUNTIME" = "$RUNTIME_SERVICE_ACCOUNT"
+
+            gcloud run services get-iam-policy "$SERVICE_NAME" \
+              --project "$PROJECT_ID" --region "$REGION" --format=json \
+              > "$RUNNER_TEMP/existing-service-iam.json"
+
+            if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' \
+              "$RUNNER_TEMP/existing-service-iam.json" >/dev/null; then
+              echo "Existing target service is public; refusing deploy." >&2
+              exit 1
+            fi
           fi
 
       - name: Build and push immutable candidate image
@@ -209,7 +224,7 @@ jobs:
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy private candidate with foundation startup probe
+      - name: Deploy candidate with foundation startup probe
         id: deploy
         shell: bash
         env:
@@ -226,7 +241,6 @@ jobs:
             --image "$IMAGE" \
             --service-account "$RUNTIME_SERVICE_ACCOUNT" \
             --revision-suffix "$REVISION_SUFFIX" \
-            --no-allow-unauthenticated \
             --ingress all \
             --port 8080 \
             --startup-probe "httpGet.path=/ai-arman/foundation,httpGet.port=8080,initialDelaySeconds=0,failureThreshold=12,timeoutSeconds=2,periodSeconds=5" \
@@ -265,7 +279,7 @@ jobs:
 
           echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify private IAM boundary
+      - name: Verify private IAM boundary after deploy
         shell: bash
         run: |
           set -euo pipefail
@@ -294,7 +308,7 @@ jobs:
             echo "- Revision: \`$REVISION\`"
             echo "- Image: \`$IMAGE\`"
             echo "- Digest: \`$DIGEST\`"
-            echo "- Private unauthenticated boundary: PASS"
+            echo "- Private IAM boundary: PASS"
             echo "- Foundation startup probe: PASS"
             echo "- productionActionsEnabled: false verified in local candidate smoke"
             echo "- Widget preview: disabled verified in local candidate smoke"
