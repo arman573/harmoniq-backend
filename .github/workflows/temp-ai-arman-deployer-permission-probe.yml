@@ -1,0 +1,111 @@
+name: TEMP AI Arman deployer permission probe
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/temp-ai-arman-deployer-permission-probe.yml
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: temp-ai-arman-deployer-permission-probe
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  ARTIFACT_REPOSITORY: harmoniq-containers
+
+jobs:
+  probe:
+    name: Verify deployer identity and current permissions
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Enforce exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "arman573/harmoniq-backend"
+          test "$GITHUB_REF" = "refs/heads/feature/ai-arman-foundation-v1"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Authenticate as dedicated deployer
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Probe exact permissions read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
+          echo "deployerAuth=success"
+          echo "activeAccount=$ACTIVE_ACCOUNT"
+
+          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          PROJECT_BODY='{"permissions":["run.services.create","run.services.get","run.services.update","run.operations.get","run.services.getIamPolicy"]}'
+          PROJECT_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/project.json" \
+            --write-out '%{http_code}' \
+            --request POST \
+            "https://cloudresourcemanager.googleapis.com/v1/projects/${PROJECT_ID}:testIamPermissions" \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$PROJECT_BODY")"
+          echo "projectTestHttp=$PROJECT_CODE"
+          if [ "$PROJECT_CODE" = "200" ]; then
+            echo "projectPermissions=$(jq -c '.permissions // [] | sort' "$RUNNER_TEMP/project.json")"
+          fi
+
+          RUNTIME_BODY='{"permissions":["iam.serviceAccounts.actAs"]}'
+          RUNTIME_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/runtime.json" \
+            --write-out '%{http_code}' \
+            --request POST \
+            "https://iam.googleapis.com/v1/projects/-/serviceAccounts/${RUNTIME_SERVICE_ACCOUNT}:testIamPermissions" \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$RUNTIME_BODY")"
+          echo "runtimeTestHttp=$RUNTIME_CODE"
+          if [ "$RUNTIME_CODE" = "200" ]; then
+            echo "runtimePermissions=$(jq -c '.permissions // [] | sort' "$RUNNER_TEMP/runtime.json")"
+          fi
+
+          REPO_RESOURCE="projects/${PROJECT_ID}/locations/${REGION}/repositories/${ARTIFACT_REPOSITORY}"
+          REPO_BODY='{"permissions":["artifactregistry.repositories.downloadArtifacts","artifactregistry.repositories.uploadArtifacts"]}'
+          REPO_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/repository.json" \
+            --write-out '%{http_code}' \
+            --request POST \
+            "https://artifactregistry.googleapis.com/v1/${REPO_RESOURCE}:testIamPermissions" \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$REPO_BODY")"
+          echo "repositoryTestHttp=$REPO_CODE"
+          if [ "$REPO_CODE" = "200" ]; then
+            echo "repositoryPermissions=$(jq -c '.permissions // [] | sort' "$RUNNER_TEMP/repository.json")"
+          fi
+
+          echo "mutationsPerformed=false"
+          echo "cloudRunChanged=false"
+          echo "trafficChanged=false"
+          echo "iamChanged=false"
