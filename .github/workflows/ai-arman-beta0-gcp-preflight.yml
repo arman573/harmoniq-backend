@@ -84,7 +84,7 @@ jobs:
           ACCESS_TOKEN="$(gcloud auth print-access-token)"
           echo "::add-mask::$ACCESS_TOKEN"
 
-          PROJECT_BODY='{"permissions":["run.services.create","run.services.get","run.services.update"]}'
+          PROJECT_BODY='{"permissions":["run.services.create","run.services.get","run.services.update","run.operations.get","run.services.getIamPolicy"]}'
           PROJECT_CODE="$(curl --silent --show-error \
             --output "$RUNNER_TEMP/project-permissions.json" \
             --write-out '%{http_code}' \
@@ -95,7 +95,12 @@ jobs:
             --data "$PROJECT_BODY")"
           test "$PROJECT_CODE" = "200"
 
-          for permission in run.services.create run.services.get run.services.update; do
+          for permission in \
+            run.services.create \
+            run.services.get \
+            run.services.update \
+            run.operations.get \
+            run.services.getIamPolicy; do
             jq -e --arg permission "$permission" '.permissions | index($permission) != null' \
               "$RUNNER_TEMP/project-permissions.json" >/dev/null
           done
@@ -172,7 +177,7 @@ jobs:
             echo "- Dedicated deploy identity: PASS"
             echo "- Dedicated runtime identity: PASS"
             echo "- Artifact Registry repository: PASS"
-            echo "- Cloud Run create/get/update permissions: PASS"
+            echo "- Cloud Run create/get/update/operation-status/IAM-read permissions: PASS"
             echo "- Runtime actAs permission: PASS"
             echo "- Artifact upload/download permissions: PASS"
             echo "- Mutations performed: NONE"
