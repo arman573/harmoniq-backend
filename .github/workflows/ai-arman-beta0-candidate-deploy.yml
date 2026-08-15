@@ -161,11 +161,13 @@ jobs:
           RUNTIME_BODY='{"permissions":["iam.serviceAccounts.actAs"]}'
           curl --silent --show-error --fail \
             --output "$RUNNER_TEMP/runtime-permissions.json" \
+            --write-out '%{http_code}' \
             --request POST \
             "https://iam.googleapis.com/v1/projects/-/serviceAccounts/${RUNTIME_SERVICE_ACCOUNT}:testIamPermissions" \
             --header "Authorization: Bearer $ACCESS_TOKEN" \
             --header 'Content-Type: application/json' \
-            --data "$RUNTIME_BODY"
+            --data "$RUNTIME_BODY" > "$RUNNER_TEMP/runtime-permissions-code.txt"
+          test "$(cat "$RUNNER_TEMP/runtime-permissions-code.txt")" = "200"
           jq -e '.permissions | index("iam.serviceAccounts.actAs") != null' \
             "$RUNNER_TEMP/runtime-permissions.json" >/dev/null
 
@@ -173,11 +175,13 @@ jobs:
           REPOSITORY_BODY='{"permissions":["artifactregistry.repositories.downloadArtifacts","artifactregistry.repositories.uploadArtifacts"]}'
           curl --silent --show-error --fail \
             --output "$RUNNER_TEMP/repository-permissions.json" \
+            --write-out '%{http_code}' \
             --request POST \
             "https://artifactregistry.googleapis.com/v1/${REPOSITORY_RESOURCE}:testIamPermissions" \
             --header "Authorization: Bearer $ACCESS_TOKEN" \
             --header 'Content-Type: application/json' \
-            --data "$REPOSITORY_BODY"
+            --data "$REPOSITORY_BODY" > "$RUNNER_TEMP/repository-permissions-code.txt"
+          test "$(cat "$RUNNER_TEMP/repository-permissions-code.txt")" = "200"
 
           for permission in artifactregistry.repositories.downloadArtifacts artifactregistry.repositories.uploadArtifacts; do
             jq -e --arg permission "$permission" '.permissions | index($permission) != null' \
@@ -224,7 +228,7 @@ jobs:
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy candidate with foundation startup probe
+      - name: Deploy candidate with cost-safe foundation settings
         id: deploy
         shell: bash
         env:
@@ -246,12 +250,14 @@ jobs:
             --startup-probe "httpGet.path=/ai-arman/foundation,httpGet.port=8080,initialDelaySeconds=0,failureThreshold=12,timeoutSeconds=2,periodSeconds=5" \
             --cpu 1 \
             --memory 512Mi \
-            --min-instances 0 \
-            --max-instances 1 \
+            --cpu-throttling \
+            --no-cpu-boost \
+            --min 0 \
+            --max 1 \
             --concurrency 20 \
             --timeout 30 \
             --set-env-vars "NODE_ENV=production,AI_ARMAN_WIDGET_PREVIEW_ENABLED=false,AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false,AI_ARMAN_MODEL_SHADOW_ENABLED=false,AI_ARMAN_MODEL_PROMOTION_ENABLED=false" \
-            --labels "release=beta0-candidate,source-sha=$SHORT_SHA" \
+            --labels "release=beta0-candidate,source-sha=$SHORT_SHA,cost-profile=beta0-minimal" \
             --quiet
 
           gcloud run services describe "$SERVICE_NAME" \
@@ -262,11 +268,19 @@ jobs:
           DEPLOYED_RUNTIME="$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/service.json")"
           STARTUP_PATH="$(jq -r '.spec.template.spec.containers[0].startupProbe.httpGet.path // empty' "$RUNNER_TEMP/service.json")"
           STARTUP_PORT="$(jq -r '.spec.template.spec.containers[0].startupProbe.httpGet.port // empty' "$RUNNER_TEMP/service.json")"
+          CPU_THROTTLING="$(jq -r '.spec.template.metadata.annotations["run.googleapis.com/cpu-throttling"] // empty' "$RUNNER_TEMP/service.json")"
+          CPU_BOOST="$(jq -r '.spec.template.metadata.annotations["run.googleapis.com/startup-cpu-boost"] // empty' "$RUNNER_TEMP/service.json")"
+          SERVICE_MIN="$(jq -r '.metadata.annotations["run.googleapis.com/minScale"] // "0"' "$RUNNER_TEMP/service.json")"
+          SERVICE_MAX="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service.json")"
 
           test -n "$REVISION"
           test "$DEPLOYED_RUNTIME" = "$RUNTIME_SERVICE_ACCOUNT"
           test "$STARTUP_PATH" = "/ai-arman/foundation"
           test "$STARTUP_PORT" = "8080"
+          test "$CPU_THROTTLING" = "true"
+          test "$CPU_BOOST" = "false"
+          test "$SERVICE_MIN" = "0"
+          test "$SERVICE_MAX" = "1"
 
           for flag in \
             AI_ARMAN_WIDGET_PREVIEW_ENABLED \
@@ -310,6 +324,11 @@ jobs:
             echo "- Digest: \`$DIGEST\`"
             echo "- Private IAM boundary: PASS"
             echo "- Foundation startup probe: PASS"
+            echo "- Billing: request-based (CPU throttling enabled)"
+            echo "- Startup CPU boost: disabled"
+            echo "- Service scaling: min 0 / max 1"
+            echo "- Memory: 512 MiB"
+            echo "- CPU: 1 vCPU"
             echo "- productionActionsEnabled: false verified in local candidate smoke"
             echo "- Widget preview: disabled verified in local candidate smoke"
             echo "- Model interpretation: disabled"
