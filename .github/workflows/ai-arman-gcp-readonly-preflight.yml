@@ -1,0 +1,85 @@
+name: AI Arman GCP read-only preflight
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - ".github/workflows/ai-arman-gcp-readonly-preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: harmoniq-210513
+  GCP_REGION: europe-north1
+  CANDIDATE_SERVICE: harmoniq-ai-arman-beta0
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  PREFLIGHT_SERVICE_ACCOUNT: github-pickup-deployer@harmoniq-210513.iam.gserviceaccount.com
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud with WIF
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.PREFLIGHT_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Read-only GCP inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "active_account=$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          echo "project=$(gcloud config get-value project 2>/dev/null)"
+          echo "region=${GCP_REGION}"
+
+          echo "::group::Cloud Run candidate lookup"
+          if gcloud run services describe "$CANDIDATE_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format='yaml(metadata.name,status.url,spec.template.spec.serviceAccountName,status.latestReadyRevisionName)' \
+            > /tmp/candidate-service.txt 2>/tmp/candidate-service.err; then
+            echo "candidate_service_exists=true"
+            cat /tmp/candidate-service.txt
+          else
+            rc=$?
+            cat /tmp/candidate-service.err >&2 || true
+            if grep -qiE 'not found|does not exist' /tmp/candidate-service.err; then
+              echo "candidate_service_exists=false"
+            else
+              echo "candidate_service_lookup_exit=$rc"
+            fi
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Artifact Registry repositories"
+          if ! gcloud artifacts repositories list \
+            --project "$GCP_PROJECT_ID" \
+            --location "$GCP_REGION" \
+            --format='table(name,format,location)' \
+            --limit=100; then
+            echo "artifact_registry_list_failed=true"
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Read-only permission probes"
+          for cmd in \
+            "gcloud run services list --project $GCP_PROJECT_ID --region $GCP_REGION --limit=5 --format=value(metadata.name)" \
+            "gcloud iam service-accounts describe $PREFLIGHT_SERVICE_ACCOUNT --project $GCP_PROJECT_ID --format=value(email)"; do
+            echo "> $cmd"
+            bash -lc "$cmd" || true
+          done
+          echo "::endgroup::"
+
+          echo "Read-only inventory complete. No GCP resources were modified."
