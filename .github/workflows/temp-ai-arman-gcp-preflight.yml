@@ -1,0 +1,136 @@
+name: TEMP AI Arman GCP preflight
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/temp-ai-arman-gcp-preflight.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: temp-ai-arman-gcp-preflight
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  READ_SERVICE_ACCOUNT: github-pickup-deployer@harmoniq-210513.iam.gserviceaccount.com
+  TARGET_SERVICE: harmoniq-ai-arman-beta0
+
+jobs:
+  provider-auth:
+    name: Verify provider acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Direct WIF authentication
+        id: direct_auth
+        continue-on-error: true
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+
+      - name: Report provider result
+        shell: bash
+        env:
+          AUTH_OUTCOME: ${{ steps.direct_auth.outcome }}
+        run: |
+          set -euo pipefail
+          echo "providerAuth=$AUTH_OUTCOME"
+          if [[ "$AUTH_OUTCOME" != "success" ]]; then
+            echo "Provider still rejects this repository/ref." >&2
+          fi
+
+  metadata-preflight:
+    name: Read-only GCP metadata preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Authenticate through existing read identity
+        id: sa_auth
+        continue-on-error: true
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.READ_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        if: steps.sa_auth.outcome == 'success'
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Verify project and read metadata only
+        id: metadata
+        if: steps.sa_auth.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          ACTIVE_PROJECT="$(gcloud config get-value project 2>/dev/null || true)"
+          echo "activeProject=$ACTIVE_PROJECT"
+
+          probe() {
+            local name="$1"
+            shift
+            if "$@" > "$RUNNER_TEMP/${name}.out" 2> "$RUNNER_TEMP/${name}.err"; then
+              echo "$name=true"
+            else
+              echo "$name=false"
+              tail -n 2 "$RUNNER_TEMP/${name}.err" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g'
+              echo
+            fi
+          }
+
+          probe artifactRepositories \
+            gcloud artifacts repositories list \
+              --project="$PROJECT_ID" \
+              --location="$REGION" \
+              --format='value(name)'
+
+          probe cloudRunServices \
+            gcloud run services list \
+              --project="$PROJECT_ID" \
+              --region="$REGION" \
+              --platform=managed \
+              --format='value(metadata.name)'
+
+          if gcloud run services describe "$TARGET_SERVICE" \
+              --project="$PROJECT_ID" \
+              --region="$REGION" \
+              --platform=managed \
+              --format='value(metadata.name)' \
+              > "$RUNNER_TEMP/target.out" 2> "$RUNNER_TEMP/target.err"; then
+            echo "targetServiceExists=true"
+            cat "$RUNNER_TEMP/target.out"
+          else
+            if grep -qiE 'not found|does not exist|404' "$RUNNER_TEMP/target.err"; then
+              echo "targetServiceExists=false"
+            else
+              echo "targetServiceExists=unknown"
+              tail -n 2 "$RUNNER_TEMP/target.err" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g'
+              echo
+            fi
+          fi
+
+      - name: Report metadata preflight result
+        if: always()
+        shell: bash
+        env:
+          AUTH_OUTCOME: ${{ steps.sa_auth.outcome }}
+          METADATA_OUTCOME: ${{ steps.metadata.outcome }}
+        run: |
+          set -euo pipefail
+          echo "serviceAccountAuth=$AUTH_OUTCOME"
+          echo "metadataStep=$METADATA_OUTCOME"
+          echo "mutationsPerformed=false"
+          echo "cloudRunChanged=false"
+          echo "trafficChanged=false"
