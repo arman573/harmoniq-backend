@@ -124,3 +124,11 @@ jobs:
             echo "Expected disabled widget preview to return 404, got $WIDGET_STATUS." >&2
             exit 1
           fi
+
+          docker logs "$CONTAINER_ID" > "$RUNNER_TEMP/ai-arman-candidate.log" 2>&1
+          if grep -Eqi '(127\.0\.0\.1|localhost).*(5432|postgres)|ECONNREFUSED.*5432|postgres.*(127\.0\.0\.1|localhost)' \
+            "$RUNNER_TEMP/ai-arman-candidate.log"; then
+            echo "Detected localhost/Postgres startup attempt in isolated candidate." >&2
+            cat "$RUNNER_TEMP/ai-arman-candidate.log" >&2
+            exit 1
+          fi
