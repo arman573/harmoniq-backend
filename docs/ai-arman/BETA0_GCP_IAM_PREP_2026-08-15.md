@@ -95,21 +95,37 @@ Grant `roles/artifactregistry.writer` on repository:
 
 `projects/harmoniq-210513/locations/europe-north1/repositories/harmoniq-containers`
 
+The deployment workflow verifies both artifact upload and download permissions before its first mutation.
+
 Do not grant Artifact Registry admin.
 
 ### 3. Deploy service account -> Cloud Run
 
-Grant the minimum deploy permission set needed for `harmoniq-ai-arman-beta0` creation/update. Preferred predefined role:
+Preferred predefined role:
 
 `roles/run.developer`
 
-If this must initially be project-scoped because the service does not exist yet, treat that as bootstrap scope and review narrowing after service creation. Do not grant `roles/run.admin` unless a verified missing permission proves it necessary.
+The hardened preflight/deploy gates explicitly require and verify these Cloud Run permissions before mutation:
+
+- `run.services.create`;
+- `run.services.get`;
+- `run.services.update`;
+- `run.operations.get`;
+- `run.services.getIamPolicy`.
+
+`run.operations.get` is required so the deploy command can read deployment status. `run.services.getIamPolicy` is used only to verify that the candidate target is not publicly invocable.
+
+The deploy workflow intentionally does **not** modify the service IAM policy. It must therefore not require or receive `run.services.setIamPolicy` merely to make the candidate private. A newly created Cloud Run service keeps the Invoker IAM check enabled by default unless an explicit public-access configuration changes it; the workflow verifies the resulting IAM boundary read-only after deployment.
+
+If `roles/run.developer` must initially be project-scoped because the target service does not exist yet, treat that as bootstrap scope and review narrowing after service creation. Do not grant `roles/run.admin` unless a concrete authenticated permission failure proves a genuinely required capability that cannot be handled with a narrower role.
 
 ### 4. Deploy service account -> runtime service account
 
 Grant `roles/iam.serviceAccountUser` to `github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com` on:
 
 `ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com`
+
+The preflight verifies `iam.serviceAccounts.actAs` before any deployment mutation.
 
 Do not grant Service Account Admin or Token Creator unless a concrete authenticated error proves it is required.
 
@@ -125,6 +141,25 @@ Expected exact repository and branch condition addition:
 
 Previous direct WIF verification returned `unauthorized_client` / `The given credential is rejected by the attribute condition`, so this gate is not considered complete until a fresh GitHub Actions authentication from the backend branch succeeds.
 
+Do not run repeated blind WIF preflights while the provider condition is still unverified.
+
+## Prepared GitHub gates
+
+The branch now contains two manual-only workflows:
+
+- `.github/workflows/ai-arman-beta0-gcp-preflight.yml`
+- `.github/workflows/ai-arman-beta0-candidate-deploy.yml`
+
+The read-only preflight requires exact input:
+
+`VERIFY_AI_ARMAN_BETA0_GCP`
+
+The candidate deploy requires exact input:
+
+`DEPLOY_AI_ARMAN_BETA0`
+
+Both workflows also require the exact AI Arman branch and actor `arman573`. Neither workflow has a push trigger. The deploy workflow never falls back to the historical pickup deployer.
+
 ## Candidate deployment gate after IAM preparation
 
 Even after IAM is prepared, do not deploy until a separate explicit candidate-deploy approval.
@@ -136,19 +171,31 @@ The first candidate deploy must use:
 - isolated entrypoint `dist/main-ai-arman-candidate.js`;
 - isolated Dockerfile `Dockerfile.ai-arman-candidate`;
 - runtime service account: `ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com`;
+- immutable SHA/run-specific Artifact Registry image tag;
+- HTTP startup probe on `/ai-arman/foundation`;
 - `AI_ARMAN_WIDGET_PREVIEW_ENABLED=false`;
 - `AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false`;
 - `AI_ARMAN_MODEL_SHADOW_ENABLED=false`;
 - `AI_ARMAN_MODEL_PROMOTION_ENABLED=false`;
 - production actions disabled.
 
-Verification after deploy must prove:
+The local pre-deploy verification must prove:
+
+- unit tests pass;
+- TypeScript build passes;
+- isolated candidate container builds;
+- `/ai-arman/foundation` returns the expected foundation contract;
+- `productionActionsEnabled === false`;
+- widget preview returns 404;
+- candidate logs contain no localhost/Postgres startup attempt.
+
+The Cloud Run deployment verification must prove:
 
 - service becomes Ready;
-- `/ai-arman/foundation` works;
-- no localhost/Postgres connection attempts occur;
-- `productionActionsEnabled === false`;
-- widget preview remains unavailable;
+- the configured startup probe is `/ai-arman/foundation` on port 8080;
+- runtime service account is exactly `ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com`;
+- all model/widget activation flags remain `false`;
+- no `allUsers` or `allAuthenticatedUsers` IAM member exists on the target service;
 - no model call or external customer action is executed.
 
 ## Rollback / deletion
@@ -170,5 +217,6 @@ No production Cloud Run service or traffic needs to be touched for this rollback
 - no broad provider condition;
 - no reuse of pickup deployer as permanent AI Arman deploy identity;
 - no reuse of default compute service account as AI Arman runtime;
+- no `run.services.setIamPolicy` grant merely for private candidate deployment;
 - no candidate deployment as part of IAM preparation;
 - no PR merge as part of IAM preparation.
