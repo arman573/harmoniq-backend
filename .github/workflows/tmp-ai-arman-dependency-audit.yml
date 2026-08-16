@@ -11,12 +11,14 @@ permissions:
   contents: write
 
 jobs:
-  dependency-audit:
+  apply-runtime-remediation:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
 
       - name: Setup Node 22
         uses: actions/setup-node@v4
@@ -24,49 +26,22 @@ jobs:
           node-version: '22'
           cache: npm
 
-      - name: Test complete runtime remediation in isolated copy
+      - name: Update verified dependency set in lockfile only
         shell: bash
         run: |
-          rm -rf /tmp/ai-arman-remediation
-          mkdir -p /tmp/ai-arman-remediation
-          cp package.json package-lock.json /tmp/ai-arman-remediation/
-          cd /tmp/ai-arman-remediation
           npm update @nestjs/common @nestjs/core @nestjs/platform-express @nestjs/typeorm pg typeorm multer brace-expansion qs body-parser --package-lock-only --ignore-scripts --audit=false
+          git diff --exit-code -- package.json
           npm ci --ignore-scripts
-          set +e
-          npm audit --omit=dev --json > runtime-after.json
-          npm audit --json > full-after.json
-          set -e
-          node <<'NODE'
-          const fs = require('fs');
-          const before = JSON.parse(fs.readFileSync(process.env.GITHUB_WORKSPACE + '/package-lock.json', 'utf8'));
-          const after = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
-          const runtime = JSON.parse(fs.readFileSync('runtime-after.json', 'utf8'));
-          const full = JSON.parse(fs.readFileSync('full-after.json', 'utf8'));
-          const changed = [];
-          const keys = new Set([...Object.keys(before.packages || {}), ...Object.keys(after.packages || {})]);
-          for (const key of [...keys].sort()) {
-            const a = before.packages?.[key]?.version || null;
-            const b = after.packages?.[key]?.version || null;
-            if (a !== b) changed.push({ package: key.replace(/^node_modules\//,''), before: a, after: b });
-          }
-          const summary = {
-            generatedAt: new Date().toISOString(),
-            sourceSha: process.env.GITHUB_SHA,
-            changedPackages: changed,
-            runtimeCountsAfter: runtime.metadata?.vulnerabilities || {},
-            runtimeRemaining: Object.entries(runtime.vulnerabilities || {}).map(([name,v]) => ({name,severity:v.severity,isDirect:v.isDirect,range:v.range,fixAvailable:v.fixAvailable})),
-            fullCountsAfter: full.metadata?.vulnerabilities || {},
-            fullRemaining: Object.entries(full.vulnerabilities || {}).map(([name,v]) => ({name,severity:v.severity,isDirect:v.isDirect,range:v.range,fixAvailable:v.fixAvailable}))
-          };
-          fs.writeFileSync(process.env.GITHUB_WORKSPACE + '/.github/tmp-ai-arman-complete-runtime-remediation-test.json', JSON.stringify(summary, null, 2) + '\n');
-          NODE
+          node -e "const p=require('./package-lock.json'); if(p.packages['node_modules/@nestjs/platform-express'].version!=='11.2.1') process.exit(1); if(p.packages['node_modules/typeorm'].version!=='0.3.31') process.exit(1); if(p.packages['node_modules/multer'].version!=='2.2.0') process.exit(1);"
+          npm audit --omit=dev --audit-level=low
 
-      - name: Commit temporary isolated test result
+      - name: Commit package-lock remediation only
         shell: bash
         run: |
+          git status --short
+          test -z "$(git status --short | grep -v '^ M package-lock.json$' || true)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/tmp-ai-arman-complete-runtime-remediation-test.json
-          git commit -m "Capture complete runtime remediation test"
-          git push
+          git add package-lock.json
+          git commit -m "Remediate AI Arman runtime dependency vulnerabilities"
+          git push origin HEAD:feature/ai-arman-foundation-v1
