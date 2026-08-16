@@ -1,0 +1,86 @@
+name: TEMP AI Arman full preflight verify
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/temp-ai-arman-full-preflight-verify.yml
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  ARTIFACT_REPOSITORY: harmoniq-containers
+  SERVICE_NAME: harmoniq-ai-arman-beta0
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Verify full beta0 preflight read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
+
+          REPOSITORY_FORMAT="$(gcloud artifacts repositories describe "$ARTIFACT_REPOSITORY" --location "$REGION" --project "$PROJECT_ID" --format='value(format)')"
+          test "$REPOSITORY_FORMAT" = "DOCKER"
+
+          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          curl --silent --show-error --fail --output "$RUNNER_TEMP/project.json" --request POST \
+            "https://cloudresourcemanager.googleapis.com/v1/projects/${PROJECT_ID}:testIamPermissions" \
+            --header "Authorization: Bearer $ACCESS_TOKEN" --header 'Content-Type: application/json' \
+            --data '{"permissions":["run.services.create","run.services.get","run.services.update","run.operations.get","run.services.getIamPolicy"]}'
+          for permission in run.services.create run.services.get run.services.update run.operations.get run.services.getIamPolicy; do
+            jq -e --arg permission "$permission" '.permissions | index($permission) != null' "$RUNNER_TEMP/project.json" >/dev/null
+          done
+
+          curl --silent --show-error --fail --output "$RUNNER_TEMP/runtime.json" --request POST \
+            "https://iam.googleapis.com/v1/projects/-/serviceAccounts/${RUNTIME_SERVICE_ACCOUNT}:testIamPermissions" \
+            --header "Authorization: Bearer $ACCESS_TOKEN" --header 'Content-Type: application/json' \
+            --data '{"permissions":["iam.serviceAccounts.actAs"]}'
+          jq -e '.permissions | index("iam.serviceAccounts.actAs") != null' "$RUNNER_TEMP/runtime.json" >/dev/null
+
+          REPOSITORY_RESOURCE="projects/${PROJECT_ID}/locations/${REGION}/repositories/${ARTIFACT_REPOSITORY}"
+          curl --silent --show-error --fail --output "$RUNNER_TEMP/repository.json" --request POST \
+            "https://artifactregistry.googleapis.com/v1/${REPOSITORY_RESOURCE}:testIamPermissions" \
+            --header "Authorization: Bearer $ACCESS_TOKEN" --header 'Content-Type: application/json' \
+            --data '{"permissions":["artifactregistry.repositories.downloadArtifacts","artifactregistry.repositories.uploadArtifacts"]}'
+          jq -e '.permissions | index("artifactregistry.repositories.downloadArtifacts") != null' "$RUNNER_TEMP/repository.json" >/dev/null
+          jq -e '.permissions | index("artifactregistry.repositories.uploadArtifacts") != null' "$RUNNER_TEMP/repository.json" >/dev/null
+
+          if gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service.json" 2>/dev/null; then
+            test "$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/service.json")" = "$RUNTIME_SERVICE_ACCOUNT"
+            gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-iam.json"
+            if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/service-iam.json" >/dev/null; then
+              exit 1
+            fi
+          fi
+
+          echo "fullPreflight=PASS"
+          echo "mutationsPerformed=false"
+          echo "candidateDeployed=false"
