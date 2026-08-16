@@ -10,6 +10,7 @@ import { readAiArmanModelInterpretationConfig } from './model-interpretation.con
 import { AiArmanModelInterpretationClient } from './model-interpretation.client';
 
 const PROMPT_VERSION = 'ai-arman-interpretation-v1';
+const TOKENS_PER_MILLION = 1_000_000;
 
 @Injectable()
 export class OpenAiChatInterpretationProvider extends ChatInterpretationProvider {
@@ -29,6 +30,11 @@ export class OpenAiChatInterpretationProvider extends ChatInterpretationProvider
   async interpret(
     input: AiArmanInterpretationProviderInput,
   ): Promise<AiArmanInterpretationProviderResult> {
+    const config = readAiArmanModelInterpretationConfig();
+    if (!config.activationAllowed) {
+      throw new ChatInterpretationProviderError('unavailable');
+    }
+
     const result = await this.client.interpret({ text: input.text });
 
     if (!result.ok) {
@@ -45,11 +51,18 @@ export class OpenAiChatInterpretationProvider extends ChatInterpretationProvider
       }
     }
 
+    const estimatedCostUsd =
+      (result.usage.inputTokens * config.inputCostUsdPerMillionTokens) /
+        TOKENS_PER_MILLION +
+      (result.usage.outputTokens * config.outputCostUsdPerMillionTokens) /
+        TOKENS_PER_MILLION;
+
     return {
       candidate: result.candidate,
       usage: {
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,
+        estimatedCostUsd,
       },
     };
   }
