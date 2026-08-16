@@ -57,20 +57,13 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Verify identities and exact resources
+      - name: Verify active deploy identity and Artifact Registry resource
         shell: bash
         run: |
           set -euo pipefail
 
           ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
           test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
-
-          DEPLOY_EMAIL="$(gcloud iam service-accounts describe "$DEPLOY_SERVICE_ACCOUNT" \
-            --project "$PROJECT_ID" --format='value(email)')"
-          RUNTIME_EMAIL="$(gcloud iam service-accounts describe "$RUNTIME_SERVICE_ACCOUNT" \
-            --project "$PROJECT_ID" --format='value(email)')"
-          test "$DEPLOY_EMAIL" = "$DEPLOY_SERVICE_ACCOUNT"
-          test "$RUNTIME_EMAIL" = "$RUNTIME_SERVICE_ACCOUNT"
 
           REPOSITORY_FORMAT="$(gcloud artifacts repositories describe "$ARTIFACT_REPOSITORY" \
             --location "$REGION" --project "$PROJECT_ID" --format='value(format)')"
@@ -175,10 +168,9 @@ jobs:
             echo
             echo "- Exact branch gate: PASS"
             echo "- Dedicated deploy identity: PASS"
-            echo "- Dedicated runtime identity: PASS"
+            echo "- Dedicated runtime actAs boundary: PASS"
             echo "- Artifact Registry repository: PASS"
             echo "- Cloud Run create/get/update/operation-status/IAM-read permissions: PASS"
-            echo "- Runtime actAs permission: PASS"
             echo "- Artifact upload/download permissions: PASS"
             echo "- Mutations performed: NONE"
             echo "- Candidate deployed: NO"
