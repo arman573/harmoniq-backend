@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Authenticate through existing WIF
+      - name: Authenticate through existing WIF for read checks
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
@@ -35,7 +35,8 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Verify service remains private and invoke with identity token
+      - name: Read private service baseline
+        id: service
         shell: bash
         run: |
           set -euo pipefail
@@ -61,18 +62,32 @@ jobs:
             echo "REMOTE_SMOKE_PRIVATE_IAM=FAIL_PUBLIC_MEMBER"
             exit 1
           fi
+
           echo "REMOTE_SMOKE_PRIVATE_IAM=PASS"
           echo "REMOTE_SMOKE_REVISION=$REVISION"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
 
-          set +e
-          ID_TOKEN="$(gcloud auth print-identity-token --audiences="$URL" 2>"$RUNNER_TEMP/id-token-error.txt")"
-          TOKEN_CODE=$?
-          set -e
-          if [ "$TOKEN_CODE" -ne 0 ] || [ -z "$ID_TOKEN" ]; then
-            echo "REMOTE_SMOKE_ID_TOKEN=FAIL"
-            cat "$RUNNER_TEMP/id-token-error.txt"
-            exit 20
-          fi
+      - name: Mint service-account ID token through existing WIF
+        id: auth_id
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ steps.service.outputs.url }}
+          id_token_include_email: true
+          create_credentials_file: false
+
+      - name: Invoke private beta0 with minted ID token
+        shell: bash
+        env:
+          SERVICE_URL: ${{ steps.service.outputs.url }}
+          ID_TOKEN: ${{ steps.auth_id.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          test -n "$SERVICE_URL"
+          test -n "$ID_TOKEN"
           echo "::add-mask::$ID_TOKEN"
           echo "REMOTE_SMOKE_ID_TOKEN=PASS"
 
@@ -80,7 +95,7 @@ jobs:
             --output "$RUNNER_TEMP/foundation.json" \
             --write-out '%{http_code}' \
             --header "Authorization: Bearer $ID_TOKEN" \
-            "$URL/ai-arman/foundation")"
+            "$SERVICE_URL/ai-arman/foundation")"
           echo "REMOTE_SMOKE_FOUNDATION_HTTP=$FOUNDATION_CODE"
 
           if [ "$FOUNDATION_CODE" != "200" ]; then
@@ -100,7 +115,7 @@ jobs:
             --output "$RUNNER_TEMP/widget.txt" \
             --write-out '%{http_code}' \
             --header "Authorization: Bearer $ID_TOKEN" \
-            "$URL/ai-arman/widget/beta0-preview")"
+            "$SERVICE_URL/ai-arman/widget/beta0-preview")"
           echo "REMOTE_SMOKE_WIDGET_HTTP=$WIDGET_CODE"
           test "$WIDGET_CODE" = "404"
           echo "REMOTE_SMOKE_WIDGET_DISABLED=PASS"
