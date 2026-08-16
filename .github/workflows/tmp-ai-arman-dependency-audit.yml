@@ -10,7 +10,7 @@ on:
       - package-lock.json
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   dependency-audit:
@@ -29,93 +29,46 @@ jobs:
       - name: Install exact dependencies
         run: npm ci
 
-      - name: Capture runtime audit
+      - name: Capture audits and dependency paths
         shell: bash
         run: |
           set +e
           npm audit --omit=dev --json > runtime-audit.json
-          code=$?
-          echo "runtime_audit_exit=$code" >> "$GITHUB_ENV"
-          exit 0
-
-      - name: Capture full audit
-        shell: bash
-        run: |
-          set +e
           npm audit --json > full-audit.json
-          code=$?
-          echo "full_audit_exit=$code" >> "$GITHUB_ENV"
-          exit 0
-
-      - name: Print compact classified audit report
-        shell: bash
-        run: |
+          set -e
           node <<'NODE'
           const fs = require('fs');
-
-          function read(path) {
-            return JSON.parse(fs.readFileSync(path, 'utf8'));
-          }
-
-          function summarize(label, report) {
-            const metadata = report.metadata?.vulnerabilities || {};
-            console.log(`AUDIT_SCOPE=${label}`);
-            console.log(`COUNTS=${JSON.stringify(metadata)}`);
-            const vulns = report.vulnerabilities || {};
-            const interesting = Object.entries(vulns)
-              .filter(([, v]) => ['moderate', 'high', 'critical'].includes(v.severity))
-              .sort((a, b) => a[0].localeCompare(b[0]));
-            console.log(`INTERESTING_COUNT=${interesting.length}`);
-            for (const [name, v] of interesting) {
-              const via = (v.via || []).map((x) => {
-                if (typeof x === 'string') return { package: x };
-                return {
-                  source: x.source,
-                  name: x.name,
-                  severity: x.severity,
-                  title: x.title,
-                  url: x.url,
-                  range: x.range,
-                  cwe: x.cwe,
-                  cvssScore: x.cvss?.score,
-                };
-              });
-              console.log('VULN=' + JSON.stringify({
-                package: name,
-                severity: v.severity,
-                isDirect: v.isDirect,
-                range: v.range,
-                via,
-                effects: v.effects || [],
-                nodes: v.nodes || [],
-                fixAvailable: v.fixAvailable,
-              }));
-            }
-          }
-
-          summarize('runtime', read('runtime-audit.json'));
-          summarize('full', read('full-audit.json'));
-          console.log(`RUNTIME_AUDIT_EXIT=${process.env.runtime_audit_exit || ''}`);
-          console.log(`FULL_AUDIT_EXIT=${process.env.full_audit_exit || ''}`);
-          NODE
-
-      - name: Show dependency paths for vulnerable packages
-        shell: bash
-        run: |
-          node <<'NODE' > vulnerable-packages.txt
-          const fs = require('fs');
-          const reports = ['runtime-audit.json', 'full-audit.json'].map((p) => JSON.parse(fs.readFileSync(p, 'utf8')));
+          const { execSync } = require('child_process');
+          const runtime = JSON.parse(fs.readFileSync('runtime-audit.json', 'utf8'));
+          const full = JSON.parse(fs.readFileSync('full-audit.json', 'utf8'));
           const names = new Set();
-          for (const report of reports) {
+          for (const report of [runtime, full]) {
             for (const [name, v] of Object.entries(report.vulnerabilities || {})) {
               if (['moderate', 'high', 'critical'].includes(v.severity)) names.add(name);
             }
           }
-          console.log([...names].sort().join('\n'));
+          const dependencyPaths = {};
+          for (const name of [...names].sort()) {
+            try {
+              dependencyPaths[name] = execSync(`npm ls ${JSON.stringify(name)} --all --json`, { encoding: 'utf8' });
+            } catch (error) {
+              dependencyPaths[name] = error.stdout || error.message;
+            }
+          }
+          fs.writeFileSync('.github/tmp-ai-arman-dependency-audit-report.json', JSON.stringify({
+            generatedAt: new Date().toISOString(),
+            sourceSha: process.env.GITHUB_SHA,
+            runtime,
+            full,
+            dependencyPaths
+          }, null, 2) + '\n');
           NODE
-          while IFS= read -r pkg; do
-            [ -z "$pkg" ] && continue
-            echo "DEPENDENCY_PATH_BEGIN=$pkg"
-            npm ls "$pkg" --all || true
-            echo "DEPENDENCY_PATH_END=$pkg"
-          done < vulnerable-packages.txt
+
+      - name: Commit temporary audit report
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/tmp-ai-arman-dependency-audit-report.json
+          git commit -m "Capture temporary AI Arman dependency audit report"
+          git push
