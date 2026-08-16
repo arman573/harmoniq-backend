@@ -1,0 +1,193 @@
+{
+  "generatedAt": "2026-08-16T19:27:47.707Z",
+  "sourceSha": "5e4d4008f9abe0099d7e0ca11efb57d64437b334",
+  "changedPackages": [
+    {
+      "package": "@jest/reporters/node_modules/brace-expansion",
+      "before": "2.1.0",
+      "after": "2.1.4"
+    },
+    {
+      "package": "@nestjs/common",
+      "before": "11.1.19",
+      "after": "11.2.1"
+    },
+    {
+      "package": "@nestjs/core",
+      "before": "11.1.19",
+      "after": "11.2.1"
+    },
+    {
+      "package": "@nestjs/platform-express",
+      "before": "11.1.19",
+      "after": "11.2.1"
+    },
+    {
+      "package": "@nestjs/typeorm",
+      "before": "11.0.1",
+      "after": "11.0.3"
+    },
+    {
+      "package": "@nuxt/opencollective",
+      "before": "0.4.1",
+      "after": null
+    },
+    {
+      "package": "@typescript-eslint/typescript-estree/node_modules/brace-expansion",
+      "before": "5.0.5",
+      "after": "5.0.9"
+    },
+    {
+      "package": "body-parser",
+      "before": "2.2.2",
+      "after": "2.3.0"
+    },
+    {
+      "package": "body-parser/node_modules/content-type",
+      "before": null,
+      "after": "2.1.0"
+    },
+    {
+      "package": "body-parser/node_modules/type-is",
+      "before": null,
+      "after": "2.1.0"
+    },
+    {
+      "package": "brace-expansion",
+      "before": "1.1.14",
+      "after": "1.1.18"
+    },
+    {
+      "package": "consola",
+      "before": "3.4.2",
+      "after": null
+    },
+    {
+      "package": "dayjs",
+      "before": "1.11.20",
+      "after": "1.11.22"
+    },
+    {
+      "package": "glob/node_modules/brace-expansion",
+      "before": "5.0.5",
+      "after": "5.0.9"
+    },
+    {
+      "package": "jest-config/node_modules/brace-expansion",
+      "before": "2.1.0",
+      "after": "2.1.4"
+    },
+    {
+      "package": "jest-runtime/node_modules/brace-expansion",
+      "before": "2.1.0",
+      "after": "2.1.4"
+    },
+    {
+      "package": "multer",
+      "before": "2.1.1",
+      "after": "2.2.0"
+    },
+    {
+      "package": "pg",
+      "before": "8.20.0",
+      "after": "8.23.0"
+    },
+    {
+      "package": "pg-cloudflare",
+      "before": "1.3.0",
+      "after": "1.4.0"
+    },
+    {
+      "package": "pg-connection-string",
+      "before": "2.12.0",
+      "after": "2.14.0"
+    },
+    {
+      "package": "pg-pool",
+      "before": "3.13.0",
+      "after": "3.14.0"
+    },
+    {
+      "package": "pg-protocol",
+      "before": "1.13.0",
+      "after": "1.16.0"
+    },
+    {
+      "package": "qs",
+      "before": "6.15.1",
+      "after": "6.15.3"
+    },
+    {
+      "package": "side-channel",
+      "before": "1.1.0",
+      "after": "1.1.1"
+    },
+    {
+      "package": "typeorm",
+      "before": "0.3.28",
+      "after": "0.3.31"
+    },
+    {
+      "package": "typeorm/node_modules/ansis",
+      "before": null,
+      "after": "4.3.1"
+    },
+    {
+      "package": "typeorm/node_modules/brace-expansion",
+      "before": "2.1.0",
+      "after": "2.1.4"
+    },
+    {
+      "package": "yargs",
+      "before": "17.7.2",
+      "after": "17.7.3"
+    }
+  ],
+  "runtimeCountsAfter": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0
+  },
+  "runtimeRemaining": [],
+  "fullCountsAfter": {
+    "info": 0,
+    "low": 1,
+    "moderate": 0,
+    "high": 3,
+    "critical": 0,
+    "total": 4
+  },
+  "fullRemaining": [
+    {
+      "name": "@babel/core",
+      "severity": "low",
+      "isDirect": false,
+      "range": "<=7.29.0",
+      "fixAvailable": true
+    },
+    {
+      "name": "fast-uri",
+      "severity": "high",
+      "isDirect": false,
+      "range": "3.0.0 - 3.1.4",
+      "fixAvailable": true
+    },
+    {
+      "name": "form-data",
+      "severity": "high",
+      "isDirect": false,
+      "range": "4.0.0 - 4.0.5",
+      "fixAvailable": true
+    },
+    {
+      "name": "js-yaml",
+      "severity": "high",
+      "isDirect": false,
+      "range": "<=3.15.0 || 4.0.0 - 4.3.0",
+      "fixAvailable": true
+    }
+  ]
+}
