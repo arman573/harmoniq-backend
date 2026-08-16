@@ -24,101 +24,50 @@ jobs:
           node-version: '22'
           cache: npm
 
-      - name: Install exact dependencies
-        run: npm ci
-
-      - name: Analyze remediation without changing lockfile
+      - name: Test minimal remediation in isolated copy
         shell: bash
         run: |
+          rm -rf /tmp/ai-arman-remediation
+          mkdir -p /tmp/ai-arman-remediation
+          cp package.json package-lock.json /tmp/ai-arman-remediation/
+          cd /tmp/ai-arman-remediation
+          npm update @nestjs/common @nestjs/core @nestjs/platform-express @nestjs/typeorm pg typeorm --package-lock-only --ignore-scripts --audit=false
+          npm ci --ignore-scripts
           set +e
-          npm audit --omit=dev --json > runtime-audit.json
-          npm audit --json > full-audit.json
-          npm audit fix --omit=dev --dry-run --json > runtime-fix-dry-run.json
-          npm audit fix --dry-run --json > full-fix-dry-run.json
-          npm outdated --json > outdated.json
+          npm audit --omit=dev --json > runtime-after.json
+          npm audit --json > full-after.json
           set -e
           node <<'NODE'
           const fs = require('fs');
-          const cp = require('child_process');
-          const read = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return {}; } };
-          const runtime = read('runtime-audit.json');
-          const full = read('full-audit.json');
-          const runtimeFix = read('runtime-fix-dry-run.json');
-          const fullFix = read('full-fix-dry-run.json');
-          const outdated = read('outdated.json');
-          const lock = read('package-lock.json');
-
-          function installedVersion(name) {
-            return lock.packages?.[`node_modules/${name}`]?.version || null;
-          }
-          function advisorySummary(report) {
-            return Object.entries(report.vulnerabilities || {}).map(([name, v]) => ({
-              name,
-              severity: v.severity,
-              isDirect: v.isDirect,
-              installed: installedVersion(name),
-              range: v.range,
-              fixAvailable: v.fixAvailable,
-              via: (v.via || []).map(x => typeof x === 'string' ? x : ({
-                name: x.name,
-                severity: x.severity,
-                title: x.title,
-                range: x.range,
-                url: x.url,
-                cvss: x.cvss?.score ?? null
-              }))
-            }));
-          }
-          function fixSummary(report) {
-            return {
-              added: report.added ?? null,
-              removed: report.removed ?? null,
-              changed: report.changed ?? null,
-              audited: report.audited ?? null,
-              metadata: report.metadata ?? null
+          const before = JSON.parse(fs.readFileSync(process.env.GITHUB_WORKSPACE + '/package-lock.json', 'utf8'));
+          const after = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const runtime = JSON.parse(fs.readFileSync('runtime-after.json', 'utf8'));
+          const full = JSON.parse(fs.readFileSync('full-after.json', 'utf8'));
+          const names = ['@nestjs/common','@nestjs/core','@nestjs/platform-express','@nestjs/typeorm','pg','typeorm','multer','brace-expansion','qs','body-parser'];
+          const versions = {};
+          for (const name of names) {
+            versions[name] = {
+              before: before.packages?.[`node_modules/${name}`]?.version || null,
+              after: after.packages?.[`node_modules/${name}`]?.version || null
             };
           }
-          const directNames = Object.keys(lock.packages?.['']?.dependencies || {});
-          const directCurrent = {};
-          for (const name of directNames) directCurrent[name] = installedVersion(name);
-
-          let candidateTree = null;
-          try {
-            const copy = '/tmp/audit-remediation';
-            cp.execSync(`rm -rf ${copy} && mkdir -p ${copy} && cp package.json package-lock.json ${copy}/`);
-            cp.execSync('npm install --package-lock-only --ignore-scripts --audit=false', { cwd: copy, stdio: 'ignore' });
-            const nextLock = read(`${copy}/package-lock.json`);
-            const changedDirect = [];
-            for (const name of directNames) {
-              const before = directCurrent[name];
-              const after = nextLock.packages?.[`node_modules/${name}`]?.version || null;
-              if (before !== after) changedDirect.push({ name, before, after });
-            }
-            candidateTree = { changedDirect };
-          } catch (e) {
-            candidateTree = { error: e.message };
-          }
-
           const summary = {
             generatedAt: new Date().toISOString(),
             sourceSha: process.env.GITHUB_SHA,
-            runtimeCounts: runtime.metadata?.vulnerabilities || {},
-            fullCounts: full.metadata?.vulnerabilities || {},
-            runtimeAdvisories: advisorySummary(runtime),
-            fullOnlyAdvisories: advisorySummary(full).filter(x => !(runtime.vulnerabilities || {})[x.name]),
-            runtimeFixDryRun: fixSummary(runtimeFix),
-            fullFixDryRun: fixSummary(fullFix),
-            directOutdated: Object.fromEntries(Object.entries(outdated).filter(([name]) => directNames.includes(name))),
-            packageLockRefreshCandidate: candidateTree
+            versions,
+            runtimeCountsAfter: runtime.metadata?.vulnerabilities || {},
+            runtimeRemaining: Object.entries(runtime.vulnerabilities || {}).map(([name,v]) => ({name,severity:v.severity,isDirect:v.isDirect,range:v.range,fixAvailable:v.fixAvailable})),
+            fullCountsAfter: full.metadata?.vulnerabilities || {},
+            fullRemaining: Object.entries(full.vulnerabilities || {}).map(([name,v]) => ({name,severity:v.severity,isDirect:v.isDirect,range:v.range,fixAvailable:v.fixAvailable}))
           };
-          fs.writeFileSync('.github/tmp-ai-arman-dependency-remediation-summary.json', JSON.stringify(summary, null, 2) + '\n');
+          fs.writeFileSync(process.env.GITHUB_WORKSPACE + '/.github/tmp-ai-arman-minimal-remediation-test.json', JSON.stringify(summary, null, 2) + '\n');
           NODE
 
-      - name: Commit temporary remediation summary
+      - name: Commit temporary isolated test result
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/tmp-ai-arman-dependency-remediation-summary.json
-          git commit -m "Capture temporary dependency remediation summary"
+          git add .github/tmp-ai-arman-minimal-remediation-test.json
+          git commit -m "Capture isolated minimal dependency remediation test"
           git push
