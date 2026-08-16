@@ -1,0 +1,906 @@
+{
+  "generatedAt": "2026-08-16T19:25:03.066Z",
+  "sourceSha": "b830e2d553fb56e170b742887b4be49d4f2700d7",
+  "runtime": {
+    "auditReportVersion": 2,
+    "vulnerabilities": {
+      "@nestjs/platform-express": {
+        "name": "@nestjs/platform-express",
+        "severity": "high",
+        "isDirect": true,
+        "via": [
+          "multer"
+        ],
+        "effects": [],
+        "range": "<=11.1.27 || >=12.0.0-alpha.0",
+        "nodes": [
+          "node_modules/@nestjs/platform-express"
+        ],
+        "fixAvailable": true
+      },
+      "body-parser": {
+        "name": "body-parser",
+        "severity": "low",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1123976,
+            "name": "body-parser",
+            "dependency": "body-parser",
+            "title": "body-parser vulnerable to denial of service when invalid limit value silently disables size enforcement",
+            "url": "https://github.com/advisories/GHSA-v422-hmwv-36x6",
+            "severity": "low",
+            "cwe": [
+              "CWE-770"
+            ],
+            "cvss": {
+              "score": 3.7,
+              "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": ">=2.0.0 <2.3.0"
+          }
+        ],
+        "effects": [],
+        "range": "2.0.0 - 2.2.2",
+        "nodes": [
+          "node_modules/body-parser"
+        ],
+        "fixAvailable": true
+      },
+      "brace-expansion": {
+        "name": "brace-expansion",
+        "severity": "high",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1123896,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: DoS via exponential-time expansion of consecutive non-expanding {} groups",
+            "url": "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-407"
+            ],
+            "cvss": {
+              "score": 5.3,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": ">=2.0.0 <2.1.2"
+          },
+          {
+            "source": 1130589,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: DoS via unbounded expansion length causing an out-of-memory process crash",
+            "url": "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-770"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=2.0.0 <2.1.3"
+          },
+          {
+            "source": 1130736,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: DoS via unbounded intermediate arrays, bypassing the CVE-2026-14257 mitigation",
+            "url": "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-770"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=2.0.0 <2.1.4"
+          }
+        ],
+        "effects": [],
+        "range": "2.0.0 - 2.1.3",
+        "nodes": [
+          "node_modules/typeorm/node_modules/brace-expansion"
+        ],
+        "fixAvailable": true
+      },
+      "multer": {
+        "name": "multer",
+        "severity": "high",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1121089,
+            "name": "multer",
+            "dependency": "multer",
+            "title": "Multer vulnerable to Denial of Service via deeply nested field names",
+            "url": "https://github.com/advisories/GHSA-72gw-mp4g-v24j",
+            "severity": "high",
+            "cwe": [
+              "CWE-400"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=1.0.0 <2.2.0"
+          },
+          {
+            "source": 1121091,
+            "name": "multer",
+            "dependency": "multer",
+            "title": "Multer vulnerable to Denial of Service via incomplete cleanup of aborted uploads",
+            "url": "https://github.com/advisories/GHSA-3p4h-7m6x-2hcm",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-459"
+            ],
+            "cvss": {
+              "score": 5.3,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": ">=2.0.0-alpha.1 <2.2.0"
+          }
+        ],
+        "effects": [
+          "@nestjs/platform-express"
+        ],
+        "range": "1.0.0 - 2.1.1",
+        "nodes": [
+          "node_modules/multer"
+        ],
+        "fixAvailable": true
+      },
+      "qs": {
+        "name": "qs",
+        "severity": "moderate",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1119502,
+            "name": "qs",
+            "dependency": "qs",
+            "title": "qs has a remotely triggerable DoS: qs.stringify crashes with TypeError on null/undefined entries in comma-format arrays when encodeValuesOnly is set",
+            "url": "https://github.com/advisories/GHSA-q8mj-m7cp-5q26",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-476"
+            ],
+            "cvss": {
+              "score": 5.3,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": ">=6.11.1 <=6.15.1"
+          }
+        ],
+        "effects": [],
+        "range": "6.11.1 - 6.15.1",
+        "nodes": [
+          "node_modules/qs"
+        ],
+        "fixAvailable": true
+      },
+      "typeorm": {
+        "name": "typeorm",
+        "severity": "moderate",
+        "isDirect": true,
+        "via": [
+          {
+            "source": 1121284,
+            "name": "typeorm",
+            "dependency": "typeorm",
+            "title": "TypeORM: SQL Injection in UpdateQueryBuilder/SoftDeleteQueryBuilder orderBy (MySQL/MariaDB)",
+            "url": "https://github.com/advisories/GHSA-9ggv-8w38-r7pm",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-89"
+            ],
+            "cvss": {
+              "score": 5.9,
+              "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N"
+            },
+            "range": ">=0.1.12 <=0.3.28"
+          },
+          {
+            "source": 1139517,
+            "name": "typeorm",
+            "dependency": "typeorm",
+            "title": " TypeORM: migration:generate template-literal code injection",
+            "url": "https://github.com/advisories/GHSA-2rp8-mm9q-fp49",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-94"
+            ],
+            "cvss": {
+              "score": 5.7,
+              "vectorString": "CVSS:3.1/AV:N/AC:H/PR:H/UI:R/S:U/C:H/I:H/A:N"
+            },
+            "range": "<0.3.31"
+          }
+        ],
+        "effects": [],
+        "range": "<=0.3.30",
+        "nodes": [
+          "node_modules/typeorm"
+        ],
+        "fixAvailable": true
+      }
+    },
+    "metadata": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 1,
+        "moderate": 2,
+        "high": 3,
+        "critical": 0,
+        "total": 6
+      },
+      "dependencies": {
+        "prod": 243,
+        "dev": 547,
+        "optional": 29,
+        "peer": 8,
+        "peerOptional": 0,
+        "total": 791
+      }
+    }
+  },
+  "full": {
+    "auditReportVersion": 2,
+    "vulnerabilities": {
+      "@babel/core": {
+        "name": "@babel/core",
+        "severity": "low",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1123528,
+            "name": "@babel/core",
+            "dependency": "@babel/core",
+            "title": "@babel/core: Arbitrary File Read via sourceMappingURL Comment",
+            "url": "https://github.com/advisories/GHSA-4x5r-pxfx-6jf8",
+            "severity": "low",
+            "cwe": [
+              "CWE-22",
+              "CWE-200"
+            ],
+            "cvss": {
+              "score": 3.2,
+              "vectorString": "CVSS:3.1/AV:L/AC:H/PR:N/UI:N/S:C/C:L/I:N/A:N"
+            },
+            "range": "<=7.29.0"
+          }
+        ],
+        "effects": [],
+        "range": "<=7.29.0",
+        "nodes": [
+          "node_modules/@babel/core"
+        ],
+        "fixAvailable": true
+      },
+      "@nestjs/platform-express": {
+        "name": "@nestjs/platform-express",
+        "severity": "high",
+        "isDirect": true,
+        "via": [
+          "multer"
+        ],
+        "effects": [],
+        "range": "<=11.1.27 || >=12.0.0-alpha.0",
+        "nodes": [
+          "node_modules/@nestjs/platform-express"
+        ],
+        "fixAvailable": true
+      },
+      "body-parser": {
+        "name": "body-parser",
+        "severity": "low",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1123976,
+            "name": "body-parser",
+            "dependency": "body-parser",
+            "title": "body-parser vulnerable to denial of service when invalid limit value silently disables size enforcement",
+            "url": "https://github.com/advisories/GHSA-v422-hmwv-36x6",
+            "severity": "low",
+            "cwe": [
+              "CWE-770"
+            ],
+            "cvss": {
+              "score": 3.7,
+              "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": ">=2.0.0 <2.3.0"
+          }
+        ],
+        "effects": [],
+        "range": "2.0.0 - 2.2.2",
+        "nodes": [
+          "node_modules/body-parser"
+        ],
+        "fixAvailable": true
+      },
+      "brace-expansion": {
+        "name": "brace-expansion",
+        "severity": "high",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1120311,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: Large numeric range defeats documented `max` DoS protection",
+            "url": "https://github.com/advisories/GHSA-jxxr-4gwj-5jf2",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-400"
+            ],
+            "cvss": {
+              "score": 6.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=5.0.0 <5.0.6"
+          },
+          {
+            "source": 1123896,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: DoS via exponential-time expansion of consecutive non-expanding {} groups",
+            "url": "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-407"
+            ],
+            "cvss": {
+              "score": 5.3,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": ">=2.0.0 <2.1.2"
+          },
+          {
+            "source": 1123897,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: DoS via exponential-time expansion of consecutive non-expanding {} groups",
+            "url": "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-407"
+            ],
+            "cvss": {
+              "score": 5.3,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": "<1.1.16"
+          },
+          {
+            "source": 1123898,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: DoS via exponential-time expansion of consecutive non-expanding {} groups",
+            "url": "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-407"
+            ],
+            "cvss": {
+              "score": 5.3,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": ">=3.0.0 <5.0.7"
+          },
+          {
+            "source": 1130588,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: DoS via unbounded expansion length causing an out-of-memory process crash",
+            "url": "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-770"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": "<1.1.17"
+          },
+          {
+            "source": 1130589,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: DoS via unbounded expansion length causing an out-of-memory process crash",
+            "url": "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-770"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=2.0.0 <2.1.3"
+          },
+          {
+            "source": 1130591,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: DoS via unbounded expansion length causing an out-of-memory process crash",
+            "url": "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-770"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=4.0.0 <5.0.8"
+          },
+          {
+            "source": 1130734,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: DoS via unbounded intermediate arrays, bypassing the CVE-2026-14257 mitigation",
+            "url": "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-770"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=4.0.0 <5.0.9"
+          },
+          {
+            "source": 1130736,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: DoS via unbounded intermediate arrays, bypassing the CVE-2026-14257 mitigation",
+            "url": "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-770"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=2.0.0 <2.1.4"
+          },
+          {
+            "source": 1130737,
+            "name": "brace-expansion",
+            "dependency": "brace-expansion",
+            "title": "brace-expansion: DoS via unbounded intermediate arrays, bypassing the CVE-2026-14257 mitigation",
+            "url": "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-770"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": "<1.1.18"
+          }
+        ],
+        "effects": [],
+        "range": "<=1.1.17 || 2.0.0 - 2.1.3 || 3.0.0 - 5.0.8",
+        "nodes": [
+          "node_modules/@jest/reporters/node_modules/brace-expansion",
+          "node_modules/@typescript-eslint/typescript-estree/node_modules/brace-expansion",
+          "node_modules/brace-expansion",
+          "node_modules/glob/node_modules/brace-expansion",
+          "node_modules/jest-config/node_modules/brace-expansion",
+          "node_modules/jest-runtime/node_modules/brace-expansion",
+          "node_modules/typeorm/node_modules/brace-expansion"
+        ],
+        "fixAvailable": true
+      },
+      "fast-uri": {
+        "name": "fast-uri",
+        "severity": "high",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1124064,
+            "name": "fast-uri",
+            "dependency": "fast-uri",
+            "title": "fast-uri vulnerable to host confusion via literal backslash authority delimiter",
+            "url": "https://github.com/advisories/GHSA-v2hh-gcrm-f6hx",
+            "severity": "high",
+            "cwe": [
+              "CWE-436"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N"
+            },
+            "range": ">=3.0.0 <=3.1.3"
+          },
+          {
+            "source": 1130720,
+            "name": "fast-uri",
+            "dependency": "fast-uri",
+            "title": "fast-uri vulnerable to host confusion via backslash authority introducer",
+            "url": "https://github.com/advisories/GHSA-7p8r-x3mc-p8w7",
+            "severity": "high",
+            "cwe": [
+              "CWE-436"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N"
+            },
+            "range": ">=3.0.0 <3.1.5"
+          },
+          {
+            "source": 1138948,
+            "name": "fast-uri",
+            "dependency": "fast-uri",
+            "title": "fast-uri vulnerable to path traversal via percent-encoded dot segments",
+            "url": "https://github.com/advisories/GHSA-q3j6-qgpj-74h6",
+            "severity": "high",
+            "cwe": [
+              "CWE-22"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N"
+            },
+            "range": ">=3.0.0 <=3.1.0"
+          },
+          {
+            "source": 1139454,
+            "name": "fast-uri",
+            "dependency": "fast-uri",
+            "title": "fast-uri vulnerable to host confusion via percent-encoded authority delimiters",
+            "url": "https://github.com/advisories/GHSA-v39h-62p7-jpjc",
+            "severity": "high",
+            "cwe": [
+              "CWE-140",
+              "CWE-436"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N"
+            },
+            "range": ">=3.0.0 <=3.1.1"
+          },
+          {
+            "source": 1144861,
+            "name": "fast-uri",
+            "dependency": "fast-uri",
+            "title": "fast-uri vulnerable to host confusion via failed IDN canonicalization",
+            "url": "https://github.com/advisories/GHSA-4c8g-83qw-93j6",
+            "severity": "high",
+            "cwe": [
+              "CWE-436",
+              "CWE-551"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N"
+            },
+            "range": ">=3.0.0 <3.1.3"
+          }
+        ],
+        "effects": [],
+        "range": "3.0.0 - 3.1.4",
+        "nodes": [
+          "node_modules/fast-uri"
+        ],
+        "fixAvailable": true
+      },
+      "form-data": {
+        "name": "form-data",
+        "severity": "high",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1120743,
+            "name": "form-data",
+            "dependency": "form-data",
+            "title": "form-data: CRLF injection in form-data via unescaped multipart field names and filenames",
+            "url": "https://github.com/advisories/GHSA-hmw2-7cc7-3qxx",
+            "severity": "high",
+            "cwe": [
+              "CWE-93"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N"
+            },
+            "range": ">=4.0.0 <4.0.6"
+          }
+        ],
+        "effects": [],
+        "range": "4.0.0 - 4.0.5",
+        "nodes": [
+          "node_modules/form-data"
+        ],
+        "fixAvailable": true
+      },
+      "js-yaml": {
+        "name": "js-yaml",
+        "severity": "high",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1121859,
+            "name": "js-yaml",
+            "dependency": "js-yaml",
+            "title": "JS-YAML: Quadratic-complexity DoS in merge key handling via repeated aliases",
+            "url": "https://github.com/advisories/GHSA-h67p-54hq-rp68",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-407"
+            ],
+            "cvss": {
+              "score": 5.3,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": "<3.15.0"
+          },
+          {
+            "source": 1121860,
+            "name": "js-yaml",
+            "dependency": "js-yaml",
+            "title": "JS-YAML: Quadratic-complexity DoS in merge key handling via repeated aliases",
+            "url": "https://github.com/advisories/GHSA-h67p-54hq-rp68",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-407"
+            ],
+            "cvss": {
+              "score": 5.3,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": ">=4.0.0 <=4.1.1"
+          },
+          {
+            "source": 1123911,
+            "name": "js-yaml",
+            "dependency": "js-yaml",
+            "title": "js-yaml: YAML merge-key chains can force quadratic CPU consumption",
+            "url": "https://github.com/advisories/GHSA-52cp-r559-cp3m",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-407"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=4.0.0 <4.3.0"
+          },
+          {
+            "source": 1123912,
+            "name": "js-yaml",
+            "dependency": "js-yaml",
+            "title": "js-yaml: YAML merge-key chains can force quadratic CPU consumption",
+            "url": "https://github.com/advisories/GHSA-52cp-r559-cp3m",
+            "severity": "high",
+            "cwe": [
+              "CWE-400",
+              "CWE-407"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=3.0.0 <3.15.0"
+          },
+          {
+            "source": 1138114,
+            "name": "js-yaml",
+            "dependency": "js-yaml",
+            "title": "JS-YAML: Quadratic CPU consumption in !!omap resolution (3.x and 4.x) — CVE-2026-59870 fix not backported",
+            "url": "https://github.com/advisories/GHSA-5p4m-2wfm-xmqj",
+            "severity": "high",
+            "cwe": [
+              "CWE-407"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=3.0.0 <3.15.1"
+          },
+          {
+            "source": 1138115,
+            "name": "js-yaml",
+            "dependency": "js-yaml",
+            "title": "JS-YAML: Quadratic CPU consumption in !!omap resolution (3.x and 4.x) — CVE-2026-59870 fix not backported",
+            "url": "https://github.com/advisories/GHSA-5p4m-2wfm-xmqj",
+            "severity": "high",
+            "cwe": [
+              "CWE-407"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=4.0.0 <4.3.1"
+          }
+        ],
+        "effects": [],
+        "range": "<=3.15.0 || 4.0.0 - 4.3.0",
+        "nodes": [
+          "node_modules/@istanbuljs/load-nyc-config/node_modules/js-yaml",
+          "node_modules/js-yaml"
+        ],
+        "fixAvailable": true
+      },
+      "multer": {
+        "name": "multer",
+        "severity": "high",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1121089,
+            "name": "multer",
+            "dependency": "multer",
+            "title": "Multer vulnerable to Denial of Service via deeply nested field names",
+            "url": "https://github.com/advisories/GHSA-72gw-mp4g-v24j",
+            "severity": "high",
+            "cwe": [
+              "CWE-400"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": ">=1.0.0 <2.2.0"
+          },
+          {
+            "source": 1121091,
+            "name": "multer",
+            "dependency": "multer",
+            "title": "Multer vulnerable to Denial of Service via incomplete cleanup of aborted uploads",
+            "url": "https://github.com/advisories/GHSA-3p4h-7m6x-2hcm",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-459"
+            ],
+            "cvss": {
+              "score": 5.3,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": ">=2.0.0-alpha.1 <2.2.0"
+          }
+        ],
+        "effects": [
+          "@nestjs/platform-express"
+        ],
+        "range": "1.0.0 - 2.1.1",
+        "nodes": [
+          "node_modules/multer"
+        ],
+        "fixAvailable": true
+      },
+      "qs": {
+        "name": "qs",
+        "severity": "moderate",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1119502,
+            "name": "qs",
+            "dependency": "qs",
+            "title": "qs has a remotely triggerable DoS: qs.stringify crashes with TypeError on null/undefined entries in comma-format arrays when encodeValuesOnly is set",
+            "url": "https://github.com/advisories/GHSA-q8mj-m7cp-5q26",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-476"
+            ],
+            "cvss": {
+              "score": 5.3,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": ">=6.11.1 <=6.15.1"
+          }
+        ],
+        "effects": [],
+        "range": "6.11.1 - 6.15.1",
+        "nodes": [
+          "node_modules/qs"
+        ],
+        "fixAvailable": true
+      },
+      "typeorm": {
+        "name": "typeorm",
+        "severity": "moderate",
+        "isDirect": true,
+        "via": [
+          {
+            "source": 1121284,
+            "name": "typeorm",
+            "dependency": "typeorm",
+            "title": "TypeORM: SQL Injection in UpdateQueryBuilder/SoftDeleteQueryBuilder orderBy (MySQL/MariaDB)",
+            "url": "https://github.com/advisories/GHSA-9ggv-8w38-r7pm",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-89"
+            ],
+            "cvss": {
+              "score": 5.9,
+              "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N"
+            },
+            "range": ">=0.1.12 <=0.3.28"
+          },
+          {
+            "source": 1139517,
+            "name": "typeorm",
+            "dependency": "typeorm",
+            "title": " TypeORM: migration:generate template-literal code injection",
+            "url": "https://github.com/advisories/GHSA-2rp8-mm9q-fp49",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-94"
+            ],
+            "cvss": {
+              "score": 5.7,
+              "vectorString": "CVSS:3.1/AV:N/AC:H/PR:H/UI:R/S:U/C:H/I:H/A:N"
+            },
+            "range": "<0.3.31"
+          }
+        ],
+        "effects": [],
+        "range": "<=0.3.30",
+        "nodes": [
+          "node_modules/typeorm"
+        ],
+        "fixAvailable": true
+      }
+    },
+    "metadata": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 2,
+        "moderate": 2,
+        "high": 6,
+        "critical": 0,
+        "total": 10
+      },
+      "dependencies": {
+        "prod": 243,
+        "dev": 547,
+        "optional": 29,
+        "peer": 8,
+        "peerOptional": 0,
+        "total": 791
+      }
+    }
+  },
+  "dependencyPaths": {
+    "@nestjs/platform-express": "{\n  \"version\": \"0.0.1\",\n  \"name\": \"harmoniq-customer-core\",\n  \"dependencies\": {\n    \"@nestjs/core\": {\n      \"version\": \"11.1.19\",\n      \"resolved\": \"https://registry.npmjs.org/@nestjs/core/-/core-11.1.19.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"@nestjs/platform-express\": {\n          \"version\": \"11.1.19\"\n        }\n      }\n    },\n    \"@nestjs/platform-express\": {\n      \"version\": \"11.1.19\",\n      \"resolved\": \"https://registry.npmjs.org/@nestjs/platform-express/-/platform-express-11.1.19.tgz\",\n      \"overridden\": false\n    },\n    \"@nestjs/testing\": {\n      \"version\": \"11.1.19\",\n      \"resolved\": \"https://registry.npmjs.org/@nestjs/testing/-/testing-11.1.19.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"@nestjs/platform-express\": {\n          \"version\": \"11.1.19\"\n        }\n      }\n    }\n  }\n}\n",
+    "brace-expansion": "{\n  \"version\": \"0.0.1\",\n  \"name\": \"harmoniq-customer-core\",\n  \"dependencies\": {\n    \"@eslint/eslintrc\": {\n      \"version\": \"3.3.5\",\n      \"resolved\": \"https://registry.npmjs.org/@eslint/eslintrc/-/eslintrc-3.3.5.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"minimatch\": {\n          \"version\": \"3.1.5\",\n          \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"brace-expansion\": {\n              \"version\": \"1.1.14\",\n              \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.14.tgz\",\n              \"overridden\": false\n            }\n          }\n        }\n      }\n    },\n    \"@nestjs/cli\": {\n      \"version\": \"11.0.21\",\n      \"resolved\": \"https://registry.npmjs.org/@nestjs/cli/-/cli-11.0.21.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"glob\": {\n          \"version\": \"13.0.6\",\n          \"resolved\": \"https://registry.npmjs.org/glob/-/glob-13.0.6.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"minimatch\": {\n              \"version\": \"10.2.5\",\n              \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-10.2.5.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"brace-expansion\": {\n                  \"version\": \"5.0.5\",\n                  \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.5.tgz\",\n                  \"overridden\": false\n                }\n              }\n            }\n          }\n        }\n      }\n    },\n    \"jest\": {\n      \"version\": \"30.3.0\",\n      \"resolved\": \"https://registry.npmjs.org/jest/-/jest-30.3.0.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"@jest/core\": {\n          \"version\": \"30.3.0\",\n          \"resolved\": \"https://registry.npmjs.org/@jest/core/-/core-30.3.0.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"@jest/reporters\": {\n              \"version\": \"30.3.0\",\n              \"resolved\": \"https://registry.npmjs.org/@jest/reporters/-/reporters-30.3.0.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"glob\": {\n                  \"version\": \"10.5.0\",\n                  \"resolved\": \"https://registry.npmjs.org/glob/-/glob-10.5.0.tgz\",\n                  \"overridden\": false,\n                  \"dependencies\": {\n                    \"minimatch\": {\n                      \"version\": \"9.0.9\",\n                      \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-9.0.9.tgz\",\n                      \"overridden\": false,\n                      \"dependencies\": {\n                        \"brace-expansion\": {\n                          \"version\": \"2.1.0\",\n                          \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.0.tgz\",\n                          \"overridden\": false\n                        }\n                      }\n                    }\n                  }\n                }\n              }\n            },\n            \"jest-config\": {\n              \"version\": \"30.3.0\",\n              \"resolved\": \"https://registry.npmjs.org/jest-config/-/jest-config-30.3.0.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"glob\": {\n                  \"version\": \"10.5.0\",\n                  \"resolved\": \"https://registry.npmjs.org/glob/-/glob-10.5.0.tgz\",\n                  \"overridden\": false,\n                  \"dependencies\": {\n                    \"minimatch\": {\n                      \"version\": \"9.0.9\",\n                      \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-9.0.9.tgz\",\n                      \"overridden\": false,\n                      \"dependencies\": {\n                        \"brace-expansion\": {\n                          \"version\": \"2.1.0\",\n                          \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.0.tgz\",\n                          \"overridden\": false\n                        }\n                      }\n                    }\n                  }\n                }\n              }\n            },\n            \"jest-runtime\": {\n              \"version\": \"30.3.0\",\n              \"resolved\": \"https://registry.npmjs.org/jest-runtime/-/jest-runtime-30.3.0.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"glob\": {\n                  \"version\": \"10.5.0\",\n                  \"resolved\": \"https://registry.npmjs.org/glob/-/glob-10.5.0.tgz\",\n                  \"overridden\": false,\n                  \"dependencies\": {\n                    \"minimatch\": {\n                      \"version\": \"9.0.9\",\n                      \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-9.0.9.tgz\",\n                      \"overridden\": false,\n                      \"dependencies\": {\n                        \"brace-expansion\": {\n                          \"version\": \"2.1.0\",\n                          \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.0.tgz\",\n                          \"overridden\": false\n                        }\n                      }\n                    }\n                  }\n                }\n              }\n            }\n          }\n        }\n      }\n    },\n    \"typeorm\": {\n      \"version\": \"0.3.28\",\n      \"resolved\": \"https://registry.npmjs.org/typeorm/-/typeorm-0.3.28.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"glob\": {\n          \"version\": \"10.5.0\",\n          \"resolved\": \"https://registry.npmjs.org/glob/-/glob-10.5.0.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"minimatch\": {\n              \"version\": \"9.0.9\",\n              \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-9.0.9.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"brace-expansion\": {\n                  \"version\": \"2.1.0\",\n                  \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.0.tgz\",\n                  \"overridden\": false\n                }\n              }\n            }\n          }\n        }\n      }\n    },\n    \"typescript-eslint\": {\n      \"version\": \"8.59.1\",\n      \"resolved\": \"https://registry.npmjs.org/typescript-eslint/-/typescript-eslint-8.59.1.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"@typescript-eslint/typescript-estree\": {\n          \"version\": \"8.59.1\",\n          \"resolved\": \"https://registry.npmjs.org/@typescript-eslint/typescript-estree/-/typescript-estree-8.59.1.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"minimatch\": {\n              \"version\": \"10.2.5\",\n              \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-10.2.5.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"brace-expansion\": {\n                  \"version\": \"5.0.5\",\n                  \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.5.tgz\",\n                  \"overridden\": false\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n}\n",
+    "fast-uri": "{\n  \"version\": \"0.0.1\",\n  \"name\": \"harmoniq-customer-core\",\n  \"dependencies\": {\n    \"@nestjs/cli\": {\n      \"version\": \"11.0.21\",\n      \"resolved\": \"https://registry.npmjs.org/@nestjs/cli/-/cli-11.0.21.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"@angular-devkit/core\": {\n          \"version\": \"19.2.24\",\n          \"resolved\": \"https://registry.npmjs.org/@angular-devkit/core/-/core-19.2.24.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"ajv-formats\": {\n              \"version\": \"3.0.1\",\n              \"resolved\": \"https://registry.npmjs.org/ajv-formats/-/ajv-formats-3.0.1.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"ajv\": {\n                  \"version\": \"8.20.0\",\n                  \"resolved\": \"https://registry.npmjs.org/ajv/-/ajv-8.20.0.tgz\",\n                  \"overridden\": false,\n                  \"dependencies\": {\n                    \"fast-uri\": {\n                      \"version\": \"3.1.0\"\n                    }\n                  }\n                }\n              }\n            },\n            \"ajv\": {\n              \"version\": \"8.18.0\",\n              \"resolved\": \"https://registry.npmjs.org/ajv/-/ajv-8.18.0.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"fast-uri\": {\n                  \"version\": \"3.1.0\",\n                  \"resolved\": \"https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.0.tgz\",\n                  \"overridden\": false\n                }\n              }\n            }\n          }\n        },\n        \"webpack\": {\n          \"version\": \"5.106.0\",\n          \"resolved\": \"https://registry.npmjs.org/webpack/-/webpack-5.106.0.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"schema-utils\": {\n              \"version\": \"4.3.3\",\n              \"resolved\": \"https://registry.npmjs.org/schema-utils/-/schema-utils-4.3.3.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"ajv\": {\n                  \"version\": \"8.20.0\",\n                  \"resolved\": \"https://registry.npmjs.org/ajv/-/ajv-8.20.0.tgz\",\n                  \"overridden\": false,\n                  \"dependencies\": {\n                    \"fast-uri\": {\n                      \"version\": \"3.1.0\"\n                    }\n                  }\n                }\n              }\n            },\n            \"terser-webpack-plugin\": {\n              \"version\": \"5.5.0\",\n              \"resolved\": \"https://registry.npmjs.org/terser-webpack-plugin/-/terser-webpack-plugin-5.5.0.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"schema-utils\": {\n                  \"version\": \"4.3.3\",\n                  \"resolved\": \"https://registry.npmjs.org/schema-utils/-/schema-utils-4.3.3.tgz\",\n                  \"overridden\": false,\n                  \"dependencies\": {\n                    \"ajv\": {\n                      \"version\": \"8.20.0\",\n                      \"resolved\": \"https://registry.npmjs.org/ajv/-/ajv-8.20.0.tgz\",\n                      \"overridden\": false,\n                      \"dependencies\": {\n                        \"fast-uri\": {\n                          \"version\": \"3.1.0\"\n                        }\n                      }\n                    }\n                  }\n                }\n              }\n            }\n          }\n        }\n      }\n    },\n    \"ts-loader\": {\n      \"version\": \"9.5.7\",\n      \"resolved\": \"https://registry.npmjs.org/ts-loader/-/ts-loader-9.5.7.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"webpack\": {\n          \"version\": \"5.106.2\",\n          \"resolved\": \"https://registry.npmjs.org/webpack/-/webpack-5.106.2.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"schema-utils\": {\n              \"version\": \"4.3.3\",\n              \"resolved\": \"https://registry.npmjs.org/schema-utils/-/schema-utils-4.3.3.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"ajv\": {\n                  \"version\": \"8.20.0\",\n                  \"resolved\": \"https://registry.npmjs.org/ajv/-/ajv-8.20.0.tgz\",\n                  \"overridden\": false,\n                  \"dependencies\": {\n                    \"fast-uri\": {\n                      \"version\": \"3.1.0\"\n                    }\n                  }\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n}\n",
+    "form-data": "{\n  \"version\": \"0.0.1\",\n  \"name\": \"harmoniq-customer-core\",\n  \"dependencies\": {\n    \"@types/supertest\": {\n      \"version\": \"7.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/@types/supertest/-/supertest-7.2.0.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"@types/superagent\": {\n          \"version\": \"8.1.9\",\n          \"resolved\": \"https://registry.npmjs.org/@types/superagent/-/superagent-8.1.9.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"form-data\": {\n              \"version\": \"4.0.5\",\n              \"resolved\": \"https://registry.npmjs.org/form-data/-/form-data-4.0.5.tgz\",\n              \"overridden\": false\n            }\n          }\n        }\n      }\n    },\n    \"supertest\": {\n      \"version\": \"7.2.2\",\n      \"resolved\": \"https://registry.npmjs.org/supertest/-/supertest-7.2.2.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"superagent\": {\n          \"version\": \"10.3.0\",\n          \"resolved\": \"https://registry.npmjs.org/superagent/-/superagent-10.3.0.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"form-data\": {\n              \"version\": \"4.0.5\"\n            }\n          }\n        }\n      }\n    }\n  }\n}\n",
+    "js-yaml": "{\n  \"version\": \"0.0.1\",\n  \"name\": \"harmoniq-customer-core\",\n  \"dependencies\": {\n    \"@eslint/eslintrc\": {\n      \"version\": \"3.3.5\",\n      \"resolved\": \"https://registry.npmjs.org/@eslint/eslintrc/-/eslintrc-3.3.5.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"js-yaml\": {\n          \"version\": \"4.1.1\",\n          \"resolved\": \"https://registry.npmjs.org/js-yaml/-/js-yaml-4.1.1.tgz\",\n          \"overridden\": false\n        }\n      }\n    },\n    \"@nestjs/cli\": {\n      \"version\": \"11.0.21\",\n      \"resolved\": \"https://registry.npmjs.org/@nestjs/cli/-/cli-11.0.21.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"fork-ts-checker-webpack-plugin\": {\n          \"version\": \"9.1.0\",\n          \"resolved\": \"https://registry.npmjs.org/fork-ts-checker-webpack-plugin/-/fork-ts-checker-webpack-plugin-9.1.0.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"cosmiconfig\": {\n              \"version\": \"8.3.6\",\n              \"resolved\": \"https://registry.npmjs.org/cosmiconfig/-/cosmiconfig-8.3.6.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"js-yaml\": {\n                  \"version\": \"4.1.1\"\n                }\n              }\n            }\n          }\n        }\n      }\n    },\n    \"ts-jest\": {\n      \"version\": \"29.4.9\",\n      \"resolved\": \"https://registry.npmjs.org/ts-jest/-/ts-jest-29.4.9.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"@jest/transform\": {\n          \"version\": \"30.3.0\",\n          \"resolved\": \"https://registry.npmjs.org/@jest/transform/-/transform-30.3.0.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"babel-plugin-istanbul\": {\n              \"version\": \"7.0.1\",\n              \"resolved\": \"https://registry.npmjs.org/babel-plugin-istanbul/-/babel-plugin-istanbul-7.0.1.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"@istanbuljs/load-nyc-config\": {\n                  \"version\": \"1.1.0\",\n                  \"resolved\": \"https://registry.npmjs.org/@istanbuljs/load-nyc-config/-/load-nyc-config-1.1.0.tgz\",\n                  \"overridden\": false,\n                  \"dependencies\": {\n                    \"js-yaml\": {\n                      \"version\": \"3.14.2\",\n                      \"resolved\": \"https://registry.npmjs.org/js-yaml/-/js-yaml-3.14.2.tgz\",\n                      \"overridden\": false\n                    }\n                  }\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n}\n",
+    "multer": "{\n  \"version\": \"0.0.1\",\n  \"name\": \"harmoniq-customer-core\",\n  \"dependencies\": {\n    \"@nestjs/platform-express\": {\n      \"version\": \"11.1.19\",\n      \"resolved\": \"https://registry.npmjs.org/@nestjs/platform-express/-/platform-express-11.1.19.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"multer\": {\n          \"version\": \"2.1.1\",\n          \"resolved\": \"https://registry.npmjs.org/multer/-/multer-2.1.1.tgz\",\n          \"overridden\": false\n        }\n      }\n    }\n  }\n}\n",
+    "qs": "{\n  \"version\": \"0.0.1\",\n  \"name\": \"harmoniq-customer-core\",\n  \"dependencies\": {\n    \"@nestjs/platform-express\": {\n      \"version\": \"11.1.19\",\n      \"resolved\": \"https://registry.npmjs.org/@nestjs/platform-express/-/platform-express-11.1.19.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"express\": {\n          \"version\": \"5.2.1\",\n          \"resolved\": \"https://registry.npmjs.org/express/-/express-5.2.1.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"body-parser\": {\n              \"version\": \"2.2.2\",\n              \"resolved\": \"https://registry.npmjs.org/body-parser/-/body-parser-2.2.2.tgz\",\n              \"overridden\": false,\n              \"dependencies\": {\n                \"qs\": {\n                  \"version\": \"6.15.1\"\n                }\n              }\n            },\n            \"qs\": {\n              \"version\": \"6.15.1\",\n              \"resolved\": \"https://registry.npmjs.org/qs/-/qs-6.15.1.tgz\",\n              \"overridden\": false\n            }\n          }\n        }\n      }\n    },\n    \"supertest\": {\n      \"version\": \"7.2.2\",\n      \"resolved\": \"https://registry.npmjs.org/supertest/-/supertest-7.2.2.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"superagent\": {\n          \"version\": \"10.3.0\",\n          \"resolved\": \"https://registry.npmjs.org/superagent/-/superagent-10.3.0.tgz\",\n          \"overridden\": false,\n          \"dependencies\": {\n            \"qs\": {\n              \"version\": \"6.15.1\"\n            }\n          }\n        }\n      }\n    }\n  }\n}\n",
+    "typeorm": "{\n  \"version\": \"0.0.1\",\n  \"name\": \"harmoniq-customer-core\",\n  \"dependencies\": {\n    \"@nestjs/typeorm\": {\n      \"version\": \"11.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/@nestjs/typeorm/-/typeorm-11.0.1.tgz\",\n      \"overridden\": false,\n      \"dependencies\": {\n        \"typeorm\": {\n          \"version\": \"0.3.28\"\n        }\n      }\n    },\n    \"typeorm\": {\n      \"version\": \"0.3.28\",\n      \"resolved\": \"https://registry.npmjs.org/typeorm/-/typeorm-0.3.28.tgz\",\n      \"overridden\": false\n    }\n  }\n}\n"
+  }
+}
