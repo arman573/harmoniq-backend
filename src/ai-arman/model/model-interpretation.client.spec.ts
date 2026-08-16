@@ -16,6 +16,8 @@ function allowModel() {
     apiKey: 'configured',
     model: 'gpt-test-pinned',
     timeoutMs: 3000,
+    inputCostUsdPerMillionTokens: 0.25,
+    outputCostUsdPerMillionTokens: 2,
     reason: 'model_interpretation_allowed',
   });
 }
@@ -75,6 +77,8 @@ describe('AiArmanModelInterpretationClient', () => {
       apiKey: '',
       model: '',
       timeoutMs: 3000,
+      inputCostUsdPerMillionTokens: 0,
+      outputCostUsdPerMillionTokens: 0,
       reason: 'default_disabled',
     });
     const fetchSpy = jest.spyOn(global, 'fetch');
