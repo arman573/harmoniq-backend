@@ -1,5 +1,13 @@
 import { AiArmanModelInterpretationClient } from './model-interpretation.client';
 
+const FAILURE_EXIT_CODES: Record<string, number> = {
+  model_interpretation_authentication: 41,
+  model_interpretation_quota: 42,
+  model_interpretation_unavailable: 43,
+  model_interpretation_invalid: 44,
+  model_interpretation_disabled: 45,
+};
+
 async function main() {
   const client = new AiArmanModelInterpretationClient();
   const result = await client.interpret({
@@ -8,12 +16,12 @@ async function main() {
 
   if (!result.ok) {
     console.error(`MODEL_PROVIDER_SMOKE=FAIL code=${result.error}`);
-    process.exit(1);
+    process.exit(FAILURE_EXIT_CODES[result.error] ?? 49);
   }
 
   if (result.candidate.source !== 'model_candidate') {
     console.error('MODEL_PROVIDER_SMOKE=FAIL code=unexpected_source');
-    process.exit(1);
+    process.exit(46);
   }
 
   const inputPrice = Number(
@@ -36,5 +44,5 @@ async function main() {
 
 main().catch(() => {
   console.error('MODEL_PROVIDER_SMOKE=FAIL code=unexpected_error');
-  process.exit(1);
+  process.exit(49);
 });
