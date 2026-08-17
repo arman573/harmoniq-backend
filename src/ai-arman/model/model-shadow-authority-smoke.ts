@@ -8,11 +8,36 @@ import { AI_ARMAN_CHAT_CONTRACT_VERSION } from '../chat/chat-messages.types';
 
 const EXIT = {
   unsafeConfig: 51,
-  providerDidNotComplete: 52,
   deterministicAuthorityLost: 53,
   unsafeResponse: 54,
-  unexpected: 59,
+  shadowDisabled: 60,
+  providerNotConfigured: 61,
+  providerRateLimited: 62,
+  providerConcurrencyLimited: 63,
+  providerBudgetExceeded: 64,
+  providerTimeout: 65,
+  providerAuthentication: 66,
+  providerQuota: 67,
+  providerUnavailable: 68,
+  providerInvalidResponse: 69,
+  providerError: 70,
+  auditMissing: 71,
+  unexpected: 79,
 } as const;
+
+const PROVIDER_STATUS_EXIT: Record<string, number> = {
+  disabled: EXIT.shadowDisabled,
+  provider_not_configured: EXIT.providerNotConfigured,
+  provider_rate_limited: EXIT.providerRateLimited,
+  provider_concurrency_limited: EXIT.providerConcurrencyLimited,
+  provider_budget_exceeded: EXIT.providerBudgetExceeded,
+  provider_timeout: EXIT.providerTimeout,
+  provider_authentication: EXIT.providerAuthentication,
+  provider_quota: EXIT.providerQuota,
+  provider_unavailable: EXIT.providerUnavailable,
+  provider_invalid_response: EXIT.providerInvalidResponse,
+  provider_error: EXIT.providerError,
+};
 
 async function main() {
   const app = await NestFactory.createApplicationContext(AiArmanModule, {
@@ -51,11 +76,15 @@ async function main() {
     const audits = auditStore.snapshot();
     const latest = audits.at(-1);
 
-    if (!latest || latest.status !== 'completed') {
-      console.error(
-        `MODEL_SHADOW_AUTHORITY_SMOKE=FAIL code=provider_status_${latest?.status ?? 'missing'}`,
-      );
-      process.exitCode = EXIT.providerDidNotComplete;
+    if (!latest) {
+      console.error('MODEL_SHADOW_AUTHORITY_SMOKE=FAIL code=audit_missing');
+      process.exitCode = EXIT.auditMissing;
+      return;
+    }
+
+    if (latest.status !== 'completed') {
+      console.error(`MODEL_SHADOW_AUTHORITY_SMOKE=FAIL code=${latest.status}`);
+      process.exitCode = PROVIDER_STATUS_EXIT[latest.status] ?? EXIT.unexpected;
       return;
     }
 
