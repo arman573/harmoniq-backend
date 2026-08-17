@@ -20,6 +20,7 @@ env:
   PROJECT_ID: harmoniq-210513
   REGION: europe-north1
   SERVICE_NAME: harmoniq-ai-arman-beta0
+  SERVICE_URL: https://harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
   CANDIDATE_REVISION: harmoniq-ai-arman-beta0-shadow-a979b694-2
   TAG_URL: https://shadow-a979b694-2---harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
   LIVE_REVISION: harmoniq-ai-arman-beta0-00002-2kq
@@ -62,6 +63,9 @@ jobs:
             --project "$PROJECT_ID" --region "$REGION" --format=json \
             > "$RUNNER_TEMP/iam.json"
 
+          ACTUAL_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/service.json")"
+          test "$ACTUAL_URL" = "$SERVICE_URL"
+
           if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then
             echo "Public IAM detected; refusing smoke." >&2
             exit 1
@@ -72,6 +76,7 @@ jobs:
           test "$LIVE_PERCENT" = "100"
           test "$CANDIDATE_PERCENT" = "0"
           echo "PRIVATE_ZERO_TRAFFIC_BOUNDARY=PASS"
+          echo "CANONICAL_SERVICE_AUDIENCE=PASS"
 
       - name: Mint service-account ID token through WIF
         id: id_token
@@ -81,7 +86,9 @@ jobs:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
           token_format: id_token
-          id_token_audience: ${{ env.TAG_URL }}
+          id_token_audience: ${{ env.SERVICE_URL }}
+          id_token_include_email: true
+          create_credentials_file: false
 
       - name: Authenticated synthetic foundation smoke
         shell: bash
@@ -96,6 +103,7 @@ jobs:
             --write-out '%{http_code}' \
             --header "Authorization: Bearer $ID_TOKEN" \
             "$TAG_URL/ai-arman/foundation")"
+          echo "SHADOW_FOUNDATION_HTTP=$HTTP_CODE"
           test "$HTTP_CODE" = "200"
           jq -e '.ok == true and .service == "ai-arman" and .phase == "foundation-v1" and .productionActionsEnabled == false' "$RUNNER_TEMP/foundation.json" >/dev/null
           echo "AUTHENTICATED_SHADOW_FOUNDATION_SMOKE=PASS"
@@ -112,5 +120,6 @@ jobs:
             --write-out '%{http_code}' \
             --header "Authorization: Bearer $ID_TOKEN" \
             "$TAG_URL/ai-arman/widget/beta0-preview")"
+          echo "SHADOW_WIDGET_HTTP=$HTTP_CODE"
           test "$HTTP_CODE" = "404"
           echo "SHADOW_WIDGET_DISABLED=PASS"
