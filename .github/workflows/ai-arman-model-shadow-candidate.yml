@@ -213,10 +213,12 @@ jobs:
           CANDIDATE_PERCENT="$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-verify.json")"
           test "$LIVE_AFTER_PERCENT" = "100"
           test "$CANDIDATE_PERCENT" = "0"
+          echo "TRAFFIC_BOUNDARY_VERIFY=PASS"
 
           test "$(jq -r '.spec.containers[0].resources.limits.memory' "$RUNNER_TEMP/revision.json")" = "256Mi"
           test "$(jq -r '.spec.containerConcurrency' "$RUNNER_TEMP/revision.json")" = "1"
           test "$(jq -r '.spec.serviceAccountName' "$RUNNER_TEMP/revision.json")" = "$RUNTIME_SERVICE_ACCOUNT"
+          echo "REVISION_RUNTIME_VERIFY=PASS"
 
           env_value() { jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name == $n) | .value // empty' "$RUNNER_TEMP/revision.json"; }
           test "$(env_value AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" = "true"
@@ -228,18 +230,20 @@ jobs:
           test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_MINUTE)" = "1024"
           test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_CALL)" = "0.005"
           test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_MINUTE)" = "0.005"
+          echo "SHADOW_FLAGS_AND_BUDGETS_VERIFY=PASS"
 
-          SECRET_REF="$(jq -r '.spec.containers[0].env[]? | select(.name == "OPENAI_API_KEY") | .valueSource.secretKeyRef.secret // empty' "$RUNNER_TEMP/revision.json")"
-          SECRET_VERSION="$(jq -r '.spec.containers[0].env[]? | select(.name == "OPENAI_API_KEY") | .valueSource.secretKeyRef.version // empty' "$RUNNER_TEMP/revision.json")"
+          SECRET_REF="$(jq -r '.spec.containers[0].env[]? | select(.name == "OPENAI_API_KEY") | .valueFrom.secretKeyRef.name // empty' "$RUNNER_TEMP/revision.json")"
+          SECRET_VERSION="$(jq -r '.spec.containers[0].env[]? | select(.name == "OPENAI_API_KEY") | .valueFrom.secretKeyRef.key // empty' "$RUNNER_TEMP/revision.json")"
           test "$SECRET_REF" = "$SECRET_NAME"
           test "$SECRET_VERSION" = "1"
+          echo "SECRET_MANAGER_REFERENCE_VERIFY=PASS"
 
           IMAGE_FIELD="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/revision.json")"
           echo "$IMAGE_FIELD" | grep -F "$EXPECTED_DIGEST" >/dev/null
+          echo "IMMUTABLE_REVISION_IMAGE_VERIFY=PASS"
           echo "ZERO_TRAFFIC_VERIFY=PASS live=$LIVE_BEFORE:100 candidate=$CANDIDATE_REVISION:0"
           echo "PRIVATE_IAM_VERIFY=PASS"
           echo "PROMOTION_OFF_VERIFY=PASS"
-          echo "SECRET_MANAGER_REFERENCE_VERIFY=PASS"
 
       - name: Authenticated synthetic foundation smoke against tagged candidate
         shell: bash
