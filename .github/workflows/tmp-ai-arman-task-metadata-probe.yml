@@ -1,0 +1,98 @@
+name: Temporary AI Arman task metadata probe
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/tmp-ai-arman-task-metadata-probe.yml
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  JOB_NAME: ai-arman-model-provider-smoke
+  EXECUTION_NAME: ai-arman-model-provider-smoke-n6pvm
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+
+jobs:
+  task-metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Authenticate through existing WIF
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Read safe Cloud Run v2 task result fields only
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(gcloud auth print-access-token)"
+          echo "::add-mask::$TOKEN"
+          URL="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$JOB_NAME/executions/$EXECUTION_NAME/tasks"
+
+          HTTP_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/tasks-response.json" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $TOKEN" \
+            "$URL")"
+          echo "TASK_API_HTTP=$HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            jq -r '{code: (.error.code // null), status: (.error.status // null)}' "$RUNNER_TEMP/tasks-response.json"
+            exit 1
+          fi
+
+          COUNT="$(jq -r '.tasks | length' "$RUNNER_TEMP/tasks-response.json")"
+          echo "TASK_API_COUNT=$COUNT"
+          if [ "$COUNT" -lt 1 ]; then
+            exit 2
+          fi
+
+          jq -r '.tasks[] | {
+            name,
+            exitCode: (.lastAttemptResult.exitCode // null),
+            statusCode: (.lastAttemptResult.status.code // null),
+            conditionStates: ([.conditions[]? | {type, state, reason}] )
+          }' "$RUNNER_TEMP/tasks-response.json"
+
+          EXIT_CODE="$(jq -r '.tasks[0].lastAttemptResult.exitCode // empty' "$RUNNER_TEMP/tasks-response.json")"
+          test -n "$EXIT_CODE"
+          echo "MODEL_PROVIDER_SAFE_EXIT_CODE=$EXIT_CODE"
+          case "$EXIT_CODE" in
+            0) echo "MODEL_PROVIDER_CLASSIFICATION=pass" ;;
+            41) echo "MODEL_PROVIDER_CLASSIFICATION=authentication" ;;
+            42) echo "MODEL_PROVIDER_CLASSIFICATION=quota" ;;
+            43) echo "MODEL_PROVIDER_CLASSIFICATION=unavailable" ;;
+            44) echo "MODEL_PROVIDER_CLASSIFICATION=invalid_response" ;;
+            45) echo "MODEL_PROVIDER_CLASSIFICATION=configuration_disabled" ;;
+            46) echo "MODEL_PROVIDER_CLASSIFICATION=unexpected_source" ;;
+            49) echo "MODEL_PROVIDER_CLASSIFICATION=unexpected_error" ;;
+            *) echo "MODEL_PROVIDER_CLASSIFICATION=unknown_exit_$EXIT_CODE" ;;
+          esac
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## AI Arman Cloud Run task metadata probe"
+            echo
+            echo "- Read-only Cloud Run v2 API request"
+            echo "- Only safe task result fields were printed"
+            echo "- No logs, prompts, environment values or secret payloads were read"
+            echo "- No Cloud Run resources were mutated"
+          } >> "$GITHUB_STEP_SUMMARY"
