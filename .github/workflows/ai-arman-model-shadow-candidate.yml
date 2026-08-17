@@ -1,0 +1,289 @@
+name: AI Arman model shadow candidate
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/ai-arman-model-shadow-candidate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ai-arman-model-shadow-candidate
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  ARTIFACT_REPOSITORY: harmoniq-containers
+  SERVICE_NAME: harmoniq-ai-arman-beta0
+  SECRET_NAME: ai-arman-openai-api-key
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+
+jobs:
+  verify-build-and-deploy-zero-traffic:
+    name: Verify, build, and deploy 0% shadow candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Enforce exact branch and actor
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install and verify source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test -- --runInBand
+          npm run build
+          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=high
+
+      - name: Build and smoke candidate locally with model disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull -f Dockerfile.ai-arman-candidate -t ai-arman-shadow-candidate:verify .
+          CONTAINER_ID="$(docker run -d \
+            -p 18080:8080 \
+            -e PORT=8080 \
+            -e AI_ARMAN_WIDGET_PREVIEW_ENABLED=false \
+            -e AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false \
+            -e AI_ARMAN_MODEL_SHADOW_ENABLED=false \
+            -e AI_ARMAN_MODEL_PROMOTION_ENABLED=false \
+            ai-arman-shadow-candidate:verify)"
+          cleanup() {
+            docker logs "$CONTAINER_ID" || true
+            docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for attempt in {1..30}; do
+            if curl --silent --fail http://127.0.0.1:18080/ai-arman/foundation > "$RUNNER_TEMP/foundation.json"; then
+              break
+            fi
+            sleep 1
+          done
+          jq -e '.ok == true and .service == "ai-arman" and .phase == "foundation-v1" and .productionActionsEnabled == false' "$RUNNER_TEMP/foundation.json" >/dev/null
+          WIDGET_STATUS="$(curl --silent --output "$RUNNER_TEMP/widget.txt" --write-out '%{http_code}' http://127.0.0.1:18080/ai-arman/widget/beta0-preview)"
+          test "$WIDGET_STATUS" = "404"
+
+      - name: Authenticate with dedicated AI Arman deployer
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Snapshot live safety boundary before mutation
+        id: before
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
+
+          gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/service-before.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/iam-before.json"
+
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-before.json" >/dev/null; then
+            echo "Target service is public; refusing shadow candidate deploy." >&2
+            exit 1
+          fi
+
+          LIVE_REVISION="$(jq -r '[.status.traffic[]? | select((.percent // 0) > 0)] | sort_by(.percent) | last | .revisionName // empty' "$RUNNER_TEMP/service-before.json")"
+          LIVE_PERCENT="$(jq -r --arg rev "$LIVE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-before.json")"
+          test -n "$LIVE_REVISION"
+          test "$LIVE_PERCENT" = "100"
+          echo "live_revision=$LIVE_REVISION" >> "$GITHUB_OUTPUT"
+          echo "LIVE_BEFORE=$LIVE_REVISION percent=$LIVE_PERCENT"
+
+      - name: Build and push immutable image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA:0:12}"
+          TAG="shadow-${SHORT_SHA}-run-${GITHUB_RUN_ID}"
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:$TAG"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build --pull -f Dockerfile.ai-arman-candidate --tag "$IMAGE" .
+          docker push "$IMAGE"
+          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          IMMUTABLE_IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME@$DIGEST"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "immutable_image=$IMMUTABLE_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "IMMUTABLE_IMAGE_VERIFIED=$DIGEST"
+
+      - name: Deploy private 0%-traffic shadow revision
+        id: deploy
+        shell: bash
+        env:
+          IMMUTABLE_IMAGE: ${{ steps.image.outputs.immutable_image }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA:0:8}"
+          REVISION_SUFFIX="shadow-${SHORT_SHA}-${GITHUB_RUN_NUMBER}"
+          TAG="shadow-${SHORT_SHA}-${GITHUB_RUN_NUMBER}"
+
+          gcloud run deploy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --platform managed \
+            --image "$IMMUTABLE_IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --revision-suffix "$REVISION_SUFFIX" \
+            --tag "$TAG" \
+            --no-traffic \
+            --ingress all \
+            --port 8080 \
+            --startup-probe "httpGet.path=/ai-arman/foundation,httpGet.port=8080,initialDelaySeconds=0,failureThreshold=12,timeoutSeconds=2,periodSeconds=5" \
+            --cpu 1 \
+            --memory 256Mi \
+            --cpu-throttling \
+            --no-cpu-boost \
+            --min 0 \
+            --max 1 \
+            --concurrency 1 \
+            --timeout 30 \
+            --set-env-vars "NODE_ENV=production,AI_ARMAN_WIDGET_PREVIEW_ENABLED=false,AI_ARMAN_MODEL_INTERPRETATION_ENABLED=true,AI_ARMAN_MODEL_SHADOW_ENABLED=true,AI_ARMAN_MODEL_PROMOTION_ENABLED=false,AI_ARMAN_OPENAI_MODEL=gpt-5-mini,AI_ARMAN_MODEL_INTERPRETATION_TIMEOUT_MS=10000,AI_ARMAN_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS=0.25,AI_ARMAN_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS=2,AI_ARMAN_MODEL_SHADOW_PROVIDER_TIMEOUT_MS=10000,AI_ARMAN_MODEL_SHADOW_MAX_CALLS_PER_MINUTE=1,AI_ARMAN_MODEL_SHADOW_MAX_CONCURRENT_CALLS=1,AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_CALL=1024,AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_MINUTE=1024,AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_CALL=0.005,AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_MINUTE=0.005" \
+            --set-secrets "OPENAI_API_KEY=$SECRET_NAME:1" \
+            --labels "release=model-shadow-candidate,source-sha=$SHORT_SHA,promotion=off,traffic=zero" \
+            --quiet
+
+          gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/service-after.json"
+          REVISION="$(jq -r '.status.latestReadyRevisionName // empty' "$RUNNER_TEMP/service-after.json")"
+          TAG_URL="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag == $tag) | .url // empty' "$RUNNER_TEMP/service-after.json")"
+          test -n "$REVISION"
+          test -n "$TAG_URL"
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+          echo "tag_url=$TAG_URL" >> "$GITHUB_OUTPUT"
+          echo "SHADOW_CANDIDATE_REVISION=$REVISION"
+
+      - name: Verify zero traffic, flags, secret reference, and private IAM
+        shell: bash
+        env:
+          LIVE_BEFORE: ${{ steps.before.outputs.live_revision }}
+          CANDIDATE_REVISION: ${{ steps.deploy.outputs.revision }}
+          EXPECTED_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-verify.json"
+          gcloud run revisions describe "$CANDIDATE_REVISION" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/revision.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-after.json" >/dev/null; then
+            echo "Public IAM detected after deploy." >&2
+            exit 1
+          fi
+
+          LIVE_AFTER_PERCENT="$(jq -r --arg rev "$LIVE_BEFORE" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-verify.json")"
+          CANDIDATE_PERCENT="$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-verify.json")"
+          test "$LIVE_AFTER_PERCENT" = "100"
+          test "$CANDIDATE_PERCENT" = "0"
+
+          test "$(jq -r '.spec.containers[0].resources.limits.memory' "$RUNNER_TEMP/revision.json")" = "256Mi"
+          test "$(jq -r '.spec.containerConcurrency' "$RUNNER_TEMP/revision.json")" = "1"
+          test "$(jq -r '.spec.serviceAccountName' "$RUNNER_TEMP/revision.json")" = "$RUNTIME_SERVICE_ACCOUNT"
+
+          env_value() { jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name == $n) | .value // empty' "$RUNNER_TEMP/revision.json"; }
+          test "$(env_value AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_PROMOTION_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_CALLS_PER_MINUTE)" = "1"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_CONCURRENT_CALLS)" = "1"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_CALL)" = "1024"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_MINUTE)" = "1024"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_CALL)" = "0.005"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_MINUTE)" = "0.005"
+
+          SECRET_REF="$(jq -r '.spec.containers[0].env[]? | select(.name == "OPENAI_API_KEY") | .valueSource.secretKeyRef.secret // empty' "$RUNNER_TEMP/revision.json")"
+          SECRET_VERSION="$(jq -r '.spec.containers[0].env[]? | select(.name == "OPENAI_API_KEY") | .valueSource.secretKeyRef.version // empty' "$RUNNER_TEMP/revision.json")"
+          test "$SECRET_REF" = "$SECRET_NAME"
+          test "$SECRET_VERSION" = "1"
+
+          IMAGE_FIELD="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/revision.json")"
+          echo "$IMAGE_FIELD" | grep -F "$EXPECTED_DIGEST" >/dev/null
+          echo "ZERO_TRAFFIC_VERIFY=PASS live=$LIVE_BEFORE:100 candidate=$CANDIDATE_REVISION:0"
+          echo "PRIVATE_IAM_VERIFY=PASS"
+          echo "PROMOTION_OFF_VERIFY=PASS"
+          echo "SECRET_MANAGER_REFERENCE_VERIFY=PASS"
+
+      - name: Authenticated synthetic foundation smoke against tagged candidate
+        shell: bash
+        env:
+          TAG_URL: ${{ steps.deploy.outputs.tag_url }}
+        run: |
+          set -euo pipefail
+          ID_TOKEN="$(gcloud auth print-identity-token --audiences="$TAG_URL")"
+          echo "::add-mask::$ID_TOKEN"
+          curl --silent --show-error --fail \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            "$TAG_URL/ai-arman/foundation" > "$RUNNER_TEMP/remote-foundation.json"
+          jq -e '.ok == true and .service == "ai-arman" and .phase == "foundation-v1" and .productionActionsEnabled == false' "$RUNNER_TEMP/remote-foundation.json" >/dev/null
+          echo "AUTHENTICATED_SYNTHETIC_FOUNDATION_SMOKE=PASS"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+          REVISION: ${{ steps.deploy.outputs.revision }}
+          LIVE_REVISION: ${{ steps.before.outputs.live_revision }}
+        run: |
+          {
+            echo "## AI Arman 0%-traffic model shadow candidate"
+            echo
+            echo "- Source SHA: \`$GITHUB_SHA\`"
+            echo "- Immutable digest: \`${DIGEST:-not-built}\`"
+            echo "- Candidate revision: \`${REVISION:-not-deployed}\`"
+            echo "- Existing live revision retained at 100%: \`${LIVE_REVISION:-unknown}\`"
+            echo "- Candidate main traffic: 0%"
+            echo "- Service IAM: private"
+            echo "- Memory: 256 MiB"
+            echo "- Cloud Run concurrency: 1"
+            echo "- Model interpretation: ON"
+            echo "- Model shadow: ON"
+            echo "- Model promotion: OFF"
+            echo "- Provider calls/minute: 1"
+            echo "- Provider concurrent calls: 1"
+            echo "- Token budget: 1024/call and 1024/minute"
+            echo "- Cost budget: USD 0.005/call and USD 0.005/minute"
+            echo "- OpenAI credential: Secret Manager reference only"
+            echo "- Customer traffic shift: none"
+            echo
+            echo "No live-shadow traffic, public exposure, model promotion, production action, or PR merge is performed."
+          } >> "$GITHUB_STEP_SUMMARY"
