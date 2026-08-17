@@ -86,10 +86,12 @@ jobs:
           CANDIDATE_PERCENT="$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-before.json")"
           TAG_REVISION="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag == $tag) | .revisionName // empty' "$RUNNER_TEMP/service-before.json")"
           TAG_URL_ACTUAL="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag == $tag) | .url // empty' "$RUNNER_TEMP/service-before.json")"
+          SERVICE_MAX="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service-before.json")"
           test "$LIVE_PERCENT" = "100"
           test "$CANDIDATE_PERCENT" = "0"
           test "$TAG_REVISION" = "$CANDIDATE_REVISION"
           test "$TAG_URL_ACTUAL" = "$TAG_URL"
+          test "$SERVICE_MAX" = "1"
 
           READY="$(jq -r '[.status.conditions[]? | select(.type == "Ready")][0].status // empty' "$RUNNER_TEMP/candidate-revision.json")"
           test "$READY" = "True"
@@ -124,6 +126,7 @@ jobs:
           echo "PRIVATE_IAM=PASS"
           echo "LIVE_TRAFFIC=100"
           echo "CANDIDATE_TRAFFIC=0"
+          echo "SERVICE_MAX_BEFORE=1"
           echo "PROMOTION_OFF=PASS"
           echo "CANDIDATE_IMMUTABLE_DIGEST=PASS"
 
@@ -178,12 +181,29 @@ jobs:
           echo "TAGGED_CANDIDATE_DETERMINISTIC_AUTHORITY=PASS"
           echo "TAGGED_CANDIDATE_WIDGET_DISABLED=PASS"
 
-      - name: Restore deployer credentials before traffic mutation
+      - name: Restore deployer credentials before service mutation
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Raise service max from 1 to 2 without new revision
+        id: scale
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "attempted=true" >> "$GITHUB_OUTPUT"
+          gcloud run services update "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --max 2 \
+            --quiet
+          gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/service-scaled.json"
+          test "$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service-scaled.json")" = "2"
+          echo "SERVICE_MAX_AFTER=2"
 
       - name: Shift exactly 1% to shadow candidate
         id: shift
@@ -220,14 +240,17 @@ jobs:
           LIVE_PERCENT="$(jq -r --arg rev "$LIVE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-after.json")"
           CANDIDATE_PERCENT="$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-after.json")"
           TAG_REVISION="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag == $tag) | .revisionName // empty' "$RUNNER_TEMP/service-after.json")"
+          SERVICE_MAX="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service-after.json")"
           test "$LIVE_PERCENT" = "99"
           test "$CANDIDATE_PERCENT" = "1"
           test "$TAG_REVISION" = "$CANDIDATE_REVISION"
+          test "$SERVICE_MAX" = "2"
 
           PROMOTION="$(jq -r '.spec.containers[0].env[]? | select(.name == "AI_ARMAN_MODEL_PROMOTION_ENABLED") | .value // empty' "$RUNNER_TEMP/candidate-after.json")"
           test "$PROMOTION" = "false"
 
           echo "LIVE_SHADOW_TRAFFIC_BOUNDARY=PASS live=$LIVE_REVISION:99 candidate=$CANDIDATE_REVISION:1"
+          echo "SERVICE_MAX_DURING_SHADOW=2"
           echo "PRIVATE_IAM_AFTER_SHIFT=PASS"
           echo "PROMOTION_OFF_AFTER_SHIFT=PASS"
 
@@ -261,30 +284,47 @@ jobs:
           echo "CANONICAL_SERVICE_AFTER_SHIFT=PASS"
 
       - name: Authenticate rollback identity if any post-mutation gate failed
-        if: failure() && steps.shift.outputs.attempted == 'true'
+        if: failure() && steps.scale.outputs.attempted == 'true'
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
-      - name: Fail-closed rollback to deterministic revision
-        if: failure() && steps.shift.outputs.attempted == 'true'
+      - name: Fail-closed rollback to deterministic revision and max 1
+        if: failure() && steps.scale.outputs.attempted == 'true'
         shell: bash
         run: |
           set +e
+          TRAFFIC_CODE=0
+          SCALE_CODE=0
+
           gcloud run services update-traffic "$SERVICE_NAME" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --to-revisions "$LIVE_REVISION=100" \
-            --quiet
-          CODE=$?
-          if [ "$CODE" -eq 0 ]; then
-            echo "LIVE_SHADOW_ROLLBACK=PASS live=$LIVE_REVISION:100"
-          else
-            echo "LIVE_SHADOW_ROLLBACK=FAILED"
+            --quiet || TRAFFIC_CODE=$?
+
+          gcloud run services update "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --max 1 \
+            --quiet || SCALE_CODE=$?
+
+          if [ "$TRAFFIC_CODE" -eq 0 ] && [ "$SCALE_CODE" -eq 0 ]; then
+            gcloud run services describe "$SERVICE_NAME" \
+              --project "$PROJECT_ID" --region "$REGION" --format=json \
+              > "$RUNNER_TEMP/service-rollback.json"
+            LIVE_PERCENT="$(jq -r --arg rev "$LIVE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-rollback.json")"
+            SERVICE_MAX="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service-rollback.json")"
+            test "$LIVE_PERCENT" = "100" || exit 1
+            test "$SERVICE_MAX" = "1" || exit 1
+            echo "LIVE_SHADOW_ROLLBACK=PASS live=$LIVE_REVISION:100 max=1"
+            exit 0
           fi
-          exit "$CODE"
+
+          echo "LIVE_SHADOW_ROLLBACK=FAILED traffic_code=$TRAFFIC_CODE scale_code=$SCALE_CODE"
+          exit 1
 
       - name: Summary
         if: always()
@@ -297,6 +337,7 @@ jobs:
             echo "- Shadow revision: \`$CANDIDATE_REVISION\`"
             echo "- Shadow image digest: \`$EXPECTED_CANDIDATE_DIGEST\`"
             echo "- Intended traffic split after a green run: 99% deterministic / 1% shadow"
+            echo "- Service max during green 1% shadow: 2 instances"
             echo "- Service IAM: private"
             echo "- Model interpretation on shadow: ON"
             echo "- Model shadow: ON"
@@ -307,5 +348,5 @@ jobs:
             echo "- Token budget: 1024/call and 1024/minute"
             echo "- Cost budget: USD 0.005/call and USD 0.005/minute"
             echo "- Secret: Secret Manager reference only"
-            echo "- Any failed post-mutation gate triggers rollback to 100% deterministic traffic"
+            echo "- Any failed post-mutation gate triggers rollback to 100% deterministic traffic and service max 1"
           } >> "$GITHUB_STEP_SUMMARY"
