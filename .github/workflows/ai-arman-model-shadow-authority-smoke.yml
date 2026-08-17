@@ -6,6 +6,7 @@ on:
       - feature/ai-arman-foundation-v1
     paths:
       - .github/workflows/ai-arman-model-shadow-authority-smoke.yml
+      - src/ai-arman/model/model-shadow-authority-smoke.ts
   workflow_dispatch:
 
 permissions:
@@ -191,6 +192,10 @@ jobs:
             69) CLASSIFICATION="provider_invalid_response" ;;
             70) CLASSIFICATION="provider_error" ;;
             71) CLASSIFICATION="audit_missing" ;;
+            72) CLASSIFICATION="bootstrap_failure" ;;
+            73) CLASSIFICATION="dependency_resolution_failure" ;;
+            74) CLASSIFICATION="conversation_failure" ;;
+            75) CLASSIFICATION="cleanup_failure" ;;
             79) CLASSIFICATION="unexpected_error" ;;
             *) CLASSIFICATION="unknown_exit_$EXIT_CODE" ;;
           esac
