@@ -114,22 +114,91 @@ jobs:
             --quiet
           echo "SHADOW_AUTHORITY_JOB_DEPLOY=PASS"
 
-      - name: Execute one synthetic shadow call and require deterministic authority
+      - name: Execute one synthetic shadow call and safely classify result
         id: execute
         shell: bash
         env:
           JOB_NAME: ${{ steps.deploy_job.outputs.job_name }}
         run: |
           set -euo pipefail
+          set +e
           gcloud run jobs execute "$JOB_NAME" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --wait \
             --quiet
-          echo "MODEL_SHADOW_PROVIDER_CALL=PASS"
-          echo "DETERMINISTIC_RESPONSE_AUTHORITY=PASS"
-          echo "MODEL_PROMOTION=OFF"
-          echo "CUSTOMER_TRAFFIC=NONE"
+          EXECUTE_CODE=$?
+          set -e
+
+          EXECUTION="$(gcloud run jobs executions list \
+            --job "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --limit 1 \
+            --sort-by='~metadata.creationTimestamp' \
+            --format='value(metadata.name)')"
+          test -n "$EXECUTION"
+          echo "execution=$EXECUTION" >> "$GITHUB_OUTPUT"
+          echo "SHADOW_AUTHORITY_EXECUTION=$EXECUTION"
+
+          if [ "$EXECUTE_CODE" -eq 0 ]; then
+            echo "classification=pass" >> "$GITHUB_OUTPUT"
+            echo "MODEL_SHADOW_PROVIDER_CALL=PASS"
+            echo "DETERMINISTIC_RESPONSE_AUTHORITY=PASS"
+            echo "MODEL_PROMOTION=OFF"
+            echo "CUSTOMER_TRAFFIC=NONE"
+            exit 0
+          fi
+
+          TOKEN="$(gcloud auth print-access-token)"
+          echo "::add-mask::$TOKEN"
+          URL="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$JOB_NAME/executions/$EXECUTION/tasks"
+          EXIT_CODE=""
+          for attempt in $(seq 1 20); do
+            HTTP_CODE="$(curl --silent --show-error \
+              --output "$RUNNER_TEMP/tasks.json" \
+              --write-out '%{http_code}' \
+              --header "Authorization: Bearer $TOKEN" \
+              "$URL")"
+            if [ "$HTTP_CODE" = "200" ]; then
+              EXIT_CODE="$(jq -r '.tasks[0].lastAttemptResult.exitCode // empty' "$RUNNER_TEMP/tasks.json")"
+              if [ -n "$EXIT_CODE" ]; then
+                break
+              fi
+            fi
+            sleep 1
+          done
+
+          if [ -z "$EXIT_CODE" ]; then
+            echo "SHADOW_AUTHORITY_CLASSIFICATION=metadata_not_available"
+            echo "classification=metadata_not_available" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          case "$EXIT_CODE" in
+            51) CLASSIFICATION="unsafe_config" ;;
+            53) CLASSIFICATION="deterministic_authority_lost" ;;
+            54) CLASSIFICATION="unsafe_response" ;;
+            60) CLASSIFICATION="shadow_disabled" ;;
+            61) CLASSIFICATION="provider_not_configured" ;;
+            62) CLASSIFICATION="provider_rate_limited" ;;
+            63) CLASSIFICATION="provider_concurrency_limited" ;;
+            64) CLASSIFICATION="provider_budget_exceeded" ;;
+            65) CLASSIFICATION="provider_timeout" ;;
+            66) CLASSIFICATION="provider_authentication" ;;
+            67) CLASSIFICATION="provider_quota" ;;
+            68) CLASSIFICATION="provider_unavailable" ;;
+            69) CLASSIFICATION="provider_invalid_response" ;;
+            70) CLASSIFICATION="provider_error" ;;
+            71) CLASSIFICATION="audit_missing" ;;
+            79) CLASSIFICATION="unexpected_error" ;;
+            *) CLASSIFICATION="unknown_exit_$EXIT_CODE" ;;
+          esac
+
+          echo "SHADOW_AUTHORITY_SAFE_EXIT_CODE=$EXIT_CODE"
+          echo "SHADOW_AUTHORITY_CLASSIFICATION=$CLASSIFICATION"
+          echo "classification=$CLASSIFICATION" >> "$GITHUB_OUTPUT"
+          exit 1
 
       - name: Delete temporary Cloud Run Job
         if: always() && steps.deploy_job.outputs.attempted == 'true'
@@ -155,12 +224,16 @@ jobs:
         shell: bash
         env:
           DIGEST: ${{ steps.image.outputs.digest }}
+          CLASSIFICATION: ${{ steps.execute.outputs.classification }}
+          EXECUTION: ${{ steps.execute.outputs.execution }}
         run: |
           {
             echo "## AI Arman isolated model shadow authority gate"
             echo
             echo "- Source SHA: \`$GITHUB_SHA\`"
             echo "- Immutable image digest: \`${DIGEST:-not-built}\`"
+            echo "- Execution: \`${EXECUTION:-not-started}\`"
+            echo "- Safe classification: \`${CLASSIFICATION:-not-classified}\`"
             echo "- Model interpretation: ON only inside isolated Job"
             echo "- Shadow: ON only inside isolated Job"
             echo "- Promotion: OFF"
