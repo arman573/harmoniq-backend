@@ -86,7 +86,6 @@ async function main() {
     try {
       response = await conversation.handleWithShadow({
         contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
-        conversationId: 'synthetic-shadow-authority-smoke',
         clientMessageId: 'synthetic-shadow-authority-smoke-1',
         message: {
           text: 'Hej!',
