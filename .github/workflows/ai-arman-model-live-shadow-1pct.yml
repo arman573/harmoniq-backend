@@ -1,0 +1,311 @@
+name: AI Arman 1% live shadow gate
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/ai-arman-model-live-shadow-1pct.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ai-arman-model-live-shadow-1pct
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  SERVICE_NAME: harmoniq-ai-arman-beta0
+  SERVICE_URL: https://harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
+  LIVE_REVISION: harmoniq-ai-arman-beta0-00002-2kq
+  CANDIDATE_REVISION: harmoniq-ai-arman-beta0-shadow-a979b694-2
+  CANDIDATE_TAG: shadow-a979b694-2
+  TAG_URL: https://shadow-a979b694-2---harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
+  EXPECTED_CANDIDATE_DIGEST: sha256:f28eff874264cdf72d3edc3f8d7cda9a7c4a8770f3254f4c240136900e151932
+  SECRET_NAME: ai-arman-openai-api-key
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+
+jobs:
+  guarded-one-percent-live-shadow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Enforce exact branch and actor
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Authenticate for Cloud Run preflight
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Fail-closed preflight of private service and shadow candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
+
+          gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/service-before.json"
+          gcloud run revisions describe "$LIVE_REVISION" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/live-revision.json"
+          gcloud run revisions describe "$CANDIDATE_REVISION" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/candidate-revision.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/iam-before.json"
+
+          test "$(jq -r '.status.url // empty' "$RUNNER_TEMP/service-before.json")" = "$SERVICE_URL"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-before.json" >/dev/null; then
+            echo "Public IAM detected; refusing live shadow." >&2
+            exit 1
+          fi
+
+          LIVE_PERCENT="$(jq -r --arg rev "$LIVE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-before.json")"
+          CANDIDATE_PERCENT="$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-before.json")"
+          TAG_REVISION="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag == $tag) | .revisionName // empty' "$RUNNER_TEMP/service-before.json")"
+          TAG_URL_ACTUAL="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag == $tag) | .url // empty' "$RUNNER_TEMP/service-before.json")"
+          test "$LIVE_PERCENT" = "100"
+          test "$CANDIDATE_PERCENT" = "0"
+          test "$TAG_REVISION" = "$CANDIDATE_REVISION"
+          test "$TAG_URL_ACTUAL" = "$TAG_URL"
+
+          READY="$(jq -r '[.status.conditions[]? | select(.type == "Ready")][0].status // empty' "$RUNNER_TEMP/candidate-revision.json")"
+          test "$READY" = "True"
+          test "$(jq -r '.spec.containers[0].resources.limits.memory' "$RUNNER_TEMP/candidate-revision.json")" = "256Mi"
+          test "$(jq -r '.spec.containerConcurrency' "$RUNNER_TEMP/candidate-revision.json")" = "1"
+          test "$(jq -r '.spec.serviceAccountName' "$RUNNER_TEMP/candidate-revision.json")" = "$RUNTIME_SERVICE_ACCOUNT"
+
+          env_value() { jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name == $n) | .value // empty' "$RUNNER_TEMP/candidate-revision.json"; }
+          test "$(env_value AI_ARMAN_WIDGET_PREVIEW_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_PROMOTION_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_CALLS_PER_MINUTE)" = "1"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_CONCURRENT_CALLS)" = "1"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_CALL)" = "1024"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_MINUTE)" = "1024"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_CALL)" = "0.005"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_MINUTE)" = "0.005"
+
+          SECRET_REF="$(jq -r '.spec.containers[0].env[]? | select(.name == "OPENAI_API_KEY") | .valueFrom.secretKeyRef.name // empty' "$RUNNER_TEMP/candidate-revision.json")"
+          SECRET_VERSION="$(jq -r '.spec.containers[0].env[]? | select(.name == "OPENAI_API_KEY") | .valueFrom.secretKeyRef.key // empty' "$RUNNER_TEMP/candidate-revision.json")"
+          test "$SECRET_REF" = "$SECRET_NAME"
+          test "$SECRET_VERSION" = "1"
+
+          IMAGE_FIELD="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/candidate-revision.json")"
+          echo "$IMAGE_FIELD" | grep -F "$EXPECTED_CANDIDATE_DIGEST" >/dev/null
+
+          LIVE_PROMOTION="$(jq -r '.spec.containers[0].env[]? | select(.name == "AI_ARMAN_MODEL_PROMOTION_ENABLED") | .value // empty' "$RUNNER_TEMP/live-revision.json")"
+          test "$LIVE_PROMOTION" != "true"
+
+          echo "LIVE_SHADOW_PREFLIGHT=PASS"
+          echo "PRIVATE_IAM=PASS"
+          echo "LIVE_TRAFFIC=100"
+          echo "CANDIDATE_TRAFFIC=0"
+          echo "PROMOTION_OFF=PASS"
+          echo "CANDIDATE_IMMUTABLE_DIGEST=PASS"
+
+      - name: Mint canonical-audience ID token for candidate smoke
+        id: candidate_id_token
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ env.SERVICE_URL }}
+          id_token_include_email: true
+          create_credentials_file: false
+
+      - name: Authenticated tagged candidate deterministic-authority smoke
+        shell: bash
+        env:
+          ID_TOKEN: ${{ steps.candidate_id_token.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          test -n "$ID_TOKEN"
+          echo "::add-mask::$ID_TOKEN"
+
+          FOUNDATION_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/candidate-foundation.json" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            "$TAG_URL/ai-arman/foundation")"
+          test "$FOUNDATION_CODE" = "200"
+          jq -e '.ok == true and .service == "ai-arman" and .phase == "foundation-v1" and .productionActionsEnabled == false' "$RUNNER_TEMP/candidate-foundation.json" >/dev/null
+
+          CHAT_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/candidate-chat.json" \
+            --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "{\"contractVersion\":\"ai-arman-chat-v1\",\"clientMessageId\":\"live-shadow-${GITHUB_RUN_ID}\",\"message\":{\"text\":\"Hej!\"},\"context\":{\"locale\":\"sv-SE\",\"channel\":\"internal_preview\"}}" \
+            "$TAG_URL/ai-arman/chat/messages")"
+          test "$CHAT_CODE" = "201" -o "$CHAT_CODE" = "200"
+          jq -e '.interpretation.source == "deterministic_fallback" and .decision.owner == "backend_policy" and .safety.aiModelUsed == false and .safety.writesExecuted == false and .safety.productionActionsEnabled == false and .safety.htmlAcceptedFromModel == false' "$RUNNER_TEMP/candidate-chat.json" >/dev/null
+
+          WIDGET_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/candidate-widget.txt" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            "$TAG_URL/ai-arman/widget/beta0-preview")"
+          test "$WIDGET_CODE" = "404"
+
+          echo "TAGGED_CANDIDATE_FOUNDATION=PASS"
+          echo "TAGGED_CANDIDATE_DETERMINISTIC_AUTHORITY=PASS"
+          echo "TAGGED_CANDIDATE_WIDGET_DISABLED=PASS"
+
+      - name: Restore deployer credentials before traffic mutation
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Shift exactly 1% to shadow candidate
+        id: shift
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "attempted=true" >> "$GITHUB_OUTPUT"
+          gcloud run services update-traffic "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --to-tags "$CANDIDATE_TAG=1" \
+            --quiet
+          echo "ONE_PERCENT_SHIFT_COMMAND=PASS"
+
+      - name: Verify exact 99/1 live-shadow boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/service-after.json"
+          gcloud run revisions describe "$CANDIDATE_REVISION" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/candidate-after.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/iam-after.json"
+
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-after.json" >/dev/null; then
+            echo "Public IAM detected after traffic shift." >&2
+            exit 1
+          fi
+
+          LIVE_PERCENT="$(jq -r --arg rev "$LIVE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-after.json")"
+          CANDIDATE_PERCENT="$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-after.json")"
+          TAG_REVISION="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag == $tag) | .revisionName // empty' "$RUNNER_TEMP/service-after.json")"
+          test "$LIVE_PERCENT" = "99"
+          test "$CANDIDATE_PERCENT" = "1"
+          test "$TAG_REVISION" = "$CANDIDATE_REVISION"
+
+          PROMOTION="$(jq -r '.spec.containers[0].env[]? | select(.name == "AI_ARMAN_MODEL_PROMOTION_ENABLED") | .value // empty' "$RUNNER_TEMP/candidate-after.json")"
+          test "$PROMOTION" = "false"
+
+          echo "LIVE_SHADOW_TRAFFIC_BOUNDARY=PASS live=$LIVE_REVISION:99 candidate=$CANDIDATE_REVISION:1"
+          echo "PRIVATE_IAM_AFTER_SHIFT=PASS"
+          echo "PROMOTION_OFF_AFTER_SHIFT=PASS"
+
+      - name: Mint canonical-audience ID token after traffic shift
+        id: postshift_id_token
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ env.SERVICE_URL }}
+          id_token_include_email: true
+          create_credentials_file: false
+
+      - name: Authenticated canonical service smoke after shift
+        shell: bash
+        env:
+          ID_TOKEN: ${{ steps.postshift_id_token.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          test -n "$ID_TOKEN"
+          echo "::add-mask::$ID_TOKEN"
+          HTTP_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/live-foundation.json" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            "$SERVICE_URL/ai-arman/foundation")"
+          test "$HTTP_CODE" = "200"
+          jq -e '.ok == true and .service == "ai-arman" and .phase == "foundation-v1" and .productionActionsEnabled == false' "$RUNNER_TEMP/live-foundation.json" >/dev/null
+          echo "CANONICAL_SERVICE_AFTER_SHIFT=PASS"
+
+      - name: Authenticate rollback identity if any post-mutation gate failed
+        if: failure() && steps.shift.outputs.attempted == 'true'
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Fail-closed rollback to deterministic revision
+        if: failure() && steps.shift.outputs.attempted == 'true'
+        shell: bash
+        run: |
+          set +e
+          gcloud run services update-traffic "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --to-revisions "$LIVE_REVISION=100" \
+            --quiet
+          CODE=$?
+          if [ "$CODE" -eq 0 ]; then
+            echo "LIVE_SHADOW_ROLLBACK=PASS live=$LIVE_REVISION:100"
+          else
+            echo "LIVE_SHADOW_ROLLBACK=FAILED"
+          fi
+          exit "$CODE"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## AI Arman guarded 1% live shadow"
+            echo
+            echo "- Deterministic revision: \`$LIVE_REVISION\`"
+            echo "- Shadow revision: \`$CANDIDATE_REVISION\`"
+            echo "- Shadow image digest: \`$EXPECTED_CANDIDATE_DIGEST\`"
+            echo "- Intended traffic split after a green run: 99% deterministic / 1% shadow"
+            echo "- Service IAM: private"
+            echo "- Model interpretation on shadow: ON"
+            echo "- Model shadow: ON"
+            echo "- Model promotion: OFF"
+            echo "- Widget preview: OFF"
+            echo "- Provider calls/minute: 1"
+            echo "- Provider concurrency: 1"
+            echo "- Token budget: 1024/call and 1024/minute"
+            echo "- Cost budget: USD 0.005/call and USD 0.005/minute"
+            echo "- Secret: Secret Manager reference only"
+            echo "- Any failed post-mutation gate triggers rollback to 100% deterministic traffic"
+          } >> "$GITHUB_STEP_SUMMARY"
