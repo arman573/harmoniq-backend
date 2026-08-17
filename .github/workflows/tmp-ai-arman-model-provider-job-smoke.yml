@@ -102,31 +102,61 @@ jobs:
 
           echo "CLOUD_RUN_JOB_DEPLOY=PASS"
 
-      - name: Execute real synthetic provider smoke
+      - name: Execute and classify real synthetic provider smoke
         id: execute
         shell: bash
         run: |
           set -euo pipefail
+          set +e
           gcloud run jobs execute "$JOB_NAME" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --wait \
             --quiet
-          echo "MODEL_PROVIDER_JOB_EXECUTION=PASS"
+          EXECUTE_CODE=$?
+          set -e
 
-      - name: Read non-secret smoke markers when logging access exists
-        if: success()
-        shell: bash
-        run: |
-          set +e
-          gcloud logging read \
-            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:MODEL_PROVIDER" \
+          EXECUTION="$(gcloud run jobs executions list \
+            --job "$JOB_NAME" \
             --project "$PROJECT_ID" \
-            --freshness=10m \
-            --limit=20 \
-            --format='value(textPayload)' \
-            2>/dev/null | grep '^MODEL_PROVIDER_' || true
-          exit 0
+            --region "$REGION" \
+            --limit 1 \
+            --sort-by='~metadata.creationTimestamp' \
+            --format='value(metadata.name)')"
+          test -n "$EXECUTION"
+          echo "execution=$EXECUTION" >> "$GITHUB_OUTPUT"
+          echo "MODEL_PROVIDER_EXECUTION=$EXECUTION"
+
+          gcloud run jobs executions tasks list \
+            --execution "$EXECUTION" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format=json > "$RUNNER_TEMP/tasks.json"
+
+          EXIT_CODE="$(jq -r '.[0].lastAttemptResult.exitCode // empty' "$RUNNER_TEMP/tasks.json")"
+          if [ "$EXECUTE_CODE" -eq 0 ]; then
+            test "$EXIT_CODE" = "0"
+            echo "MODEL_PROVIDER_JOB_EXECUTION=PASS"
+            echo "classification=pass" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          test -n "$EXIT_CODE"
+          case "$EXIT_CODE" in
+            41) CLASSIFICATION="authentication" ;;
+            42) CLASSIFICATION="quota" ;;
+            43) CLASSIFICATION="unavailable" ;;
+            44) CLASSIFICATION="invalid_response" ;;
+            45) CLASSIFICATION="configuration_disabled" ;;
+            46) CLASSIFICATION="unexpected_source" ;;
+            49) CLASSIFICATION="unexpected_error" ;;
+            *) CLASSIFICATION="unknown_exit_$EXIT_CODE" ;;
+          esac
+
+          echo "MODEL_PROVIDER_SAFE_EXIT_CODE=$EXIT_CODE"
+          echo "MODEL_PROVIDER_CLASSIFICATION=$CLASSIFICATION"
+          echo "classification=$CLASSIFICATION" >> "$GITHUB_OUTPUT"
+          exit 1
 
       - name: Delete temporary Cloud Run Job
         if: always() && steps.deploy_job.outputs.attempted == 'true'
@@ -150,6 +180,8 @@ jobs:
         shell: bash
         env:
           DIGEST: ${{ steps.image.outputs.digest }}
+          CLASSIFICATION: ${{ steps.execute.outputs.classification }}
+          EXECUTION: ${{ steps.execute.outputs.execution }}
         run: |
           {
             echo "## AI Arman isolated model provider smoke"
@@ -162,4 +194,6 @@ jobs:
             echo "- Standard price config: input 0.25 USD/M, output 2 USD/M"
             echo "- Promotion: not involved"
             echo "- Image digest: \`${DIGEST:-not-built}\`"
+            echo "- Execution: \`${EXECUTION:-not-started}\`"
+            echo "- Safe classification: \`${CLASSIFICATION:-not-classified}\`"
           } >> "$GITHUB_STEP_SUMMARY"
