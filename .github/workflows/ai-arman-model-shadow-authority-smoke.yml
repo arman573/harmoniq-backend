@@ -1,0 +1,177 @@
+name: AI Arman model shadow authority smoke
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/ai-arman-model-shadow-authority-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ai-arman-model-shadow-authority-smoke
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  ARTIFACT_REPOSITORY: harmoniq-containers
+  IMAGE_NAME: harmoniq-ai-arman-beta0
+  SECRET_NAME: ai-arman-openai-api-key
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+
+jobs:
+  isolated-shadow-authority:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Enforce exact branch and actor
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Verify source before provider call
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test -- --runInBand
+          npm run build
+          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=high
+
+      - name: Authenticate through existing WIF
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Build and push immutable authority-smoke image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
+          SHORT_SHA="${GITHUB_SHA:0:12}"
+          TAG="shadow-authority-${SHORT_SHA}-run-${GITHUB_RUN_ID}"
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$IMAGE_NAME:$TAG"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build --pull -f Dockerfile.ai-arman-candidate --tag "$IMAGE" .
+          docker push "$IMAGE"
+          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          IMMUTABLE_IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$IMAGE_NAME@$DIGEST"
+          echo "immutable_image=$IMMUTABLE_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "AUTHORITY_SMOKE_IMMUTABLE_IMAGE=$DIGEST"
+
+      - name: Deploy isolated one-call shadow authority job
+        id: deploy_job
+        shell: bash
+        env:
+          IMMUTABLE_IMAGE: ${{ steps.image.outputs.immutable_image }}
+        run: |
+          set -euo pipefail
+          JOB_NAME="ai-arman-shadow-authority-${GITHUB_RUN_ID}"
+          echo "job_name=$JOB_NAME" >> "$GITHUB_OUTPUT"
+          echo "attempted=true" >> "$GITHUB_OUTPUT"
+          gcloud run jobs deploy "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "$IMMUTABLE_IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command node \
+            --args dist/ai-arman/model/model-shadow-authority-smoke.js \
+            --set-env-vars "NODE_ENV=production,AI_ARMAN_MODEL_INTERPRETATION_ENABLED=true,AI_ARMAN_MODEL_SHADOW_ENABLED=true,AI_ARMAN_MODEL_PROMOTION_ENABLED=false,AI_ARMAN_OPENAI_MODEL=gpt-5-mini,AI_ARMAN_MODEL_INTERPRETATION_TIMEOUT_MS=10000,AI_ARMAN_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS=0.25,AI_ARMAN_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS=2,AI_ARMAN_MODEL_SHADOW_PROVIDER_TIMEOUT_MS=10000,AI_ARMAN_MODEL_SHADOW_MAX_CALLS_PER_MINUTE=1,AI_ARMAN_MODEL_SHADOW_MAX_CONCURRENT_CALLS=1,AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_CALL=1024,AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_MINUTE=1024,AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_CALL=0.005,AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_MINUTE=0.005" \
+            --set-secrets "OPENAI_API_KEY=$SECRET_NAME:1" \
+            --max-retries 0 \
+            --task-timeout 60s \
+            --quiet
+          echo "SHADOW_AUTHORITY_JOB_DEPLOY=PASS"
+
+      - name: Execute one synthetic shadow call and require deterministic authority
+        id: execute
+        shell: bash
+        env:
+          JOB_NAME: ${{ steps.deploy_job.outputs.job_name }}
+        run: |
+          set -euo pipefail
+          gcloud run jobs execute "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --wait \
+            --quiet
+          echo "MODEL_SHADOW_PROVIDER_CALL=PASS"
+          echo "DETERMINISTIC_RESPONSE_AUTHORITY=PASS"
+          echo "MODEL_PROMOTION=OFF"
+          echo "CUSTOMER_TRAFFIC=NONE"
+
+      - name: Delete temporary Cloud Run Job
+        if: always() && steps.deploy_job.outputs.attempted == 'true'
+        shell: bash
+        env:
+          JOB_NAME: ${{ steps.deploy_job.outputs.job_name }}
+        run: |
+          set +e
+          gcloud run jobs delete "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --quiet
+          CODE=$?
+          if [ "$CODE" -eq 0 ]; then
+            echo "TEMP_SHADOW_AUTHORITY_JOB_CLEANUP=PASS"
+          else
+            echo "TEMP_SHADOW_AUTHORITY_JOB_CLEANUP=FAILED_OR_JOB_NOT_CREATED"
+          fi
+          exit 0
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          {
+            echo "## AI Arman isolated model shadow authority gate"
+            echo
+            echo "- Source SHA: \`$GITHUB_SHA\`"
+            echo "- Immutable image digest: \`${DIGEST:-not-built}\`"
+            echo "- Model interpretation: ON only inside isolated Job"
+            echo "- Shadow: ON only inside isolated Job"
+            echo "- Promotion: OFF"
+            echo "- Provider calls: exactly one synthetic request"
+            echo "- Provider calls/minute: 1"
+            echo "- Provider concurrency: 1"
+            echo "- Token budget: 1024/call and 1024/minute"
+            echo "- Cost budget: USD 0.005/call and USD 0.005/minute"
+            echo "- Secret: Secret Manager reference only"
+            echo "- Customer traffic: none"
+            echo "- Live service traffic mutation: none"
+            echo
+            echo "The smoke process exits zero only if the provider shadow completes while the returned response remains deterministic/backend-owned and production actions stay disabled."
+          } >> "$GITHUB_STEP_SUMMARY"
