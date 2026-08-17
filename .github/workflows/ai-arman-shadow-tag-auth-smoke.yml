@@ -1,0 +1,116 @@
+name: AI Arman shadow tagged auth smoke
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/ai-arman-shadow-tag-auth-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ai-arman-shadow-tag-auth-smoke
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  SERVICE_NAME: harmoniq-ai-arman-beta0
+  CANDIDATE_REVISION: harmoniq-ai-arman-beta0-shadow-a979b694-2
+  TAG_URL: https://shadow-a979b694-2---harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
+  LIVE_REVISION: harmoniq-ai-arman-beta0-00002-2kq
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+
+jobs:
+  authenticated-zero-traffic-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Enforce exact branch and actor
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Authenticate for read-only Cloud Run verification
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Re-verify private zero-traffic boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/service.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/iam.json"
+
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then
+            echo "Public IAM detected; refusing smoke." >&2
+            exit 1
+          fi
+
+          LIVE_PERCENT="$(jq -r --arg rev "$LIVE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")"
+          CANDIDATE_PERCENT="$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")"
+          test "$LIVE_PERCENT" = "100"
+          test "$CANDIDATE_PERCENT" = "0"
+          echo "PRIVATE_ZERO_TRAFFIC_BOUNDARY=PASS"
+
+      - name: Mint service-account ID token through WIF
+        id: id_token
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ env.TAG_URL }}
+
+      - name: Authenticated synthetic foundation smoke
+        shell: bash
+        env:
+          ID_TOKEN: ${{ steps.id_token.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          test -n "$ID_TOKEN"
+          echo "::add-mask::$ID_TOKEN"
+          HTTP_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/foundation.json" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            "$TAG_URL/ai-arman/foundation")"
+          test "$HTTP_CODE" = "200"
+          jq -e '.ok == true and .service == "ai-arman" and .phase == "foundation-v1" and .productionActionsEnabled == false' "$RUNNER_TEMP/foundation.json" >/dev/null
+          echo "AUTHENTICATED_SHADOW_FOUNDATION_SMOKE=PASS"
+
+      - name: Confirm widget remains disabled on candidate
+        shell: bash
+        env:
+          ID_TOKEN: ${{ steps.id_token.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ID_TOKEN"
+          HTTP_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/widget.txt" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            "$TAG_URL/ai-arman/widget/beta0-preview")"
+          test "$HTTP_CODE" = "404"
+          echo "SHADOW_WIDGET_DISABLED=PASS"
