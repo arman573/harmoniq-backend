@@ -22,6 +22,10 @@ const EXIT = {
   providerInvalidResponse: 69,
   providerError: 70,
   auditMissing: 71,
+  bootstrapFailure: 72,
+  dependencyResolutionFailure: 73,
+  conversationFailure: 74,
+  cleanupFailure: 75,
   unexpected: 79,
 } as const;
 
@@ -40,16 +44,34 @@ const PROVIDER_STATUS_EXIT: Record<string, number> = {
 };
 
 async function main() {
-  const app = await NestFactory.createApplicationContext(AiArmanModule, {
-    logger: false,
-  });
+  let app;
+  try {
+    app = await NestFactory.createApplicationContext(AiArmanModule, {
+      logger: false,
+    });
+  } catch {
+    console.error('MODEL_SHADOW_AUTHORITY_SMOKE=FAIL code=bootstrap_failure');
+    process.exit(EXIT.bootstrapFailure);
+  }
 
   try {
-    const conversation = app.get(ChatConversationService);
-    const auditStore = app.get(InMemoryChatInterpretationShadowAuditStore);
-    const shadowConfig = app.get(ChatInterpretationShadowConfig);
-    const promotionConfig = readChatInterpretationPromotionConfig();
+    let conversation: ChatConversationService;
+    let auditStore: InMemoryChatInterpretationShadowAuditStore;
+    let shadowConfig: ChatInterpretationShadowConfig;
 
+    try {
+      conversation = app.get(ChatConversationService);
+      auditStore = app.get(InMemoryChatInterpretationShadowAuditStore);
+      shadowConfig = app.get(ChatInterpretationShadowConfig);
+    } catch {
+      console.error(
+        'MODEL_SHADOW_AUTHORITY_SMOKE=FAIL code=dependency_resolution_failure',
+      );
+      process.exitCode = EXIT.dependencyResolutionFailure;
+      return;
+    }
+
+    const promotionConfig = readChatInterpretationPromotionConfig();
     if (
       process.env.AI_ARMAN_MODEL_INTERPRETATION_ENABLED !== 'true' ||
       !shadowConfig.isEnabled() ||
@@ -60,18 +82,25 @@ async function main() {
       return;
     }
 
-    const response = await conversation.handleWithShadow({
-      contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
-      conversationId: 'synthetic-shadow-authority-smoke',
-      clientMessageId: 'synthetic-shadow-authority-smoke-1',
-      message: {
-        text: 'Hej!',
-      },
-      context: {
-        locale: 'sv-SE',
-        channel: 'internal_preview',
-      },
-    });
+    let response;
+    try {
+      response = await conversation.handleWithShadow({
+        contractVersion: AI_ARMAN_CHAT_CONTRACT_VERSION,
+        conversationId: 'synthetic-shadow-authority-smoke',
+        clientMessageId: 'synthetic-shadow-authority-smoke-1',
+        message: {
+          text: 'Hej!',
+        },
+        context: {
+          locale: 'sv-SE',
+          channel: 'internal_preview',
+        },
+      });
+    } catch {
+      console.error('MODEL_SHADOW_AUTHORITY_SMOKE=FAIL code=conversation_failure');
+      process.exitCode = EXIT.conversationFailure;
+      return;
+    }
 
     const audits = auditStore.snapshot();
     const latest = audits.at(-1);
@@ -129,7 +158,14 @@ async function main() {
       `MODEL_SHADOW_PRIMARY_INTENT_MATCH=${latest.primaryIntentMatch ?? 'unknown'}`,
     );
   } finally {
-    await app.close();
+    try {
+      await app.close();
+    } catch {
+      console.error('MODEL_SHADOW_AUTHORITY_SMOKE=FAIL code=cleanup_failure');
+      if (!process.exitCode) {
+        process.exitCode = EXIT.cleanupFailure;
+      }
+    }
   }
 }
 
