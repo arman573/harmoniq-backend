@@ -1,0 +1,165 @@
+name: Temporary AI Arman model provider job smoke
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/tmp-ai-arman-model-provider-job-smoke.yml
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  ARTIFACT_REPOSITORY: harmoniq-containers
+  JOB_NAME: ai-arman-model-provider-smoke
+  SECRET_NAME: ai-arman-openai-api-key
+
+jobs:
+  isolated-provider-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Verify source and compiled smoke entrypoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test -- --runInBand
+          npm run build
+          test -f dist/ai-arman/model/model-provider-smoke.js
+
+      - name: Authenticate through existing WIF
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Build and push immutable smoke image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
+
+          SHORT_SHA="${GITHUB_SHA:0:12}"
+          TAG="model-smoke-${SHORT_SHA}-run-${GITHUB_RUN_ID}"
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/harmoniq-ai-arman-beta0:$TAG"
+
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build --pull -f Dockerfile.ai-arman-candidate --tag "$IMAGE" .
+          docker push "$IMAGE"
+
+          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "SMOKE_IMAGE_DIGEST=$DIGEST"
+
+      - name: Deploy isolated Cloud Run Job with pinned secret version
+        id: deploy_job
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          echo "attempted=true" >> "$GITHUB_OUTPUT"
+
+          gcloud run jobs deploy "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "$IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command node \
+            --args dist/ai-arman/model/model-provider-smoke.js \
+            --set-env-vars "AI_ARMAN_MODEL_INTERPRETATION_ENABLED=true,AI_ARMAN_OPENAI_MODEL=gpt-5-mini,AI_ARMAN_MODEL_INTERPRETATION_TIMEOUT_MS=10000,AI_ARMAN_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS=0.25,AI_ARMAN_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS=2" \
+            --set-secrets "OPENAI_API_KEY=$SECRET_NAME:1" \
+            --max-retries 0 \
+            --task-timeout 60s \
+            --quiet
+
+          echo "CLOUD_RUN_JOB_DEPLOY=PASS"
+
+      - name: Execute real synthetic provider smoke
+        id: execute
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run jobs execute "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --wait \
+            --quiet
+          echo "MODEL_PROVIDER_JOB_EXECUTION=PASS"
+
+      - name: Read non-secret smoke markers when logging access exists
+        if: success()
+        shell: bash
+        run: |
+          set +e
+          gcloud logging read \
+            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:MODEL_PROVIDER" \
+            --project "$PROJECT_ID" \
+            --freshness=10m \
+            --limit=20 \
+            --format='value(textPayload)' \
+            2>/dev/null | grep '^MODEL_PROVIDER_' || true
+          exit 0
+
+      - name: Delete temporary Cloud Run Job
+        if: always() && steps.deploy_job.outputs.attempted == 'true'
+        shell: bash
+        run: |
+          set +e
+          gcloud run jobs delete "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --quiet
+          CODE=$?
+          if [ "$CODE" -eq 0 ]; then
+            echo "TEMP_JOB_CLEANUP=PASS"
+          else
+            echo "TEMP_JOB_CLEANUP=FAILED_OR_JOB_NOT_CREATED"
+          fi
+          exit 0
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          {
+            echo "## AI Arman isolated model provider smoke"
+            echo
+            echo "- Customer traffic: none"
+            echo "- Live Cloud Run service mutation: none"
+            echo "- Runtime identity: \`$RUNTIME_SERVICE_ACCOUNT\`"
+            echo "- Secret: version 1 of \`$SECRET_NAME\` (value never printed)"
+            echo "- Model: \`gpt-5-mini\`"
+            echo "- Standard price config: input 0.25 USD/M, output 2 USD/M"
+            echo "- Promotion: not involved"
+            echo "- Image digest: \`${DIGEST:-not-built}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
