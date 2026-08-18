@@ -7,11 +7,6 @@ on:
         description: Type VERIFY_DURABLE_AUDIT_TRANSPORT
         required: true
         type: string
-  push:
-    branches:
-      - feature/ai-arman-foundation-v1
-    paths:
-      - .github/workflows/ai-arman-durable-audit-transport-smoke.yml
 
 permissions:
   contents: write
@@ -42,11 +37,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            test "${{ inputs.approval }}" = "VERIFY_DURABLE_AUDIT_TRANSPORT"
-          else
-            test "$GITHUB_EVENT_NAME" = "push"
-          fi
+          test "${{ inputs.approval }}" = "VERIFY_DURABLE_AUDIT_TRANSPORT"
           test "$GITHUB_REF" = "$REQUIRED_REF"
           test "$GITHUB_ACTOR" = "arman573"
 
