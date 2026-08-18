@@ -6,6 +6,11 @@ on:
       - feature/ai-arman-foundation-v1
     paths:
       - .github/workflows/ai-arman-live-shadow-observe.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/ai-arman-live-shadow-observe.yml
   workflow_dispatch:
 
 permissions:
@@ -26,7 +31,7 @@ env:
   LIVE_SHADOW_STARTED_AT: '2026-08-17T19:53:10Z'
   WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
   DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
-  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+  REQUIRED_BRANCH: feature/ai-arman-foundation-v1
 
 jobs:
   observe:
@@ -37,8 +42,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$GITHUB_REF" = "$REQUIRED_REF"
           test "$GITHUB_ACTOR" = "arman573"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            test "$GITHUB_HEAD_REF" = "$REQUIRED_BRANCH"
+          else
+            test "$GITHUB_REF" = "refs/heads/$REQUIRED_BRANCH"
+          fi
 
       - name: Authenticate read-only observation identity
         uses: google-github-actions/auth@v3
