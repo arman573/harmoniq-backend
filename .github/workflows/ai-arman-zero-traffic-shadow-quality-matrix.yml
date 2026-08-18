@@ -1,0 +1,344 @@
+name: AI Arman zero-traffic shadow quality matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: Type MEASURE_ZERO_TRAFFIC_SHADOW_QUALITY
+        required: true
+        type: string
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/ai-arman-zero-traffic-shadow-quality-matrix.yml
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: ai-arman-zero-traffic-shadow-quality-matrix
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  SERVICE_NAME: harmoniq-ai-arman-beta0
+  SERVICE_URL: https://harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
+  DETERMINISTIC_REVISION: harmoniq-ai-arman-beta0-00002-2kq
+  LIVE_SHADOW_REVISION: harmoniq-ai-arman-beta0-shadow-a979b694-2
+  CANDIDATE_REVISION: harmoniq-ai-arman-beta0-durable-20ff1996-1
+  CANDIDATE_TAG: durable-20ff1996-1
+  CANDIDATE_TAG_URL: https://durable-20ff1996-1---harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
+  EXPECTED_CANDIDATE_DIGEST: sha256:0f9c7b718c0457f231af770aa82b18f5c2bbe02ecfe295cd5b6647ca249661a0
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  TELEMETRY_SERVICE_ACCOUNT: github-ai-arman-telemetry@harmoniq-210513.iam.gserviceaccount.com
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+  RESULT_PATH: docs/ai-arman/ZERO_TRAFFIC_SHADOW_QUALITY_MATRIX_LATEST.md
+
+jobs:
+  measure-zero-traffic-shadow-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Enforce explicit gate, branch and actor
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            test "${{ inputs.approval }}" = "MEASURE_ZERO_TRAFFIC_SHADOW_QUALITY"
+          else
+            test "$GITHUB_EVENT_NAME" = "push"
+          fi
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+
+      - name: Authenticate deployer for read-only Cloud Run preflight
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Verify existing zero-traffic candidate and production boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud run revisions describe "$CANDIDATE_REVISION" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-before.json" >/dev/null; then
+            echo "Public IAM detected; refusing quality measurement." >&2
+            exit 1
+          fi
+
+          test "$(jq -r --arg rev "$DETERMINISTIC_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-before.json")" = "99"
+          test "$(jq -r --arg rev "$LIVE_SHADOW_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-before.json")" = "1"
+          test "$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-before.json")" = "0"
+          test "$(jq -r '[.status.traffic[]? | select((.percent // 0) > 0)] | length' "$RUNNER_TEMP/service-before.json")" = "2"
+          test "$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service-before.json")" = "2"
+          test "$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag == $tag) | .revisionName // empty' "$RUNNER_TEMP/service-before.json")" = "$CANDIDATE_REVISION"
+          test "$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag == $tag) | .url // empty' "$RUNNER_TEMP/service-before.json")" = "$CANDIDATE_TAG_URL"
+
+          READY="$(jq -r '[.status.conditions[]? | select(.type == "Ready")][0].status // empty' "$RUNNER_TEMP/candidate.json")"
+          test "$READY" = "True"
+          env_value() { jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name == $n) | .value // empty' "$RUNNER_TEMP/candidate.json"; }
+          test "$(env_value AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_PROMOTION_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_WIDGET_PREVIEW_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_DURABLE_AUDIT_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_CALLS_PER_MINUTE)" = "1"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_CONCURRENT_CALLS)" = "1"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_CALL)" = "1024"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_MINUTE)" = "1024"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_CALL)" = "0.005"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_MINUTE)" = "0.005"
+          IMAGE_FIELD="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/candidate.json")"
+          echo "$IMAGE_FIELD" | grep -F "$EXPECTED_CANDIDATE_DIGEST" >/dev/null
+          echo "QUALITY_MATRIX_PREFLIGHT=PASS"
+
+      - name: Mint canonical-audience ID token for tagged candidate
+        id: candidate_id_token
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ env.SERVICE_URL }}
+          id_token_include_email: true
+          create_credentials_file: false
+
+      - name: Authenticate dedicated telemetry reader
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.TELEMETRY_SERVICE_ACCOUNT }}
+
+      - name: Run eight-case synthetic quality matrix
+        id: matrix
+        shell: bash
+        env:
+          ID_TOKEN: ${{ steps.candidate_id_token.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          test -n "$ID_TOKEN"
+          echo "::add-mask::$ID_TOKEN"
+          ACCESS_TOKEN="$(gcloud auth application-default print-access-token)"
+          test -n "$ACCESS_TOKEN"
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          labels=(
+            greeting
+            product_recommendation
+            tracking_status
+            order_status
+            return_help
+            claim_help
+            human_handoff
+            purchased_product_usage
+          )
+          expected=(
+            greeting
+            product_recommendation
+            tracking_status
+            order_status
+            return_help
+            claim_help
+            human_handoff
+            purchased_product_usage
+          )
+          messages=(
+            "Hej"
+            "Jag har tunt och färgat hår som blir fett snabbt men torra längder. Vilket schampo passar?"
+            "Varför har mitt paket inte kommit?"
+            "Var är min beställning?"
+            "Jag vill returnera en vara."
+            "Jag har fått en skadad produkt och vill göra en reklamation."
+            "Jag vill prata med kundtjänst"
+            "Hur ofta ska jag använda produkten jag köpte?"
+          )
+
+          printf 'case\texpected\tdeterministic\tprovider_status\tcandidate_valid\tprimary_intent_match\ttotal_tokens\tcost_usd\n' > "$RUNNER_TEMP/matrix.tsv"
+          total=0
+          completed=0
+          valid=0
+          matches=0
+          total_cost="0"
+
+          for i in "${!labels[@]}"; do
+            label="${labels[$i]}"
+            expected_intent="${expected[$i]}"
+            message="${messages[$i]}"
+            client_id="quality-${GITHUB_RUN_ID}-${i}"
+            start_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+            code="$(curl --silent --show-error \
+              --output "$RUNNER_TEMP/chat-$i.json" \
+              --write-out '%{http_code}' \
+              --request POST \
+              --header "Authorization: Bearer $ID_TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data "$(jq -n --arg id "$client_id" --arg msg "$message" '{contractVersion:"ai-arman-chat-v1",clientMessageId:$id,message:{text:$msg},context:{locale:"sv-SE",channel:"internal_preview"}}')" \
+              "$CANDIDATE_TAG_URL/ai-arman/chat/messages")"
+            test "$code" = "200" -o "$code" = "201"
+            jq -e '.interpretation.source == "deterministic_fallback" and .decision.owner == "backend_policy" and .safety.aiModelUsed == false and .safety.writesExecuted == false and .safety.productionActionsEnabled == false and .safety.htmlAcceptedFromModel == false' "$RUNNER_TEMP/chat-$i.json" >/dev/null
+            deterministic="$(jq -r '.interpretation.primaryIntent' "$RUNNER_TEMP/chat-$i.json")"
+            test "$deterministic" = "$expected_intent"
+
+            filter="resource.type=\"cloud_run_revision\" AND resource.labels.revision_name=\"$CANDIDATE_REVISION\" AND jsonPayload.event=\"ai_arman_model_shadow_audit\" AND jsonPayload.provider=\"openai\" AND timestamp>=\"$start_iso\""
+            found=NO
+            for attempt in $(seq 1 30); do
+              http_code="$(curl --silent --show-error \
+                --output "$RUNNER_TEMP/audit-$i.json" \
+                --write-out '%{http_code}' \
+                --request POST \
+                --header "Authorization: Bearer $ACCESS_TOKEN" \
+                --header 'Content-Type: application/json' \
+                --data "$(jq -n --arg project "projects/$PROJECT_ID" --arg filter "$filter" '{resourceNames:[$project],filter:$filter,pageSize:10,orderBy:"timestamp desc"}')" \
+                "https://logging.googleapis.com/v2/entries:list")"
+              test "$http_code" = "200"
+              count="$(jq -r '.entries | length // 0' "$RUNNER_TEMP/audit-$i.json")"
+              if [ "$count" -gt 0 ]; then
+                found=YES
+                break
+              fi
+              sleep 2
+            done
+            test "$found" = YES
+
+            raw="$(jq -c '.entries[0].jsonPayload' "$RUNNER_TEMP/audit-$i.json")"
+            ! grep -F "$client_id" <<<"$raw"
+            ! grep -F "$message" <<<"$raw"
+            BASE_ALLOWED='["candidateValid","estimatedCostUsd","event","inputTokens","latencyMs","modelVersion","outputTokens","primaryIntentMatch","promptVersion","provider","recordedAt","schemaVersion","status","totalTokens"]'
+            WITH_SEVERITY='["candidateValid","estimatedCostUsd","event","inputTokens","latencyMs","modelVersion","outputTokens","primaryIntentMatch","promptVersion","provider","recordedAt","schemaVersion","severity","status","totalTokens"]'
+            jq -e --argjson base "$BASE_ALLOWED" --argjson withSeverity "$WITH_SEVERITY" '.entries[0].jsonPayload | (keys | sort) as $keys | $keys == ($base | sort) or $keys == ($withSeverity | sort)' "$RUNNER_TEMP/audit-$i.json" >/dev/null
+            jq -e '.entries[0].jsonPayload | .event == "ai_arman_model_shadow_audit" and .schemaVersion == 1 and .provider == "openai" and .modelVersion == "gpt-5-mini" and .promptVersion == "ai-arman-interpretation-v1"' "$RUNNER_TEMP/audit-$i.json" >/dev/null
+
+            status="$(jq -r '.entries[0].jsonPayload.status' "$RUNNER_TEMP/audit-$i.json")"
+            candidate_valid="$(jq -r '.entries[0].jsonPayload | if .candidateValid == null then "null" else (.candidateValid|tostring) end' "$RUNNER_TEMP/audit-$i.json")"
+            primary_match="$(jq -r '.entries[0].jsonPayload | if .primaryIntentMatch == null then "null" else (.primaryIntentMatch|tostring) end' "$RUNNER_TEMP/audit-$i.json")"
+            total_tokens="$(jq -r '.entries[0].jsonPayload | if .totalTokens == null then "null" else (.totalTokens|tostring) end' "$RUNNER_TEMP/audit-$i.json")"
+            cost="$(jq -r '.entries[0].jsonPayload | if .estimatedCostUsd == null then "null" else (.estimatedCostUsd|tostring) end' "$RUNNER_TEMP/audit-$i.json")"
+
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$expected_intent" "$deterministic" "$status" "$candidate_valid" "$primary_match" "$total_tokens" "$cost" >> "$RUNNER_TEMP/matrix.tsv"
+            total=$((total + 1))
+            if [ "$status" = "completed" ]; then completed=$((completed + 1)); fi
+            if [ "$candidate_valid" = "true" ]; then valid=$((valid + 1)); fi
+            if [ "$primary_match" = "true" ]; then matches=$((matches + 1)); fi
+            if [ "$cost" != "null" ]; then total_cost="$(awk -v a="$total_cost" -v b="$cost" 'BEGIN { printf "%.8f", a+b }')"; fi
+
+            echo "QUALITY_CASE=$label deterministic=$deterministic provider_status=$status candidate_valid=$candidate_valid primary_intent_match=$primary_match"
+            if [ "$i" -lt 7 ]; then
+              sleep 65
+            fi
+          done
+
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+          echo "completed=$completed" >> "$GITHUB_OUTPUT"
+          echo "valid=$valid" >> "$GITHUB_OUTPUT"
+          echo "matches=$matches" >> "$GITHUB_OUTPUT"
+          echo "total_cost=$total_cost" >> "$GITHUB_OUTPUT"
+          cp "$RUNNER_TEMP/matrix.tsv" "$RUNNER_TEMP/matrix-final.tsv"
+          echo "ZERO_TRAFFIC_QUALITY_MATRIX_COLLECTION=PASS total=$total completed=$completed valid=$valid matches=$matches cost=$total_cost"
+
+      - name: Restore deployer credentials for final boundary check
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Verify production boundary unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-after.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-after.json" >/dev/null; then exit 1; fi
+          test "$(jq -r --arg rev "$DETERMINISTIC_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-after.json")" = "99"
+          test "$(jq -r --arg rev "$LIVE_SHADOW_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-after.json")" = "1"
+          test "$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-after.json")" = "0"
+          test "$(jq -r '[.status.traffic[]? | select((.percent // 0) > 0)] | length' "$RUNNER_TEMP/service-after.json")" = "2"
+          test "$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service-after.json")" = "2"
+          echo "QUALITY_MATRIX_PRODUCTION_BOUNDARY=PASS"
+
+      - name: Persist quality evidence
+        if: always()
+        shell: bash
+        env:
+          TOTAL: ${{ steps.matrix.outputs.total }}
+          COMPLETED: ${{ steps.matrix.outputs.completed }}
+          VALID: ${{ steps.matrix.outputs.valid }}
+          MATCHES: ${{ steps.matrix.outputs.matches }}
+          TOTAL_COST: ${{ steps.matrix.outputs.total_cost }}
+          MATRIX_OUTCOME: ${{ steps.matrix.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$RESULT_PATH")"
+          {
+            echo "# AI Arman zero-traffic shadow quality matrix - latest"
+            echo
+            echo "Generated by GitHub Actions run ${GITHUB_RUN_ID} from commit ${GITHUB_SHA}."
+            echo
+            echo "## Safety boundary"
+            echo "- Candidate revision: ${CANDIDATE_REVISION}"
+            echo "- Candidate traffic: 0%"
+            echo "- Deterministic production traffic: 99%"
+            echo "- Existing live shadow traffic: 1%"
+            echo "- Model promotion: false"
+            echo "- Widget preview: false"
+            echo "- Customer authority remained deterministic: required for every case"
+            echo "- Synthetic test messages only: YES"
+            echo "- Customer/order identifiers used: NO"
+            echo "- Live durable-audit configuration changed: NO"
+            echo
+            echo "## Measurement"
+            echo "- Matrix collection step: ${MATRIX_OUTCOME:-unknown}"
+            echo "- Cases attempted: ${TOTAL:-not-proven}"
+            echo "- Provider calls completed: ${COMPLETED:-not-proven}"
+            echo "- Valid model candidates: ${VALID:-not-proven}"
+            echo "- Primary-intent matches vs deterministic backend: ${MATCHES:-not-proven}"
+            echo "- Total estimated provider cost USD: ${TOTAL_COST:-not-proven}"
+            echo
+            echo "| Case | Expected deterministic intent | Deterministic result | Provider status | Candidate valid | Primary intent match | Tokens | Cost USD |"
+            echo "|---|---|---|---|---:|---:|---:|---:|"
+            if [ -f "$RUNNER_TEMP/matrix-final.tsv" ]; then
+              tail -n +2 "$RUNNER_TEMP/matrix-final.tsv" | while IFS=$'\t' read -r case_name expected_intent deterministic provider_status candidate_valid primary_match tokens cost; do
+                echo "| ${case_name} | ${expected_intent} | ${deterministic} | ${provider_status} | ${candidate_valid} | ${primary_match} | ${tokens} | ${cost} |"
+              done
+            else
+              echo "| not available | not available | not available | not available | not available | not available | not available | not available |"
+            fi
+            echo
+            echo "## Interpretation"
+            echo "- This is candidate-only measurement, not promotion approval."
+            echo "- Any mismatch is evidence to investigate, not a reason to weaken deterministic authority."
+            echo "- No traffic increase, model promotion, widget activation or public IAM is authorized by this result."
+          } > "$RESULT_PATH"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$RESULT_PATH"
+          if git diff --cached --quiet; then
+            echo "ZERO_TRAFFIC_QUALITY_EVIDENCE_UNCHANGED=PASS"
+          else
+            git commit -m "Record zero traffic shadow quality matrix"
+            git push origin HEAD:feature/ai-arman-foundation-v1
+            echo "ZERO_TRAFFIC_QUALITY_EVIDENCE_PERSISTED=PASS"
+          fi
