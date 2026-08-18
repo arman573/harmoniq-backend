@@ -13,6 +13,10 @@ import { ChatConversationService } from './chat/chat-conversation.service';
 import { ChatInterpretationProvider } from './chat/chat-interpretation.provider';
 import { ChatInterpretationPromotionService } from './chat/chat-interpretation-promotion.service';
 import {
+  CompositeChatInterpretationShadowAuditSink,
+  StructuredLoggingChatInterpretationShadowAuditSink,
+} from './chat/chat-interpretation-shadow-durable-audit.sink';
+import {
   ChatInterpretationShadowAuditSink,
   InMemoryChatInterpretationShadowAuditStore,
 } from './chat/chat-interpretation-shadow-audit.store';
@@ -89,6 +93,8 @@ import { AiArmanWidgetPreviewService } from './widget/ai-arman-widget-preview.se
     DisabledProductLiveFactsClient,
     VendreProductLiveFactsClient,
     InMemoryChatInterpretationShadowAuditStore,
+    StructuredLoggingChatInterpretationShadowAuditSink,
+    CompositeChatInterpretationShadowAuditSink,
     InMemoryProductIntelligenceAuditStore,
     VerifiedCustomerContextStore,
     ConversationCustomerVerificationStore,
@@ -135,7 +141,7 @@ import { AiArmanWidgetPreviewService } from './widget/ai-arman-widget-preview.se
     },
     {
       provide: ChatInterpretationShadowAuditSink,
-      useExisting: InMemoryChatInterpretationShadowAuditStore,
+      useExisting: CompositeChatInterpretationShadowAuditSink,
     },
     {
       provide: ProductIntelligenceAuditSink,
