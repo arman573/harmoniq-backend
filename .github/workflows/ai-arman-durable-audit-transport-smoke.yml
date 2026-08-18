@@ -1,0 +1,219 @@
+name: AI Arman durable audit transport smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: Type VERIFY_DURABLE_AUDIT_TRANSPORT
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ai-arman-durable-audit-transport-smoke
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  TELEMETRY_SERVICE_ACCOUNT: github-ai-arman-telemetry@harmoniq-210513.iam.gserviceaccount.com
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  ARTIFACT_REPOSITORY: harmoniq-containers
+  JOB_NAME: ai-arman-durable-audit-smoke-${{ github.run_id }}
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+
+jobs:
+  isolated-durable-audit-transport-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Enforce explicit gate, branch and actor
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.approval }}" = "VERIFY_DURABLE_AUDIT_TRANSPORT"
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install, test and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test -- --runInBand
+          npm run build
+          test -f dist/ai-arman/model/shadow-durable-audit-smoke.js
+
+      - name: Authenticate deployer
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Build and push immutable smoke image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA:0:12}"
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/harmoniq-ai-arman-beta0:durable-audit-smoke-$SHORT_SHA-$GITHUB_RUN_ID"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build --pull -f Dockerfile.ai-arman-candidate --tag "$IMAGE" .
+          docker push "$IMAGE"
+          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "immutable_image=$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/harmoniq-ai-arman-beta0@$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy isolated temporary smoke job
+        id: deploy
+        shell: bash
+        env:
+          IMMUTABLE_IMAGE: ${{ steps.image.outputs.immutable_image }}
+        run: |
+          set -euo pipefail
+          echo "attempted=true" >> "$GITHUB_OUTPUT"
+          gcloud run jobs deploy "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "$IMMUTABLE_IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command node \
+            --args dist/ai-arman/model/shadow-durable-audit-smoke.js \
+            --set-env-vars "AI_ARMAN_MODEL_SHADOW_DURABLE_AUDIT_ENABLED=true" \
+            --max-retries 0 \
+            --task-timeout 60s \
+            --quiet
+          echo "TEMP_DURABLE_AUDIT_SMOKE_JOB_DEPLOY=PASS"
+
+      - name: Execute isolated smoke job
+        id: execute
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run jobs execute "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --wait \
+            --quiet
+          EXECUTION="$(gcloud run jobs executions list \
+            --job "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --limit 1 \
+            --sort-by='~metadata.creationTimestamp' \
+            --format='value(metadata.name)')"
+          test -n "$EXECUTION"
+          echo "execution=$EXECUTION" >> "$GITHUB_OUTPUT"
+          echo "DURABLE_AUDIT_SMOKE_EXECUTION=$EXECUTION"
+
+      - name: Authenticate dedicated telemetry reader
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.TELEMETRY_SERVICE_ACCOUNT }}
+
+      - name: Read back and validate Cloud Logging entry
+        shell: bash
+        env:
+          EXECUTION: ${{ steps.execute.outputs.execution }}
+        run: |
+          set -euo pipefail
+          test -n "$EXECUTION"
+          ACCESS_TOKEN="$(gcloud auth application-default print-access-token)"
+          test -n "$ACCESS_TOKEN"
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          FILTER="resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB_NAME\" AND jsonPayload.event=\"ai_arman_model_shadow_audit\""
+          FOUND=NO
+          for attempt in $(seq 1 30); do
+            HTTP_CODE="$(curl --silent --show-error \
+              --output "$RUNNER_TEMP/logs.json" \
+              --write-out '%{http_code}' \
+              --request POST \
+              --header "Authorization: Bearer $ACCESS_TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data "$(jq -n --arg project "projects/$PROJECT_ID" --arg filter "$FILTER" '{resourceNames:[$project],filter:$filter,pageSize:20,orderBy:"timestamp desc"}')" \
+              "https://logging.googleapis.com/v2/entries:list")"
+            test "$HTTP_CODE" = "200"
+            COUNT="$(jq -r '.entries | length // 0' "$RUNNER_TEMP/logs.json")"
+            if [ "$COUNT" -gt 0 ]; then
+              FOUND=YES
+              break
+            fi
+            sleep 2
+          done
+          test "$FOUND" = YES
+
+          jq -e '.entries[0].jsonPayload | .event == "ai_arman_model_shadow_audit" and .schemaVersion == 1 and .provider == "synthetic-transport-smoke" and .modelVersion == "synthetic-v1" and .promptVersion == "synthetic-v1" and .status == "completed" and .latencyMs == 1 and .inputTokens == 1 and .outputTokens == 1 and .totalTokens == 2 and .estimatedCostUsd == 0 and .candidateValid == true and .primaryIntentMatch == true' "$RUNNER_TEMP/logs.json" >/dev/null
+
+          RAW="$(jq -c '.entries[0].jsonPayload' "$RUNNER_TEMP/logs.json")"
+          ! grep -F 'privacy-test@example.invalid' <<<"$RAW"
+          ! grep -F 'ORDER-DO-NOT-LOG' <<<"$RAW"
+          ! grep -F 'PRIVATE-MESSAGE-DO-NOT-LOG' <<<"$RAW"
+          ! grep -F 'MODEL-TEXT-DO-NOT-LOG' <<<"$RAW"
+
+          ALLOWED='["candidateValid","estimatedCostUsd","event","inputTokens","latencyMs","modelVersion","outputTokens","primaryIntentMatch","promptVersion","provider","recordedAt","schemaVersion","severity","status","totalTokens"]'
+          jq -e --argjson allowed "$ALLOWED" '.entries[0].jsonPayload | (keys | sort) == ($allowed | sort)' "$RUNNER_TEMP/logs.json" >/dev/null
+          echo "DURABLE_AUDIT_CLOUD_LOGGING_ROUNDTRIP=PASS"
+          echo "DURABLE_AUDIT_PRIVACY_ALLOWLIST=PASS"
+
+      - name: Delete temporary Cloud Run Job
+        if: always() && steps.deploy.outputs.attempted == 'true'
+        shell: bash
+        run: |
+          set +e
+          gcloud auth list >/dev/null 2>&1
+          gcloud run jobs delete "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --quiet
+          CODE=$?
+          if [ "$CODE" -eq 0 ]; then
+            echo "TEMP_DURABLE_AUDIT_SMOKE_JOB_CLEANUP=PASS"
+          else
+            echo "TEMP_DURABLE_AUDIT_SMOKE_JOB_CLEANUP=FAILED_OR_JOB_NOT_CREATED"
+          fi
+          exit 0
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+          EXECUTION: ${{ steps.execute.outputs.execution }}
+        run: |
+          {
+            echo "## AI Arman isolated durable audit transport smoke"
+            echo
+            echo "- Customer traffic: none"
+            echo "- Live Cloud Run service mutation: none"
+            echo "- Model provider call: none"
+            echo "- OpenAI secret mounted: no"
+            echo "- Durable audit enabled only inside temporary job: yes"
+            echo "- Telemetry reader used only for Cloud Logging readback: yes"
+            echo "- Temporary job cleanup attempted: yes"
+            echo "- Immutable digest: \`${DIGEST:-not-built}\`"
+            echo "- Execution: \`${EXECUTION:-not-started}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
