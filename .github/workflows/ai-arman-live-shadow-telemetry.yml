@@ -1,0 +1,172 @@
+name: AI Arman live shadow telemetry
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: Type VERIFY_AI_ARMAN_TELEMETRY
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ai-arman-live-shadow-telemetry
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  SERVICE_NAME: harmoniq-ai-arman-beta0
+  LIVE_REVISION: harmoniq-ai-arman-beta0-00002-2kq
+  CANDIDATE_REVISION: harmoniq-ai-arman-beta0-shadow-a979b694-2
+  EXPECTED_CANDIDATE_DIGEST: sha256:f28eff874264cdf72d3edc3f8d7cda9a7c4a8770f3254f4c240136900e151932
+  LIVE_SHADOW_STARTED_AT: '2026-08-17T19:53:10Z'
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  TELEMETRY_SERVICE_ACCOUNT: github-ai-arman-telemetry@harmoniq-210513.iam.gserviceaccount.com
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+
+jobs:
+  verify-telemetry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Enforce explicit gate, branch and actor
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.approval }}" = "VERIFY_AI_ARMAN_TELEMETRY"
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Authenticate existing deployer for Cloud Run boundary reads
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Verify live boundary without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service.json"
+          gcloud run revisions describe "$CANDIDATE_REVISION" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam.json"
+
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then
+            echo "Public IAM detected." >&2
+            exit 1
+          fi
+
+          LIVE_PERCENT="$(jq -r --arg rev "$LIVE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")"
+          CANDIDATE_PERCENT="$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")"
+          SERVICE_MAX="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service.json")"
+          PROMOTION="$(jq -r '.spec.containers[0].env[]? | select(.name == "AI_ARMAN_MODEL_PROMOTION_ENABLED") | .value // empty' "$RUNNER_TEMP/candidate.json")"
+          WIDGET="$(jq -r '.spec.containers[0].env[]? | select(.name == "AI_ARMAN_WIDGET_PREVIEW_ENABLED") | .value // empty' "$RUNNER_TEMP/candidate.json")"
+          IMAGE_FIELD="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/candidate.json")"
+
+          test "$LIVE_PERCENT" = "99"
+          test "$CANDIDATE_PERCENT" = "1"
+          test "$SERVICE_MAX" = "2"
+          test "$PROMOTION" = "false"
+          test "$WIDGET" = "false"
+          echo "$IMAGE_FIELD" | grep -F "$EXPECTED_CANDIDATE_DIGEST" >/dev/null
+
+          echo "LIVE_SHADOW_BOUNDARY=PASS"
+          echo "PRIVATE_IAM=PASS"
+          echo "PROMOTION_OFF=PASS"
+          echo "WIDGET_OFF=PASS"
+          echo "IMMUTABLE_DIGEST=PASS"
+
+      - name: Authenticate dedicated telemetry reader
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.TELEMETRY_SERVICE_ACCOUNT }}
+
+      - name: Verify telemetry identity has monitoring read and no obvious write roles
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          test "$ACTIVE_ACCOUNT" = "$TELEMETRY_SERVICE_ACCOUNT"
+
+          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          test -n "$ACCESS_TOKEN"
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          cat > "$RUNNER_TEMP/telemetry-permissions.json" <<'JSON'
+          {
+            "permissions": [
+              "monitoring.timeSeries.list",
+              "run.services.update",
+              "run.services.setIamPolicy",
+              "iam.serviceAccounts.create",
+              "resourcemanager.projects.setIamPolicy",
+              "secretmanager.versions.access"
+            ]
+          }
+          JSON
+
+          CODE="$(curl --silent --show-error --output "$RUNNER_TEMP/telemetry-permissions-response.json" --write-out '%{http_code}' --request POST --header "Authorization: Bearer $ACCESS_TOKEN" --header 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/telemetry-permissions.json" "https://cloudresourcemanager.googleapis.com/v1/projects/$PROJECT_ID:testIamPermissions")"
+          test "$CODE" = "200"
+
+          has_permission() {
+            jq -e --arg p "$1" '.permissions // [] | index($p) != null' "$RUNNER_TEMP/telemetry-permissions-response.json" >/dev/null
+          }
+
+          has_permission monitoring.timeSeries.list
+          ! has_permission run.services.update
+          ! has_permission run.services.setIamPolicy
+          ! has_permission iam.serviceAccounts.create
+          ! has_permission resourcemanager.projects.setIamPolicy
+          ! has_permission secretmanager.versions.access
+
+          echo "TELEMETRY_LEAST_PRIVILEGE=PASS"
+
+      - name: Read Cloud Run request metrics
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          echo "::add-mask::$ACCESS_TOKEN"
+          END_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          FILTER="metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE_NAME\" AND resource.labels.location=\"$REGION\""
+
+          CODE="$(curl --silent --show-error --output "$RUNNER_TEMP/request-count.json" --write-out '%{http_code}' --get --header "Authorization: Bearer $ACCESS_TOKEN" --data-urlencode "filter=$FILTER" --data-urlencode "interval.startTime=$LIVE_SHADOW_STARTED_AT" --data-urlencode "interval.endTime=$END_TIME" --data-urlencode 'view=FULL' --data-urlencode 'pageSize=1000' "https://monitoring.googleapis.com/v3/projects/$PROJECT_ID/timeSeries")"
+          test "$CODE" = "200"
+
+          sum_revision() {
+            jq -r --arg rev "$1" '[.timeSeries[]? | select(.resource.labels.revision_name == $rev) | .points[]?.value.int64Value? | tonumber] | add // 0' "$RUNNER_TEMP/request-count.json"
+          }
+          sum_revision_class() {
+            jq -r --arg rev "$1" --arg cls "$2" '[.timeSeries[]? | select(.resource.labels.revision_name == $rev and .metric.labels.response_code_class == $cls) | .points[]?.value.int64Value? | tonumber] | add // 0' "$RUNNER_TEMP/request-count.json"
+          }
+
+          LIVE_REQUESTS="$(sum_revision "$LIVE_REVISION")"
+          CANDIDATE_REQUESTS="$(sum_revision "$CANDIDATE_REVISION")"
+          LIVE_5XX="$(sum_revision_class "$LIVE_REVISION" '5xx')"
+          CANDIDATE_5XX="$(sum_revision_class "$CANDIDATE_REVISION" '5xx')"
+
+          echo "OBSERVATION_WINDOW=$LIVE_SHADOW_STARTED_AT..$END_TIME"
+          echo "LIVE_REQUESTS=$LIVE_REQUESTS"
+          echo "CANDIDATE_REQUESTS=$CANDIDATE_REQUESTS"
+          echo "LIVE_5XX=$LIVE_5XX"
+          echo "CANDIDATE_5XX=$CANDIDATE_5XX"
+
+          if [ "$CANDIDATE_5XX" -gt 0 ]; then
+            echo "Candidate has 5xx responses in the observation window." >&2
+            exit 1
+          fi
+
+          echo "LIVE_SHADOW_TELEMETRY=PASS"
