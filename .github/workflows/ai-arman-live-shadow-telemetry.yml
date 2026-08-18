@@ -7,6 +7,11 @@ on:
         description: Type VERIFY_AI_ARMAN_TELEMETRY
         required: true
         type: string
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/ai-arman-live-shadow-telemetry.yml
 
 permissions:
   contents: read
@@ -38,7 +43,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "${{ inputs.approval }}" = "VERIFY_AI_ARMAN_TELEMETRY"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            test "${{ inputs.approval }}" = "VERIFY_AI_ARMAN_TELEMETRY"
+          else
+            test "$GITHUB_EVENT_NAME" = "push"
+          fi
           test "$GITHUB_REF" = "$REQUIRED_REF"
           test "$GITHUB_ACTOR" = "arman573"
 
