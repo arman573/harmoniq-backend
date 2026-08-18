@@ -100,9 +100,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
-          test "$ACTIVE_ACCOUNT" = "$TELEMETRY_SERVICE_ACCOUNT"
-          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          test -n "${GOOGLE_APPLICATION_CREDENTIALS:-}"
+          test -f "$GOOGLE_APPLICATION_CREDENTIALS"
+          ACCESS_TOKEN="$(gcloud auth application-default print-access-token)"
           test -n "$ACCESS_TOKEN"
           echo "::add-mask::$ACCESS_TOKEN"
           cat > "$RUNNER_TEMP/permissions-request.json" <<'JSON'
@@ -126,7 +126,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          ACCESS_TOKEN="$(gcloud auth application-default print-access-token)"
+          test -n "$ACCESS_TOKEN"
           echo "::add-mask::$ACCESS_TOKEN"
           END_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           FILTER="metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE_NAME\" AND resource.labels.location=\"$REGION\""
