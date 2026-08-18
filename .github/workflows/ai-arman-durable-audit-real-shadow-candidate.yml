@@ -7,11 +7,6 @@ on:
         description: Type VERIFY_REAL_SHADOW_DURABLE_AUDIT
         required: true
         type: string
-  push:
-    branches:
-      - feature/ai-arman-foundation-v1
-    paths:
-      - .github/workflows/ai-arman-durable-audit-real-shadow-candidate.yml
 
 permissions:
   contents: write
@@ -46,11 +41,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            test "${{ inputs.approval }}" = "VERIFY_REAL_SHADOW_DURABLE_AUDIT"
-          else
-            test "$GITHUB_EVENT_NAME" = "push"
-          fi
+          test "${{ inputs.approval }}" = "VERIFY_REAL_SHADOW_DURABLE_AUDIT"
           test "$GITHUB_REF" = "$REQUIRED_REF"
           test "$GITHUB_ACTOR" = "arman573"
 
