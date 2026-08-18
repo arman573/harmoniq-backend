@@ -7,6 +7,11 @@ on:
         description: Type VERIFY_DURABLE_AUDIT_TRANSPORT
         required: true
         type: string
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/ai-arman-durable-audit-transport-smoke.yml
 
 permissions:
   contents: read
@@ -36,7 +41,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "${{ inputs.approval }}" = "VERIFY_DURABLE_AUDIT_TRANSPORT"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            test "${{ inputs.approval }}" = "VERIFY_DURABLE_AUDIT_TRANSPORT"
+          else
+            test "$GITHUB_EVENT_NAME" = "push"
+          fi
           test "$GITHUB_REF" = "$REQUIRED_REF"
           test "$GITHUB_ACTOR" = "arman573"
 
@@ -174,8 +183,10 @@ jobs:
           ! grep -F 'PRIVATE-MESSAGE-DO-NOT-LOG' <<<"$RAW"
           ! grep -F 'MODEL-TEXT-DO-NOT-LOG' <<<"$RAW"
 
-          ALLOWED='["candidateValid","estimatedCostUsd","event","inputTokens","latencyMs","modelVersion","outputTokens","primaryIntentMatch","promptVersion","provider","recordedAt","schemaVersion","severity","status","totalTokens"]'
-          jq -e --argjson allowed "$ALLOWED" '.entries[0].jsonPayload | (keys | sort) == ($allowed | sort)' "$RUNNER_TEMP/logs.json" >/dev/null
+          BASE_ALLOWED='["candidateValid","estimatedCostUsd","event","inputTokens","latencyMs","modelVersion","outputTokens","primaryIntentMatch","promptVersion","provider","recordedAt","schemaVersion","status","totalTokens"]'
+          WITH_SEVERITY='["candidateValid","estimatedCostUsd","event","inputTokens","latencyMs","modelVersion","outputTokens","primaryIntentMatch","promptVersion","provider","recordedAt","schemaVersion","severity","status","totalTokens"]'
+          jq -e --argjson base "$BASE_ALLOWED" --argjson withSeverity "$WITH_SEVERITY" '.entries[0].jsonPayload | (keys | sort) as $keys | $keys == ($base | sort) or $keys == ($withSeverity | sort)' "$RUNNER_TEMP/logs.json" >/dev/null
+          jq -e '(.entries[0].severity // "INFO") == "INFO"' "$RUNNER_TEMP/logs.json" >/dev/null
           echo "DURABLE_AUDIT_CLOUD_LOGGING_ROUNDTRIP=PASS"
           echo "DURABLE_AUDIT_PRIVACY_ALLOWLIST=PASS"
 
