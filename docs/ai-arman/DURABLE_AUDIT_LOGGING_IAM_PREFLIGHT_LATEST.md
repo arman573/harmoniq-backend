@@ -7,7 +7,7 @@ This workflow is read-only in GCP. It only tests IAM permissions and does not en
 ## Dedicated telemetry identity
 
 - Service account: github-ai-arman-telemetry@harmoniq-210513.iam.gserviceaccount.com
-- logging.logEntries.list: NO
+- logging.logEntries.list: YES
 - logging.logEntries.create: NO
 - logging.sinks.create: NO
 - run.services.update: NO
@@ -16,7 +16,7 @@ This workflow is read-only in GCP. It only tests IAM permissions and does not en
 
 ## Decision
 
-- Can the current dedicated telemetry identity read future durable model-shadow audit entries while lacking the obvious write/secret permissions above: NO
+- Can the current dedicated telemetry identity read future durable model-shadow audit entries while lacking the obvious write/secret permissions above: YES
 - Durable audit runtime flag changed by this workflow: NO
 - Cloud Run traffic/config changed by this workflow: NO
 - IAM changed by this workflow: NO
