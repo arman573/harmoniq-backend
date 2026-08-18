@@ -7,15 +7,9 @@ on:
         description: Type VERIFY_AI_ARMAN_TELEMETRY
         required: true
         type: string
-  push:
-    branches:
-      - feature/ai-arman-foundation-v1
-    paths:
-      - .github/workflows/ai-arman-live-shadow-telemetry.yml
 
 permissions:
   contents: write
-  issues: write
   id-token: write
 
 concurrency:
@@ -34,6 +28,7 @@ env:
   DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
   TELEMETRY_SERVICE_ACCOUNT: github-ai-arman-telemetry@harmoniq-210513.iam.gserviceaccount.com
   REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+  RESULT_PATH: docs/ai-arman/LIVE_SHADOW_TELEMETRY_LATEST.md
 
 jobs:
   verify-telemetry:
@@ -41,26 +36,19 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Enforce explicit gate, branch and actor
-        id: gate
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            test "${{ inputs.approval }}" = "VERIFY_AI_ARMAN_TELEMETRY"
-          else
-            test "$GITHUB_EVENT_NAME" = "push"
-          fi
+          test "${{ inputs.approval }}" = "VERIFY_AI_ARMAN_TELEMETRY"
           test "$GITHUB_REF" = "$REQUIRED_REF"
           test "$GITHUB_ACTOR" = "arman573"
 
-      - name: Checkout
-        id: checkout
+      - name: Check out exact branch
         uses: actions/checkout@v4
         with:
           ref: feature/ai-arman-foundation-v1
 
-      - name: Authenticate existing deployer for Cloud Run boundary reads
-        id: auth_deployer
+      - name: Authenticate existing AI Arman deployer
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
@@ -68,7 +56,6 @@ jobs:
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up Google Cloud SDK
-        id: setup_gcloud
         uses: google-github-actions/setup-gcloud@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
@@ -81,7 +68,10 @@ jobs:
           gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service.json"
           gcloud run revisions describe "$CANDIDATE_REVISION" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate.json"
           gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam.json"
-          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then exit 1; fi
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then
+            echo "Public IAM detected" >&2
+            exit 1
+          fi
           LIVE_PERCENT="$(jq -r --arg rev "$LIVE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")"
           CANDIDATE_PERCENT="$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")"
           SERVICE_MAX="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service.json")"
@@ -94,37 +84,38 @@ jobs:
           test "$PROMOTION" = "false"
           test "$WIDGET" = "false"
           echo "$IMAGE_FIELD" | grep -F "$EXPECTED_CANDIDATE_DIGEST" >/dev/null
-          echo "live_percent=$LIVE_PERCENT" >> "$GITHUB_OUTPUT"
-          echo "candidate_percent=$CANDIDATE_PERCENT" >> "$GITHUB_OUTPUT"
-          echo "service_max=$SERVICE_MAX" >> "$GITHUB_OUTPUT"
-          echo "promotion=$PROMOTION" >> "$GITHUB_OUTPUT"
-          echo "widget=$WIDGET" >> "$GITHUB_OUTPUT"
+          {
+            echo "live_percent=$LIVE_PERCENT"
+            echo "candidate_percent=$CANDIDATE_PERCENT"
+            echo "service_max=$SERVICE_MAX"
+            echo "promotion=$PROMOTION"
+            echo "widget=$WIDGET"
+          } >> "$GITHUB_OUTPUT"
           echo "LIVE_SHADOW_BOUNDARY=PASS"
 
       - name: Authenticate dedicated telemetry reader
-        id: auth_telemetry
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.TELEMETRY_SERVICE_ACCOUNT }}
 
-      - name: Verify telemetry identity has monitoring read and no obvious write roles
+      - name: Verify telemetry least privilege
         id: least_privilege
         shell: bash
         run: |
           set -euo pipefail
-          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
-          test "$ACTIVE_ACCOUNT" = "$TELEMETRY_SERVICE_ACCOUNT"
-          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          test -n "${GOOGLE_APPLICATION_CREDENTIALS:-}"
+          test -f "$GOOGLE_APPLICATION_CREDENTIALS"
+          ACCESS_TOKEN="$(gcloud auth application-default print-access-token)"
           test -n "$ACCESS_TOKEN"
           echo "::add-mask::$ACCESS_TOKEN"
-          cat > "$RUNNER_TEMP/telemetry-permissions.json" <<'JSON'
+          cat > "$RUNNER_TEMP/permissions-request.json" <<'JSON'
           {"permissions":["monitoring.timeSeries.list","run.services.update","run.services.setIamPolicy","iam.serviceAccounts.create","resourcemanager.projects.setIamPolicy","secretmanager.versions.access"]}
           JSON
-          CODE="$(curl --silent --show-error --output "$RUNNER_TEMP/telemetry-permissions-response.json" --write-out '%{http_code}' --request POST --header "Authorization: Bearer $ACCESS_TOKEN" --header 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/telemetry-permissions.json" "https://cloudresourcemanager.googleapis.com/v1/projects/$PROJECT_ID:testIamPermissions")"
-          test "$CODE" = "200"
-          has_permission(){ jq -e --arg p "$1" '.permissions // [] | index($p) != null' "$RUNNER_TEMP/telemetry-permissions-response.json" >/dev/null; }
+          HTTP_CODE="$(curl --silent --show-error --output "$RUNNER_TEMP/permissions-response.json" --write-out '%{http_code}' --request POST --header "Authorization: Bearer $ACCESS_TOKEN" --header 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/permissions-request.json" "https://cloudresourcemanager.googleapis.com/v1/projects/$PROJECT_ID:testIamPermissions")"
+          test "$HTTP_CODE" = "200"
+          has_permission(){ jq -e --arg p "$1" '.permissions // [] | index($p) != null' "$RUNNER_TEMP/permissions-response.json" >/dev/null; }
           has_permission monitoring.timeSeries.list
           ! has_permission run.services.update
           ! has_permission run.services.setIamPolicy
@@ -132,7 +123,7 @@ jobs:
           ! has_permission resourcemanager.projects.setIamPolicy
           ! has_permission secretmanager.versions.access
           echo "monitoring_read=YES" >> "$GITHUB_OUTPUT"
-          echo "obvious_write_or_secret_permissions=NO" >> "$GITHUB_OUTPUT"
+          echo "write_or_secret=NO" >> "$GITHUB_OUTPUT"
           echo "TELEMETRY_LEAST_PRIVILEGE=PASS"
 
       - name: Read Cloud Run request metrics
@@ -140,92 +131,85 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          ACCESS_TOKEN="$(gcloud auth application-default print-access-token)"
+          test -n "$ACCESS_TOKEN"
           echo "::add-mask::$ACCESS_TOKEN"
           END_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           FILTER="metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE_NAME\" AND resource.labels.location=\"$REGION\""
-          CODE="$(curl --silent --show-error --output "$RUNNER_TEMP/request-count.json" --write-out '%{http_code}' --get --header "Authorization: Bearer $ACCESS_TOKEN" --data-urlencode "filter=$FILTER" --data-urlencode "interval.startTime=$LIVE_SHADOW_STARTED_AT" --data-urlencode "interval.endTime=$END_TIME" --data-urlencode 'view=FULL' --data-urlencode 'pageSize=1000' "https://monitoring.googleapis.com/v3/projects/$PROJECT_ID/timeSeries")"
-          test "$CODE" = "200"
+          HTTP_CODE="$(curl --silent --show-error --output "$RUNNER_TEMP/request-count.json" --write-out '%{http_code}' --get --header "Authorization: Bearer $ACCESS_TOKEN" --data-urlencode "filter=$FILTER" --data-urlencode "interval.startTime=$LIVE_SHADOW_STARTED_AT" --data-urlencode "interval.endTime=$END_TIME" --data-urlencode 'view=FULL' --data-urlencode 'pageSize=1000' "https://monitoring.googleapis.com/v3/projects/$PROJECT_ID/timeSeries")"
+          test "$HTTP_CODE" = "200"
           sum_revision(){ jq -r --arg rev "$1" '[.timeSeries[]? | select(.resource.labels.revision_name == $rev) | .points[]?.value.int64Value? | tonumber] | add // 0' "$RUNNER_TEMP/request-count.json"; }
           sum_revision_class(){ jq -r --arg rev "$1" --arg cls "$2" '[.timeSeries[]? | select(.resource.labels.revision_name == $rev and .metric.labels.response_code_class == $cls) | .points[]?.value.int64Value? | tonumber] | add // 0' "$RUNNER_TEMP/request-count.json"; }
           LIVE_REQUESTS="$(sum_revision "$LIVE_REVISION")"
           CANDIDATE_REQUESTS="$(sum_revision "$CANDIDATE_REVISION")"
           LIVE_5XX="$(sum_revision_class "$LIVE_REVISION" '5xx')"
           CANDIDATE_5XX="$(sum_revision_class "$CANDIDATE_REVISION" '5xx')"
-          echo "observation_window=$LIVE_SHADOW_STARTED_AT..$END_TIME" >> "$GITHUB_OUTPUT"
-          echo "live_requests=$LIVE_REQUESTS" >> "$GITHUB_OUTPUT"
-          echo "candidate_requests=$CANDIDATE_REQUESTS" >> "$GITHUB_OUTPUT"
-          echo "live_5xx=$LIVE_5XX" >> "$GITHUB_OUTPUT"
-          echo "candidate_5xx=$CANDIDATE_5XX" >> "$GITHUB_OUTPUT"
+          {
+            echo "observation_window=$LIVE_SHADOW_STARTED_AT..$END_TIME"
+            echo "live_requests=$LIVE_REQUESTS"
+            echo "candidate_requests=$CANDIDATE_REQUESTS"
+            echo "live_5xx=$LIVE_5XX"
+            echo "candidate_5xx=$CANDIDATE_5XX"
+          } >> "$GITHUB_OUTPUT"
           test "$CANDIDATE_5XX" -eq 0
           echo "LIVE_SHADOW_TELEMETRY=PASS"
 
-      - name: Persist successful telemetry checkpoint
-        id: persist
-        if: ${{ success() }}
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Persist telemetry result
+        if: always()
         shell: bash
+        env:
+          BOUNDARY_OUTCOME: ${{ steps.boundary.outcome }}
+          LEAST_PRIVILEGE_OUTCOME: ${{ steps.least_privilege.outcome }}
+          METRICS_OUTCOME: ${{ steps.metrics.outcome }}
+          LIVE_PERCENT: ${{ steps.boundary.outputs.live_percent }}
+          CANDIDATE_PERCENT: ${{ steps.boundary.outputs.candidate_percent }}
+          SERVICE_MAX: ${{ steps.boundary.outputs.service_max }}
+          PROMOTION: ${{ steps.boundary.outputs.promotion }}
+          WIDGET: ${{ steps.boundary.outputs.widget }}
+          MONITORING_READ: ${{ steps.least_privilege.outputs.monitoring_read }}
+          WRITE_OR_SECRET: ${{ steps.least_privilege.outputs.write_or_secret }}
+          OBSERVATION_WINDOW: ${{ steps.metrics.outputs.observation_window }}
+          LIVE_REQUESTS: ${{ steps.metrics.outputs.live_requests }}
+          CANDIDATE_REQUESTS: ${{ steps.metrics.outputs.candidate_requests }}
+          LIVE_5XX: ${{ steps.metrics.outputs.live_5xx }}
+          CANDIDATE_5XX: ${{ steps.metrics.outputs.candidate_5xx }}
         run: |
           set -euo pipefail
-          mkdir -p docs/ai-arman
-          cat > docs/ai-arman/LIVE_SHADOW_TELEMETRY_LATEST.md <<EOF
-          # AI Arman live-shadow telemetry latest
+          mkdir -p "$(dirname "$RESULT_PATH")"
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman live-shadow telemetry - latest
 
-          - Run: ${GITHUB_RUN_ID}
-          - Source commit: ${GITHUB_SHA}
-          - Boundary: PASS
-          - Traffic: ${{ steps.boundary.outputs.live_percent }}% deterministic / ${{ steps.boundary.outputs.candidate_percent }}% shadow
-          - Service max instances: ${{ steps.boundary.outputs.service_max }}
-          - Private IAM: PASS
-          - Model promotion: ${{ steps.boundary.outputs.promotion }}
-          - Widget preview: ${{ steps.boundary.outputs.widget }}
-          - Telemetry least privilege: PASS
-          - monitoring.timeSeries.list: ${{ steps.least_privilege.outputs.monitoring_read }}
-          - Obvious write/secret permissions on telemetry identity: ${{ steps.least_privilege.outputs.obvious_write_or_secret_permissions }}
-          - Observation window: ${{ steps.metrics.outputs.observation_window }}
-          - Deterministic requests: ${{ steps.metrics.outputs.live_requests }}
-          - Shadow requests: ${{ steps.metrics.outputs.candidate_requests }}
-          - Deterministic 5xx: ${{ steps.metrics.outputs.live_5xx }}
-          - Shadow 5xx: ${{ steps.metrics.outputs.candidate_5xx }}
-          - Cloud Run traffic/config/IAM mutation by this workflow: NONE
+          Generated by GitHub Actions run ${GITHUB_RUN_ID} from commit ${GITHUB_SHA}.
+
+          ## Gate outcomes
+          - Live boundary: ${BOUNDARY_OUTCOME}
+          - Telemetry least privilege: ${LEAST_PRIVILEGE_OUTCOME}
+          - Monitoring metrics: ${METRICS_OUTCOME}
+
+          ## Verified state
+          - Traffic: ${LIVE_PERCENT}% deterministic / ${CANDIDATE_PERCENT}% shadow
+          - Service max instances: ${SERVICE_MAX}
+          - Model promotion: ${PROMOTION}
+          - Widget preview: ${WIDGET}
+          - monitoring.timeSeries.list: ${MONITORING_READ}
+          - Obvious write/secret permissions on telemetry identity: ${WRITE_OR_SECRET}
+
+          ## Observation
+          - Window: ${OBSERVATION_WINDOW}
+          - Deterministic requests: ${LIVE_REQUESTS}
+          - Shadow requests: ${CANDIDATE_REQUESTS}
+          - Deterministic 5xx: ${LIVE_5XX}
+          - Shadow 5xx: ${CANDIDATE_5XX}
+
+          Cloud Run traffic/config/IAM mutation by this workflow: NONE.
           EOF
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/ai-arman/LIVE_SHADOW_TELEMETRY_LATEST.md
-          git diff --cached --quiet || git commit -m "Record AI Arman live shadow telemetry"
-          git push origin HEAD:feature/ai-arman-foundation-v1
-
-      - name: Publish telemetry diagnostics on PR 18
-        if: ${{ always() }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          cat > "$RUNNER_TEMP/telemetry-diagnostics.md" <<EOF
-          ## AI Arman telemetry diagnostics
-
-          - Run: ${GITHUB_RUN_ID}
-          - Source commit: ${GITHUB_SHA}
-          - Gate: ${{ steps.gate.outcome }}
-          - Checkout: ${{ steps.checkout.outcome }}
-          - Deployer WIF auth: ${{ steps.auth_deployer.outcome }}
-          - gcloud setup: ${{ steps.setup_gcloud.outcome }}
-          - Live boundary: ${{ steps.boundary.outcome }}
-          - Telemetry WIF auth: ${{ steps.auth_telemetry.outcome }}
-          - Least privilege: ${{ steps.least_privilege.outcome }}
-          - Monitoring metrics: ${{ steps.metrics.outcome }}
-          - Checkpoint persist: ${{ steps.persist.outcome }}
-          - Traffic: ${{ steps.boundary.outputs.live_percent }}% deterministic / ${{ steps.boundary.outputs.candidate_percent }}% shadow
-          - Service max: ${{ steps.boundary.outputs.service_max }}
-          - Promotion: ${{ steps.boundary.outputs.promotion }}
-          - Widget: ${{ steps.boundary.outputs.widget }}
-          - monitoring.timeSeries.list: ${{ steps.least_privilege.outputs.monitoring_read }}
-          - Observation window: ${{ steps.metrics.outputs.observation_window }}
-          - Deterministic requests: ${{ steps.metrics.outputs.live_requests }}
-          - Shadow requests: ${{ steps.metrics.outputs.candidate_requests }}
-          - Deterministic 5xx: ${{ steps.metrics.outputs.live_5xx }}
-          - Shadow 5xx: ${{ steps.metrics.outputs.candidate_5xx }}
-          - Cloud Run traffic/config/IAM mutation by this workflow: NONE
-          EOF
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/18/comments" -f body=@"$RUNNER_TEMP/telemetry-diagnostics.md"
+          git add "$RESULT_PATH"
+          if git diff --cached --quiet; then
+            echo "TELEMETRY_RESULT_UNCHANGED=PASS"
+          else
+            git commit -m "Record AI Arman live shadow telemetry"
+            git push origin HEAD:feature/ai-arman-foundation-v1
+            echo "TELEMETRY_RESULT_PERSISTED=PASS"
+          fi
