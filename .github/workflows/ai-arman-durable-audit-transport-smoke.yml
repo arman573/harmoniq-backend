@@ -179,12 +179,24 @@ jobs:
           echo "DURABLE_AUDIT_CLOUD_LOGGING_ROUNDTRIP=PASS"
           echo "DURABLE_AUDIT_PRIVACY_ALLOWLIST=PASS"
 
+      - name: Re-authenticate deployer for cleanup
+        if: always() && steps.deploy.outputs.attempted == 'true'
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
       - name: Delete temporary Cloud Run Job
         if: always() && steps.deploy.outputs.attempted == 'true'
         shell: bash
         run: |
           set +e
-          gcloud auth list >/dev/null 2>&1
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          if [ "$ACTIVE_ACCOUNT" != "$DEPLOY_SERVICE_ACCOUNT" ]; then
+            echo "TEMP_DURABLE_AUDIT_SMOKE_JOB_CLEANUP=SKIPPED_WRONG_IDENTITY"
+            exit 0
+          fi
           gcloud run jobs delete "$JOB_NAME" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
