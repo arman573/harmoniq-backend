@@ -36,7 +36,8 @@ gcloud iam service-accounts create github-ai-arman-telemetry \
 
 gcloud projects add-iam-policy-binding harmoniq-210513 \
   --member="serviceAccount:github-ai-arman-telemetry@harmoniq-210513.iam.gserviceaccount.com" \
-  --role="roles/monitoring.viewer"
+  --role="roles/monitoring.viewer" \
+  --condition=None
 
 gcloud iam service-accounts add-iam-policy-binding \
   github-ai-arman-telemetry@harmoniq-210513.iam.gserviceaccount.com \
@@ -44,6 +45,8 @@ gcloud iam service-accounts add-iam-policy-binding \
   --role="roles/iam.workloadIdentityUser" \
   --member="principalSet://iam.googleapis.com/projects/222024985388/locations/global/workloadIdentityPools/github-actions/attribute.repository/arman573/harmoniq-backend"
 ```
+
+`--condition=None` is intentional. The project already contains conditional IAM bindings, so an unconditional Monitoring Viewer binding must be stated explicitly to avoid the interactive condition prompt. If the service account was already created, do not recreate it; apply only the missing binding(s).
 
 The existing WIF provider must remain branch-restricted to:
 
