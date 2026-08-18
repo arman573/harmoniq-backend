@@ -7,11 +7,6 @@ on:
         description: Type MEASURE_ZERO_TRAFFIC_SHADOW_QUALITY
         required: true
         type: string
-  push:
-    branches:
-      - feature/ai-arman-foundation-v1
-    paths:
-      - .github/workflows/ai-arman-zero-traffic-shadow-quality-matrix.yml
 
 permissions:
   contents: write
@@ -47,11 +42,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            test "${{ inputs.approval }}" = "MEASURE_ZERO_TRAFFIC_SHADOW_QUALITY"
-          else
-            test "$GITHUB_EVENT_NAME" = "push"
-          fi
+          test "${{ inputs.approval }}" = "MEASURE_ZERO_TRAFFIC_SHADOW_QUALITY"
           test "$GITHUB_REF" = "$REQUIRED_REF"
           test "$GITHUB_ACTOR" = "arman573"
 
