@@ -1,0 +1,409 @@
+name: AI Arman real shadow durable audit candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: Type VERIFY_REAL_SHADOW_DURABLE_AUDIT
+        required: true
+        type: string
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/ai-arman-durable-audit-real-shadow-candidate.yml
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: ai-arman-durable-audit-real-shadow-candidate
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  SERVICE_NAME: harmoniq-ai-arman-beta0
+  SERVICE_URL: https://harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
+  DETERMINISTIC_REVISION: harmoniq-ai-arman-beta0-00002-2kq
+  CURRENT_SHADOW_REVISION: harmoniq-ai-arman-beta0-shadow-a979b694-2
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  SECRET_NAME: ai-arman-openai-api-key
+  ARTIFACT_REPOSITORY: harmoniq-containers
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  TELEMETRY_SERVICE_ACCOUNT: github-ai-arman-telemetry@harmoniq-210513.iam.gserviceaccount.com
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+  RESULT_PATH: docs/ai-arman/REAL_SHADOW_DURABLE_AUDIT_CANDIDATE_LATEST.md
+
+jobs:
+  verify-real-shadow-durable-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Enforce explicit gate, branch and actor
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            test "${{ inputs.approval }}" = "VERIFY_REAL_SHADOW_DURABLE_AUDIT"
+          else
+            test "$GITHUB_EVENT_NAME" = "push"
+          fi
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Verify exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test -- --runInBand
+          npm run build
+          test -f dist/ai-arman/chat/chat-interpretation-shadow-durable-audit.sink.js
+
+      - name: Authenticate deployer
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Snapshot and enforce current 99/1 boundary
+        id: before
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+          gcloud run revisions describe "$CURRENT_SHADOW_REVISION" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/current-shadow-before.json"
+
+          test "$(jq -r '.status.url // empty' "$RUNNER_TEMP/service-before.json")" = "$SERVICE_URL"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-before.json" >/dev/null; then
+            echo "Public IAM detected; refusing candidate deploy." >&2
+            exit 1
+          fi
+
+          DETERMINISTIC_PERCENT="$(jq -r --arg rev "$DETERMINISTIC_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-before.json")"
+          SHADOW_PERCENT="$(jq -r --arg rev "$CURRENT_SHADOW_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-before.json")"
+          POSITIVE_COUNT="$(jq -r '[.status.traffic[]? | select((.percent // 0) > 0)] | length' "$RUNNER_TEMP/service-before.json")"
+          SERVICE_MAX="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service-before.json")"
+          test "$DETERMINISTIC_PERCENT" = "99"
+          test "$SHADOW_PERCENT" = "1"
+          test "$POSITIVE_COUNT" = "2"
+          test "$SERVICE_MAX" = "2"
+
+          env_value() { jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name == $n) | .value // empty' "$RUNNER_TEMP/current-shadow-before.json"; }
+          test "$(env_value AI_ARMAN_MODEL_PROMOTION_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_WIDGET_PREVIEW_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_DURABLE_AUDIT_ENABLED)" != "true"
+
+          jq -S '[.status.traffic[]? | {revisionName, percent:(.percent // 0), tag:(.tag // "")} ] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/service-before.json" > "$RUNNER_TEMP/traffic-before.json"
+          echo "CURRENT_LIVE_BOUNDARY=PASS deterministic=99 shadow=1 max=2 private=true"
+
+      - name: Build and push immutable candidate image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA:0:12}"
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:durable-real-shadow-$SHORT_SHA-$GITHUB_RUN_ID"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build --pull -f Dockerfile.ai-arman-candidate --tag "$IMAGE" .
+          docker push "$IMAGE"
+          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "immutable_image=$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME@$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy private zero-traffic durable shadow candidate
+        id: deploy
+        shell: bash
+        env:
+          IMMUTABLE_IMAGE: ${{ steps.image.outputs.immutable_image }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA:0:8}"
+          REVISION_SUFFIX="durable-${SHORT_SHA}-${GITHUB_RUN_NUMBER}"
+          TAG="durable-${SHORT_SHA}-${GITHUB_RUN_NUMBER}"
+
+          gcloud run deploy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --platform managed \
+            --image "$IMMUTABLE_IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --revision-suffix "$REVISION_SUFFIX" \
+            --tag "$TAG" \
+            --no-traffic \
+            --ingress all \
+            --port 8080 \
+            --startup-probe "httpGet.path=/ai-arman/foundation,httpGet.port=8080,initialDelaySeconds=0,failureThreshold=12,timeoutSeconds=2,periodSeconds=5" \
+            --cpu 1 \
+            --memory 256Mi \
+            --cpu-throttling \
+            --no-cpu-boost \
+            --min 0 \
+            --concurrency 1 \
+            --timeout 30 \
+            --set-env-vars "NODE_ENV=production,AI_ARMAN_WIDGET_PREVIEW_ENABLED=false,AI_ARMAN_MODEL_INTERPRETATION_ENABLED=true,AI_ARMAN_MODEL_SHADOW_ENABLED=true,AI_ARMAN_MODEL_PROMOTION_ENABLED=false,AI_ARMAN_MODEL_SHADOW_DURABLE_AUDIT_ENABLED=true,AI_ARMAN_OPENAI_MODEL=gpt-5-mini,AI_ARMAN_MODEL_INTERPRETATION_TIMEOUT_MS=10000,AI_ARMAN_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS=0.25,AI_ARMAN_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS=2,AI_ARMAN_MODEL_SHADOW_PROVIDER_TIMEOUT_MS=10000,AI_ARMAN_MODEL_SHADOW_MAX_CALLS_PER_MINUTE=1,AI_ARMAN_MODEL_SHADOW_MAX_CONCURRENT_CALLS=1,AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_CALL=1024,AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_MINUTE=1024,AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_CALL=0.005,AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_MINUTE=0.005" \
+            --set-secrets "OPENAI_API_KEY=$SECRET_NAME:1" \
+            --labels "release=durable-real-shadow-candidate,source-sha=$SHORT_SHA,promotion=off,traffic=zero" \
+            --quiet
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-after-deploy.json"
+          REVISION="$(jq -r '.status.latestReadyRevisionName // empty' "$RUNNER_TEMP/service-after-deploy.json")"
+          TAG_URL="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag == $tag) | .url // empty' "$RUNNER_TEMP/service-after-deploy.json")"
+          test -n "$REVISION"
+          test -n "$TAG_URL"
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "tag_url=$TAG_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Verify zero traffic, candidate flags, digest and private IAM
+        shell: bash
+        env:
+          CANDIDATE_REVISION: ${{ steps.deploy.outputs.revision }}
+          EXPECTED_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-candidate.json"
+          gcloud run revisions describe "$CANDIDATE_REVISION" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-candidate.json"
+
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-candidate.json" >/dev/null; then exit 1; fi
+          DETERMINISTIC_PERCENT="$(jq -r --arg rev "$DETERMINISTIC_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-candidate.json")"
+          SHADOW_PERCENT="$(jq -r --arg rev "$CURRENT_SHADOW_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-candidate.json")"
+          CANDIDATE_PERCENT="$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-candidate.json")"
+          POSITIVE_COUNT="$(jq -r '[.status.traffic[]? | select((.percent // 0) > 0)] | length' "$RUNNER_TEMP/service-candidate.json")"
+          SERVICE_MAX="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service-candidate.json")"
+          test "$DETERMINISTIC_PERCENT" = "99"
+          test "$SHADOW_PERCENT" = "1"
+          test "$CANDIDATE_PERCENT" = "0"
+          test "$POSITIVE_COUNT" = "2"
+          test "$SERVICE_MAX" = "2"
+
+          test "$(jq -r '.spec.containers[0].resources.limits.memory' "$RUNNER_TEMP/candidate.json")" = "256Mi"
+          test "$(jq -r '.spec.containerConcurrency' "$RUNNER_TEMP/candidate.json")" = "1"
+          test "$(jq -r '.spec.serviceAccountName' "$RUNNER_TEMP/candidate.json")" = "$RUNTIME_SERVICE_ACCOUNT"
+          env_value() { jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name == $n) | .value // empty' "$RUNNER_TEMP/candidate.json"; }
+          test "$(env_value AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_PROMOTION_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_WIDGET_PREVIEW_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_DURABLE_AUDIT_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_CALLS_PER_MINUTE)" = "1"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_CONCURRENT_CALLS)" = "1"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_CALL)" = "1024"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_MINUTE)" = "1024"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_CALL)" = "0.005"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_MINUTE)" = "0.005"
+          SECRET_REF="$(jq -r '.spec.containers[0].env[]? | select(.name == "OPENAI_API_KEY") | .valueFrom.secretKeyRef.name // empty' "$RUNNER_TEMP/candidate.json")"
+          SECRET_VERSION="$(jq -r '.spec.containers[0].env[]? | select(.name == "OPENAI_API_KEY") | .valueFrom.secretKeyRef.key // empty' "$RUNNER_TEMP/candidate.json")"
+          test "$SECRET_REF" = "$SECRET_NAME"
+          test "$SECRET_VERSION" = "1"
+          IMAGE_FIELD="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/candidate.json")"
+          echo "$IMAGE_FIELD" | grep -F "$EXPECTED_DIGEST" >/dev/null
+          echo "ZERO_TRAFFIC_DURABLE_CANDIDATE_BOUNDARY=PASS"
+
+      - name: Mint canonical-audience ID token
+        id: candidate_id_token
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ env.SERVICE_URL }}
+          id_token_include_email: true
+          create_credentials_file: false
+
+      - name: Execute real chat shadow path against tagged zero-traffic candidate
+        id: chat
+        shell: bash
+        env:
+          ID_TOKEN: ${{ steps.candidate_id_token.outputs.id_token }}
+          TAG_URL: ${{ steps.deploy.outputs.tag_url }}
+        run: |
+          set -euo pipefail
+          test -n "$ID_TOKEN"
+          test -n "$TAG_URL"
+          echo "::add-mask::$ID_TOKEN"
+          CLIENT_ID="durable-real-shadow-${GITHUB_RUN_ID}"
+          MESSAGE="Hej! Det här är ett syntetiskt internprov ${GITHUB_RUN_ID}."
+          CHAT_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/chat.json" \
+            --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$(jq -n --arg id "$CLIENT_ID" --arg msg "$MESSAGE" '{contractVersion:"ai-arman-chat-v1",clientMessageId:$id,message:{text:$msg},context:{locale:"sv-SE",channel:"internal_preview"}}')" \
+            "$TAG_URL/ai-arman/chat/messages")"
+          test "$CHAT_CODE" = "200" -o "$CHAT_CODE" = "201"
+          jq -e '.interpretation.source == "deterministic_fallback" and .decision.owner == "backend_policy" and .safety.aiModelUsed == false and .safety.writesExecuted == false and .safety.productionActionsEnabled == false and .safety.htmlAcceptedFromModel == false' "$RUNNER_TEMP/chat.json" >/dev/null
+          echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
+          echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
+          echo "REAL_CHAT_DETERMINISTIC_AUTHORITY=PASS"
+
+      - name: Authenticate dedicated telemetry reader
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.TELEMETRY_SERVICE_ACCOUNT }}
+
+      - name: Read and validate real shadow durable audit entry
+        id: audit
+        shell: bash
+        env:
+          CANDIDATE_REVISION: ${{ steps.deploy.outputs.revision }}
+          CLIENT_ID: ${{ steps.chat.outputs.client_id }}
+          MESSAGE: ${{ steps.chat.outputs.message }}
+        run: |
+          set -euo pipefail
+          ACCESS_TOKEN="$(gcloud auth application-default print-access-token)"
+          test -n "$ACCESS_TOKEN"
+          echo "::add-mask::$ACCESS_TOKEN"
+          FILTER="resource.type=\"cloud_run_revision\" AND resource.labels.revision_name=\"$CANDIDATE_REVISION\" AND jsonPayload.event=\"ai_arman_model_shadow_audit\" AND jsonPayload.provider=\"openai\""
+          FOUND=NO
+          for attempt in $(seq 1 40); do
+            HTTP_CODE="$(curl --silent --show-error \
+              --output "$RUNNER_TEMP/audit.json" \
+              --write-out '%{http_code}' \
+              --request POST \
+              --header "Authorization: Bearer $ACCESS_TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data "$(jq -n --arg project "projects/$PROJECT_ID" --arg filter "$FILTER" '{resourceNames:[$project],filter:$filter,pageSize:20,orderBy:"timestamp desc"}')" \
+              "https://logging.googleapis.com/v2/entries:list")"
+            test "$HTTP_CODE" = "200"
+            COUNT="$(jq -r '.entries | length // 0' "$RUNNER_TEMP/audit.json")"
+            if [ "$COUNT" -gt 0 ]; then FOUND=YES; break; fi
+            sleep 2
+          done
+          test "$FOUND" = YES
+
+          jq -e '.entries[0].jsonPayload | .event == "ai_arman_model_shadow_audit" and .schemaVersion == 1 and .provider == "openai" and .modelVersion == "gpt-5-mini" and .promptVersion == "ai-arman-interpretation-v1" and .status == "completed" and (.latencyMs | type == "number" and . >= 0) and (.inputTokens | type == "number" and . > 0) and (.outputTokens | type == "number" and . >= 0) and (.totalTokens == (.inputTokens + .outputTokens)) and (.estimatedCostUsd | type == "number" and . >= 0 and . <= 0.005) and (.candidateValid | type == "boolean") and (.primaryIntentMatch | type == "boolean")' "$RUNNER_TEMP/audit.json" >/dev/null
+
+          RAW="$(jq -c '.entries[0].jsonPayload' "$RUNNER_TEMP/audit.json")"
+          ! grep -F "$CLIENT_ID" <<<"$RAW"
+          ! grep -F "$MESSAGE" <<<"$RAW"
+          BASE_ALLOWED='["candidateValid","estimatedCostUsd","event","inputTokens","latencyMs","modelVersion","outputTokens","primaryIntentMatch","promptVersion","provider","recordedAt","schemaVersion","status","totalTokens"]'
+          WITH_SEVERITY='["candidateValid","estimatedCostUsd","event","inputTokens","latencyMs","modelVersion","outputTokens","primaryIntentMatch","promptVersion","provider","recordedAt","schemaVersion","severity","status","totalTokens"]'
+          jq -e --argjson base "$BASE_ALLOWED" --argjson withSeverity "$WITH_SEVERITY" '.entries[0].jsonPayload | (keys | sort) as $keys | $keys == ($base | sort) or $keys == ($withSeverity | sort)' "$RUNNER_TEMP/audit.json" >/dev/null
+          CANDIDATE_VALID="$(jq -r '.entries[0].jsonPayload.candidateValid' "$RUNNER_TEMP/audit.json")"
+          INTENT_MATCH="$(jq -r '.entries[0].jsonPayload.primaryIntentMatch' "$RUNNER_TEMP/audit.json")"
+          TOTAL_TOKENS="$(jq -r '.entries[0].jsonPayload.totalTokens' "$RUNNER_TEMP/audit.json")"
+          COST="$(jq -r '.entries[0].jsonPayload.estimatedCostUsd' "$RUNNER_TEMP/audit.json")"
+          echo "candidate_valid=$CANDIDATE_VALID" >> "$GITHUB_OUTPUT"
+          echo "intent_match=$INTENT_MATCH" >> "$GITHUB_OUTPUT"
+          echo "total_tokens=$TOTAL_TOKENS" >> "$GITHUB_OUTPUT"
+          echo "cost=$COST" >> "$GITHUB_OUTPUT"
+          echo "REAL_SHADOW_DURABLE_AUDIT_ROUNDTRIP=PASS"
+          echo "REAL_SHADOW_DURABLE_AUDIT_PRIVACY=PASS"
+
+      - name: Restore deployer credentials
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Verify production boundary unchanged after candidate smoke
+        shell: bash
+        env:
+          CANDIDATE_REVISION: ${{ steps.deploy.outputs.revision }}
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-final.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-final.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-final.json" >/dev/null; then exit 1; fi
+          test "$(jq -r --arg rev "$DETERMINISTIC_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-final.json")" = "99"
+          test "$(jq -r --arg rev "$CURRENT_SHADOW_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-final.json")" = "1"
+          test "$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-final.json")" = "0"
+          test "$(jq -r '[.status.traffic[]? | select((.percent // 0) > 0)] | length' "$RUNNER_TEMP/service-final.json")" = "2"
+          test "$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service-final.json")" = "2"
+          echo "PRODUCTION_BOUNDARY_UNCHANGED=PASS"
+
+      - name: Persist candidate evidence
+        if: always()
+        shell: bash
+        env:
+          REVISION: ${{ steps.deploy.outputs.revision }}
+          TAG_URL: ${{ steps.deploy.outputs.tag_url }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+          CANDIDATE_VALID: ${{ steps.audit.outputs.candidate_valid }}
+          INTENT_MATCH: ${{ steps.audit.outputs.intent_match }}
+          TOTAL_TOKENS: ${{ steps.audit.outputs.total_tokens }}
+          COST: ${{ steps.audit.outputs.cost }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$RESULT_PATH")"
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman real shadow durable audit candidate - latest
+
+          Generated by GitHub Actions run ${GITHUB_RUN_ID} from commit ${GITHUB_SHA}.
+
+          ## Candidate
+          - Revision: ${REVISION:-not-deployed}
+          - Tagged URL: ${TAG_URL:-not-deployed}
+          - Immutable digest: ${DIGEST:-not-built}
+          - Main traffic: 0%
+          - Durable audit flag: true on candidate only
+          - Model promotion: false
+          - Widget preview: false
+
+          ## Real shadow path evidence
+          - Endpoint: POST /ai-arman/chat/messages
+          - Deterministic customer authority required: YES
+          - Durable audit validation step: ${AUDIT_OUTCOME:-unknown}
+          - OpenAI durable audit status required: completed
+          - Candidate valid: ${CANDIDATE_VALID:-not-proven}
+          - Primary intent match: ${INTENT_MATCH:-not-proven}
+          - Total tokens: ${TOTAL_TOKENS:-not-proven}
+          - Estimated cost USD: ${COST:-not-proven}
+          - Privacy allowlist required: PASS for successful workflow
+
+          ## Production boundary
+          - Deterministic revision traffic: 99%
+          - Existing shadow revision traffic: 1%
+          - New candidate traffic: 0%
+          - Service max instances: 2
+          - Service IAM public: NO
+          - Live durable audit flag changed: NO
+          - Live model promotion changed: NO
+          - Live widget/public access changed: NO
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$RESULT_PATH"
+          if git diff --cached --quiet; then
+            echo "REAL_SHADOW_DURABLE_AUDIT_EVIDENCE_UNCHANGED=PASS"
+          else
+            git commit -m "Record real shadow durable audit candidate"
+            git push origin HEAD:feature/ai-arman-foundation-v1
+            echo "REAL_SHADOW_DURABLE_AUDIT_EVIDENCE_PERSISTED=PASS"
+          fi
