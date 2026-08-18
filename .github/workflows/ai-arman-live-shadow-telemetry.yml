@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
   id-token: write
 
 concurrency:
@@ -64,6 +65,7 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
 
       - name: Verify live boundary without mutation
+        id: boundary
         shell: bash
         run: |
           set -euo pipefail
@@ -90,6 +92,12 @@ jobs:
           test "$WIDGET" = "false"
           echo "$IMAGE_FIELD" | grep -F "$EXPECTED_CANDIDATE_DIGEST" >/dev/null
 
+          echo "live_percent=$LIVE_PERCENT" >> "$GITHUB_OUTPUT"
+          echo "candidate_percent=$CANDIDATE_PERCENT" >> "$GITHUB_OUTPUT"
+          echo "service_max=$SERVICE_MAX" >> "$GITHUB_OUTPUT"
+          echo "promotion=$PROMOTION" >> "$GITHUB_OUTPUT"
+          echo "widget=$WIDGET" >> "$GITHUB_OUTPUT"
+
           echo "LIVE_SHADOW_BOUNDARY=PASS"
           echo "PRIVATE_IAM=PASS"
           echo "PROMOTION_OFF=PASS"
@@ -104,6 +112,7 @@ jobs:
           service_account: ${{ env.TELEMETRY_SERVICE_ACCOUNT }}
 
       - name: Verify telemetry identity has monitoring read and no obvious write roles
+        id: least_privilege
         shell: bash
         run: |
           set -euo pipefail
@@ -141,9 +150,12 @@ jobs:
           ! has_permission resourcemanager.projects.setIamPolicy
           ! has_permission secretmanager.versions.access
 
+          echo "monitoring_read=YES" >> "$GITHUB_OUTPUT"
+          echo "obvious_write_or_secret_permissions=NO" >> "$GITHUB_OUTPUT"
           echo "TELEMETRY_LEAST_PRIVILEGE=PASS"
 
       - name: Read Cloud Run request metrics
+        id: metrics
         shell: bash
         run: |
           set -euo pipefail
@@ -167,6 +179,12 @@ jobs:
           LIVE_5XX="$(sum_revision_class "$LIVE_REVISION" '5xx')"
           CANDIDATE_5XX="$(sum_revision_class "$CANDIDATE_REVISION" '5xx')"
 
+          echo "observation_window=$LIVE_SHADOW_STARTED_AT..$END_TIME" >> "$GITHUB_OUTPUT"
+          echo "live_requests=$LIVE_REQUESTS" >> "$GITHUB_OUTPUT"
+          echo "candidate_requests=$CANDIDATE_REQUESTS" >> "$GITHUB_OUTPUT"
+          echo "live_5xx=$LIVE_5XX" >> "$GITHUB_OUTPUT"
+          echo "candidate_5xx=$CANDIDATE_5XX" >> "$GITHUB_OUTPUT"
+
           echo "OBSERVATION_WINDOW=$LIVE_SHADOW_STARTED_AT..$END_TIME"
           echo "LIVE_REQUESTS=$LIVE_REQUESTS"
           echo "CANDIDATE_REQUESTS=$CANDIDATE_REQUESTS"
@@ -179,3 +197,33 @@ jobs:
           fi
 
           echo "LIVE_SHADOW_TELEMETRY=PASS"
+
+      - name: Persist successful telemetry evidence on PR 18
+        if: ${{ success() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/comment.md" <<EOF
+          ## AI Arman live-shadow telemetry — PASS
+
+          - Run: ${GITHUB_RUN_ID}
+          - Source commit: ${GITHUB_SHA}
+          - Boundary: PASS
+          - Traffic: ${{ steps.boundary.outputs.live_percent }}% deterministic / ${{ steps.boundary.outputs.candidate_percent }}% shadow
+          - Service max instances: ${{ steps.boundary.outputs.service_max }}
+          - Private IAM: PASS
+          - Model promotion: ${{ steps.boundary.outputs.promotion }}
+          - Widget preview: ${{ steps.boundary.outputs.widget }}
+          - Telemetry least privilege: PASS
+          - monitoring.timeSeries.list: ${{ steps.least_privilege.outputs.monitoring_read }}
+          - Obvious write/secret permissions on telemetry identity: ${{ steps.least_privilege.outputs.obvious_write_or_secret_permissions }}
+          - Observation window: ${{ steps.metrics.outputs.observation_window }}
+          - Deterministic requests: ${{ steps.metrics.outputs.live_requests }}
+          - Shadow requests: ${{ steps.metrics.outputs.candidate_requests }}
+          - Deterministic 5xx: ${{ steps.metrics.outputs.live_5xx }}
+          - Shadow 5xx: ${{ steps.metrics.outputs.candidate_5xx }}
+          - Traffic/config/IAM mutation by this workflow: NONE
+          EOF
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/18/comments" -f body=@"$RUNNER_TEMP/comment.md"
