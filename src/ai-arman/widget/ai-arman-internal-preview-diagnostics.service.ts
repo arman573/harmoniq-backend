@@ -61,7 +61,7 @@ export class AiArmanInternalPreviewDiagnosticsService {
         modelAffectsTools: comparison?.affectsTools ?? false,
         writesExecuted: response.safety.writesExecuted,
         productionActionsEnabled: response.safety.productionActionsEnabled,
-        rawModelTextExposed: false,
+        modelOutputExposed: false,
         promptExposed: false,
       },
       response: {
