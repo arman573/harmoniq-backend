@@ -36,13 +36,16 @@ export class AiArmanCustomerIdentityService {
     const salt = randomBytes(16).toString('hex');
     const expiresAtMs = now + this.config.otpTtlMs();
 
-    this.store.save({
-      id,
-      email,
-      codeHash: hashCode(code, salt),
-      expiresAtMs,
-      attempts: 0,
-    });
+    this.store.save(
+      {
+        id,
+        email,
+        codeHash: hashCode(code, salt),
+        expiresAtMs,
+        attempts: 0,
+      },
+      now,
+    );
 
     const sent = await this.sender.send({
       email,
@@ -63,21 +66,25 @@ export class AiArmanCustomerIdentityService {
     };
   }
 
-  async verify(input: {
-    challengeId?: unknown;
-    code?: unknown;
-  }, now = Date.now()) {
+  async verify(
+    input: {
+      challengeId?: unknown;
+      code?: unknown;
+    },
+    now = Date.now(),
+  ) {
     if (!this.config.isWidgetEnabled() || !this.config.isIdentityEnabled()) {
       return { ok: false as const, code: 'identity_unavailable' as const };
     }
 
-    const challengeId = typeof input.challengeId === 'string' ? input.challengeId.trim() : '';
+    const challengeId =
+      typeof input.challengeId === 'string' ? input.challengeId.trim() : '';
     const provided = typeof input.code === 'string' ? input.code.trim() : '';
     if (!/^[0-9a-f-]{36}$/i.test(challengeId) || !OTP_PATTERN.test(provided)) {
       return { ok: false as const, code: 'verification_rejected' as const };
     }
 
-    const challenge = this.store.get(challengeId);
+    const challenge = this.store.get(challengeId, now);
     if (!challenge || challenge.expiresAtMs <= now) {
       this.store.delete(challengeId);
       return { ok: false as const, code: 'verification_rejected' as const };
@@ -93,7 +100,8 @@ export class AiArmanCustomerIdentityService {
     const actualDigest = hashDigest(provided, salt);
     const left = Buffer.from(actualDigest);
     const right = Buffer.from(expectedDigest);
-    const codeMatches = left.length === right.length && timingSafeEqual(left, right);
+    const codeMatches =
+      left.length === right.length && timingSafeEqual(left, right);
 
     if (!codeMatches) {
       this.store.update(challenge);
