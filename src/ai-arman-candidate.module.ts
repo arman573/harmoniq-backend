@@ -10,12 +10,12 @@ import { AiArmanCustomerIdentityService } from './ai-arman/widget/customer/ai-ar
 import {
   CustomerDirectoryVerificationProvider,
   CustomerEmailOtpSender,
-  DisabledCustomerEmailOtpSender,
 } from './ai-arman/widget/customer/ai-arman-customer-identity.providers';
 import { AiArmanCustomerIdentityStore } from './ai-arman/widget/customer/ai-arman-customer-identity.store';
 import { AiArmanCustomerSessionService } from './ai-arman/widget/customer/ai-arman-customer-session.service';
 import { AiArmanCustomerWidgetConfig } from './ai-arman/widget/customer/ai-arman-customer-widget.config';
 import { AiArmanCustomerWidgetService } from './ai-arman/widget/customer/ai-arman-customer-widget.service';
+import { GmailCustomerEmailOtpSender } from './ai-arman/widget/customer/gmail-customer-email-otp.sender';
 import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/customer/vendre-customer-directory-verification.provider';
 
 @Module({
@@ -34,11 +34,11 @@ import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/c
     AiArmanCustomerSessionService,
     AiArmanCustomerWidgetConfig,
     AiArmanCustomerWidgetService,
-    DisabledCustomerEmailOtpSender,
+    GmailCustomerEmailOtpSender,
     VendreCustomerDirectoryVerificationProvider,
     {
       provide: CustomerEmailOtpSender,
-      useExisting: DisabledCustomerEmailOtpSender,
+      useExisting: GmailCustomerEmailOtpSender,
     },
     {
       provide: CustomerDirectoryVerificationProvider,
