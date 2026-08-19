@@ -5,6 +5,7 @@ import {
   CustomerEmailOtpSender,
 } from './ai-arman-customer-identity.providers';
 import { AiArmanCustomerIdentityStore } from './ai-arman-customer-identity.store';
+import { AiArmanCustomerOtpRateLimiter } from './ai-arman-customer-otp-rate-limiter';
 import { AiArmanCustomerSessionService } from './ai-arman-customer-session.service';
 import { AiArmanCustomerWidgetConfig } from './ai-arman-customer-widget.config';
 
@@ -16,6 +17,7 @@ export class AiArmanCustomerIdentityService {
   constructor(
     private readonly config: AiArmanCustomerWidgetConfig,
     private readonly store: AiArmanCustomerIdentityStore,
+    private readonly rateLimiter: AiArmanCustomerOtpRateLimiter,
     private readonly sender: CustomerEmailOtpSender,
     private readonly directory: CustomerDirectoryVerificationProvider,
     private readonly sessions: AiArmanCustomerSessionService,
@@ -29,6 +31,9 @@ export class AiArmanCustomerIdentityService {
     const email = normalizeEmail(emailInput);
     if (!email) {
       return { ok: false as const, code: 'request_invalid' as const };
+    }
+    if (!this.rateLimiter.allow(email, now)) {
+      return { ok: false as const, code: 'rate_limited' as const };
     }
 
     const id = randomUUID();
