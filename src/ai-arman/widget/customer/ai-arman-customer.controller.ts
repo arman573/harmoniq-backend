@@ -12,6 +12,7 @@ import type { Request } from 'express';
 import { ChatRequestParser } from '../../chat/chat-request.parser';
 import { SkincareSpecialistChatOrchestrator } from '../../skincare/skincare-specialist-chat-orchestrator.service';
 import { AiArmanCustomerIdentityService } from './ai-arman-customer-identity.service';
+import { AiArmanCustomerResponseService } from './ai-arman-customer-response.service';
 import { AiArmanCustomerSessionService } from './ai-arman-customer-session.service';
 import { AiArmanCustomerWidgetConfig } from './ai-arman-customer-widget.config';
 import { AiArmanCustomerWidgetService } from './ai-arman-customer-widget.service';
@@ -24,6 +25,7 @@ export class AiArmanCustomerController {
     private readonly sessions: AiArmanCustomerSessionService,
     private readonly parser: ChatRequestParser,
     private readonly conversations: SkincareSpecialistChatOrchestrator,
+    private readonly responses: AiArmanCustomerResponseService,
     private readonly widget: AiArmanCustomerWidgetService,
   ) {}
 
@@ -66,7 +68,8 @@ export class AiArmanCustomerController {
       throw new UnauthorizedException();
     }
 
-    return this.conversations.handleWithShadow(request);
+    const backendResponse = await this.conversations.handleWithShadow(request);
+    return this.responses.formulate(request, backendResponse);
   }
 }
 
