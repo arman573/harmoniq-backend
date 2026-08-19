@@ -4,6 +4,7 @@ import type {
 } from './ai-arman-customer-identity.providers';
 import { AiArmanCustomerIdentityService } from './ai-arman-customer-identity.service';
 import { AiArmanCustomerIdentityStore } from './ai-arman-customer-identity.store';
+import { AiArmanCustomerOtpRateLimiter } from './ai-arman-customer-otp-rate-limiter';
 import { AiArmanCustomerSessionService } from './ai-arman-customer-session.service';
 import { AiArmanCustomerWidgetConfig } from './ai-arman-customer-widget.config';
 
@@ -35,15 +36,24 @@ function setup(directoryOk = true) {
   } as unknown as CustomerDirectoryVerificationProvider;
   const cfg = config();
   const store = new AiArmanCustomerIdentityStore();
+  const rateLimiter = new AiArmanCustomerOtpRateLimiter();
   const sessions = new AiArmanCustomerSessionService(cfg);
   const identity = new AiArmanCustomerIdentityService(
     cfg,
     store,
+    rateLimiter,
     sender,
     directory,
     sessions,
   );
-  return { identity, sender, directory, sessions, getCode: () => deliveredCode };
+  return {
+    identity,
+    sender,
+    directory,
+    sessions,
+    rateLimiter,
+    getCode: () => deliveredCode,
+  };
 }
 
 describe('AiArmanCustomerIdentityService', () => {
@@ -102,5 +112,16 @@ describe('AiArmanCustomerIdentityService', () => {
     await expect(
       identity.verify({ challengeId: started.challengeId, code: getCode() }, 32_000),
     ).resolves.toEqual({ ok: false, code: 'verification_rejected' });
+  });
+
+  it('rate limits repeated OTP sends before another email is sent', async () => {
+    const { identity, sender } = setup(true);
+    const first = await identity.start('kund@example.se', 100_000);
+    expect(first.ok).toBe(true);
+
+    await expect(
+      identity.start('kund@example.se', 120_000),
+    ).resolves.toEqual({ ok: false, code: 'rate_limited' });
+    expect(sender.send).toHaveBeenCalledTimes(1);
   });
 });
