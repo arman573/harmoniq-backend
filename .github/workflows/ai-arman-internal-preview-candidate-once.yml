@@ -1,0 +1,287 @@
+name: AI Arman internal preview candidate once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ai-arman-internal-preview-candidate-once
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  SERVICE_NAME: harmoniq-ai-arman-beta0
+  SERVICE_URL: https://harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  SECRET_NAME: ai-arman-openai-api-key
+  ARTIFACT_REPOSITORY: harmoniq-containers
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+
+jobs:
+  deploy-zero-traffic-preview:
+    if: github.event.head_commit.message == 'Deploy internal diagnostics candidate once'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Enforce one-shot source gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+          test "${{ github.event.head_commit.message }}" = "Deploy internal diagnostics candidate once"
+
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Exact-head test and build gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test -- --runInBand
+          npm run build
+          docker build -f Dockerfile.ai-arman-candidate -t ai-arman-preview:verify .
+
+          CONTAINER_ID="$(docker run -d -p 18080:8080 \
+            -e PORT=8080 \
+            -e AI_ARMAN_WIDGET_PREVIEW_ENABLED=false \
+            -e AI_ARMAN_INTERNAL_PREVIEW_DIAGNOSTICS_ENABLED=true \
+            -e AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false \
+            -e AI_ARMAN_MODEL_SHADOW_ENABLED=false \
+            -e AI_ARMAN_MODEL_PROMOTION_ENABLED=false \
+            ai-arman-preview:verify)"
+          cleanup() { docker logs "$CONTAINER_ID" || true; docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          for attempt in {1..30}; do
+            if curl --silent --fail http://127.0.0.1:18080/ai-arman/foundation > "$RUNNER_TEMP/foundation.json"; then break; fi
+            sleep 1
+          done
+          jq -e '.ok == true and .productionActionsEnabled == false' "$RUNNER_TEMP/foundation.json" >/dev/null
+          PAGE_CODE="$(curl --silent --output "$RUNNER_TEMP/page.html" --write-out '%{http_code}' http://127.0.0.1:18080/ai-arman/internal-preview)"
+          test "$PAGE_CODE" = "200"
+          grep -F 'AI Arman – intern testyta' "$RUNNER_TEMP/page.html" >/dev/null
+          grep -F '/ai-arman/internal-preview/diagnostics' "$RUNNER_TEMP/page.html" >/dev/null
+          if grep -Eqi 'systemPrompt|promptVersion|modelVersion|rawModelText|\.innerHTML|eval\(' "$RUNNER_TEMP/page.html"; then
+            echo "Unsafe preview surface marker found." >&2
+            exit 1
+          fi
+
+      - name: Authenticate dedicated deployer
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Snapshot and enforce live boundary before deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+
+          test "$(jq -r '.status.url // empty' "$RUNNER_TEMP/service-before.json")" = "$SERVICE_URL"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-before.json" >/dev/null; then
+            echo "Public IAM detected; refusing deploy." >&2
+            exit 1
+          fi
+
+          SERVICE_MAX="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service-before.json")"
+          test "$SERVICE_MAX" = "2"
+          jq -S '[.status.traffic[]? | select((.percent // 0) > 0) | {revisionName,percent:(.percent // 0),tag:(.tag // "")} ] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/service-before.json" > "$RUNNER_TEMP/positive-traffic-before.json"
+          test "$(jq 'length' "$RUNNER_TEMP/positive-traffic-before.json")" = "2"
+          test "$(jq '[.[].percent] | sort == [1,99]' "$RUNNER_TEMP/positive-traffic-before.json")" = "true"
+          test "$(jq '[.[].percent] | add' "$RUNNER_TEMP/positive-traffic-before.json")" = "100"
+
+      - name: Build and push immutable preview image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA:0:12}"
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:internal-preview-$SHORT_SHA-$GITHUB_RUN_ID"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build --pull -f Dockerfile.ai-arman-candidate --tag "$IMAGE" .
+          docker push "$IMAGE"
+          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "immutable_image=$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME@$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy private zero-traffic diagnostics candidate
+        id: deploy
+        shell: bash
+        env:
+          IMMUTABLE_IMAGE: ${{ steps.image.outputs.immutable_image }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA:0:8}"
+          REVISION_SUFFIX="preview-${SHORT_SHA}-${GITHUB_RUN_NUMBER}"
+          TAG="preview-${SHORT_SHA}-${GITHUB_RUN_NUMBER}"
+
+          gcloud run deploy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --platform managed \
+            --image "$IMMUTABLE_IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --revision-suffix "$REVISION_SUFFIX" \
+            --tag "$TAG" \
+            --no-traffic \
+            --ingress all \
+            --port 8080 \
+            --startup-probe "httpGet.path=/ai-arman/foundation,httpGet.port=8080,initialDelaySeconds=0,failureThreshold=12,timeoutSeconds=2,periodSeconds=5" \
+            --cpu 1 \
+            --memory 256Mi \
+            --cpu-throttling \
+            --no-cpu-boost \
+            --concurrency 1 \
+            --timeout 30 \
+            --set-env-vars "NODE_ENV=production,AI_ARMAN_WIDGET_PREVIEW_ENABLED=false,AI_ARMAN_INTERNAL_PREVIEW_DIAGNOSTICS_ENABLED=true,AI_ARMAN_MODEL_INTERPRETATION_ENABLED=true,AI_ARMAN_MODEL_SHADOW_ENABLED=true,AI_ARMAN_MODEL_PROMOTION_ENABLED=false,AI_ARMAN_MODEL_SHADOW_DURABLE_AUDIT_ENABLED=true,AI_ARMAN_OPENAI_MODEL=gpt-5-mini,AI_ARMAN_MODEL_INTERPRETATION_TIMEOUT_MS=10000,AI_ARMAN_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS=0.25,AI_ARMAN_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS=2,AI_ARMAN_MODEL_SHADOW_PROVIDER_TIMEOUT_MS=10000,AI_ARMAN_MODEL_SHADOW_MAX_CALLS_PER_MINUTE=1,AI_ARMAN_MODEL_SHADOW_MAX_CONCURRENT_CALLS=1,AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_CALL=1024,AI_ARMAN_MODEL_SHADOW_MAX_TOKENS_PER_MINUTE=1024,AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_CALL=0.005,AI_ARMAN_MODEL_SHADOW_MAX_COST_USD_PER_MINUTE=0.005" \
+            --set-secrets "OPENAI_API_KEY=$SECRET_NAME:1" \
+            --labels "release=internal-preview-candidate,source-sha=$SHORT_SHA,promotion=off,traffic=zero" \
+            --quiet
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-after-deploy.json"
+          REVISION="$(jq -r '.status.latestReadyRevisionName // empty' "$RUNNER_TEMP/service-after-deploy.json")"
+          TAG_URL="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag == $tag) | .url // empty' "$RUNNER_TEMP/service-after-deploy.json")"
+          test -n "$REVISION"
+          test -n "$TAG_URL"
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+          echo "tag_url=$TAG_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Verify zero traffic and unchanged live boundary
+        shell: bash
+        env:
+          CANDIDATE_REVISION: ${{ steps.deploy.outputs.revision }}
+          EXPECTED_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-after.json"
+          gcloud run revisions describe "$CANDIDATE_REVISION" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-after.json" >/dev/null; then exit 1; fi
+          test "$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service-after.json")" = "2"
+          jq -S '[.status.traffic[]? | select((.percent // 0) > 0) | {revisionName,percent:(.percent // 0),tag:(.tag // "")} ] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/service-after.json" > "$RUNNER_TEMP/positive-traffic-after.json"
+          diff -u "$RUNNER_TEMP/positive-traffic-before.json" "$RUNNER_TEMP/positive-traffic-after.json"
+          CANDIDATE_PERCENT="$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-after.json")"
+          test "$CANDIDATE_PERCENT" = "0"
+
+          test "$(jq -r '.spec.containers[0].resources.limits.memory' "$RUNNER_TEMP/candidate.json")" = "256Mi"
+          test "$(jq -r '.spec.containerConcurrency' "$RUNNER_TEMP/candidate.json")" = "1"
+          test "$(jq -r '.spec.serviceAccountName' "$RUNNER_TEMP/candidate.json")" = "$RUNTIME_SERVICE_ACCOUNT"
+          env_value() { jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name == $n) | .value // empty' "$RUNNER_TEMP/candidate.json"; }
+          test "$(env_value AI_ARMAN_INTERNAL_PREVIEW_DIAGNOSTICS_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_DURABLE_AUDIT_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_MODEL_PROMOTION_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_WIDGET_PREVIEW_ENABLED)" = "false"
+          IMAGE_FIELD="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/candidate.json")"
+          echo "$IMAGE_FIELD" | grep -F "$EXPECTED_DIGEST" >/dev/null
+
+      - name: Mint candidate ID token
+        id: id_token
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ env.SERVICE_URL }}
+          id_token_include_email: true
+          create_credentials_file: false
+
+      - name: Smoke private page and real diagnostics path
+        shell: bash
+        env:
+          ID_TOKEN: ${{ steps.id_token.outputs.id_token }}
+          TAG_URL: ${{ steps.deploy.outputs.tag_url }}
+        run: |
+          set -euo pipefail
+          test -n "$ID_TOKEN"
+          test -n "$TAG_URL"
+          echo "::add-mask::$ID_TOKEN"
+
+          PAGE_CODE="$(curl --silent --show-error --output "$RUNNER_TEMP/private-page.html" --write-out '%{http_code}' \
+            --header "Authorization: Bearer $ID_TOKEN" "$TAG_URL/ai-arman/internal-preview")"
+          test "$PAGE_CODE" = "200"
+          grep -F 'AI Arman – intern testyta' "$RUNNER_TEMP/private-page.html" >/dev/null
+
+          CLIENT_ID="preview-${GITHUB_RUN_ID}"
+          DIAG_CODE="$(curl --silent --show-error --output "$RUNNER_TEMP/diagnostics.json" --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "{\"contractVersion\":\"ai-arman-chat-v1\",\"clientMessageId\":\"$CLIENT_ID\",\"message\":{\"text\":\"Jag söker ett schampo för torrt hår\"},\"context\":{\"locale\":\"sv-SE\",\"channel\":\"internal_preview\"}}" \
+            "$TAG_URL/ai-arman/internal-preview/diagnostics")"
+          test "$DIAG_CODE" = "200"
+          jq -e '
+            .diagnosticsVersion == "ai-arman-internal-preview-diagnostics-v1" and
+            .deterministic.backendAuthority == "backend_policy" and
+            .modelShadow.providerStatus == "completed" and
+            .safety.promotionEnabled == false and
+            .safety.modelAffectsCustomerResponse == false and
+            .safety.modelAffectsState == false and
+            .safety.modelAffectsTools == false and
+            .safety.writesExecuted == false and
+            .safety.productionActionsEnabled == false and
+            .safety.modelOutputExposed == false and
+            .safety.promptExposed == false
+          ' "$RUNNER_TEMP/diagnostics.json" >/dev/null
+          if grep -Eqi 'systemPrompt|promptVersion|modelVersion|rawModelText|OPENAI_API_KEY' "$RUNNER_TEMP/diagnostics.json"; then
+            echo "Unsafe diagnostics payload marker found." >&2
+            exit 1
+          fi
+
+      - name: Publish verified candidate summary
+        shell: bash
+        env:
+          REVISION: ${{ steps.deploy.outputs.revision }}
+          TAG_URL: ${{ steps.deploy.outputs.tag_url }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          {
+            echo '## AI Arman private diagnostics candidate'
+            echo
+            echo "- Source: \`$GITHUB_SHA\`"
+            echo "- Revision: \`$REVISION\`"
+            echo "- Digest: \`$DIGEST\`"
+            echo "- Tagged private URL: \`$TAG_URL/ai-arman/internal-preview\`"
+            echo '- Candidate traffic: 0%'
+            echo '- Existing positive live traffic: unchanged (99/1)'
+            echo '- Service max instances: unchanged at 2'
+            echo '- Public IAM: absent'
+            echo '- Model interpretation/shadow/durable audit: ON only in candidate revision'
+            echo '- Internal diagnostics: ON only in candidate revision'
+            echo '- Model promotion: OFF'
+            echo '- Existing widget preview: OFF'
+            echo '- Writes / production actions: OFF'
+            echo '- Private page smoke: PASS'
+            echo '- Real diagnostics provider call: PASS'
+          } >> "$GITHUB_STEP_SUMMARY"
