@@ -10,13 +10,13 @@ import { AiArmanCustomerIdentityService } from './ai-arman/widget/customer/ai-ar
 import {
   CustomerDirectoryVerificationProvider,
   CustomerEmailOtpSender,
-  DisabledCustomerDirectoryVerificationProvider,
   DisabledCustomerEmailOtpSender,
 } from './ai-arman/widget/customer/ai-arman-customer-identity.providers';
 import { AiArmanCustomerIdentityStore } from './ai-arman/widget/customer/ai-arman-customer-identity.store';
 import { AiArmanCustomerSessionService } from './ai-arman/widget/customer/ai-arman-customer-session.service';
 import { AiArmanCustomerWidgetConfig } from './ai-arman/widget/customer/ai-arman-customer-widget.config';
 import { AiArmanCustomerWidgetService } from './ai-arman/widget/customer/ai-arman-customer-widget.service';
+import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/customer/vendre-customer-directory-verification.provider';
 
 @Module({
   imports: [AiArmanModule],
@@ -35,14 +35,14 @@ import { AiArmanCustomerWidgetService } from './ai-arman/widget/customer/ai-arma
     AiArmanCustomerWidgetConfig,
     AiArmanCustomerWidgetService,
     DisabledCustomerEmailOtpSender,
-    DisabledCustomerDirectoryVerificationProvider,
+    VendreCustomerDirectoryVerificationProvider,
     {
       provide: CustomerEmailOtpSender,
       useExisting: DisabledCustomerEmailOtpSender,
     },
     {
       provide: CustomerDirectoryVerificationProvider,
-      useExisting: DisabledCustomerDirectoryVerificationProvider,
+      useExisting: VendreCustomerDirectoryVerificationProvider,
     },
   ],
 })
