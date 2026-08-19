@@ -34,7 +34,6 @@ const INSTRUCTIONS = [
 
 export type AiArmanAdminReplyDraftInput = {
   caseId: string;
-  orderId?: string;
   caseType?: string;
   status?: string;
   statusLabel?: string;
@@ -137,7 +136,6 @@ function normalizeInput(input: AiArmanAdminReplyDraftInput) {
 
   return {
     caseId,
-    orderId: clean(input.orderId, 32),
     caseType: clean(input.caseType, 80),
     status: clean(input.status, 120),
     statusLabel: clean(input.statusLabel, 180),
