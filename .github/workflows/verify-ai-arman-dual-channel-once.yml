@@ -1,0 +1,99 @@
+name: Verify AI Arman dual channel once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.event.head_commit.message == 'Verify AI Arman dual channel once'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Test and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test -- --runInBand
+          npm run build
+
+      - name: Build and smoke candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f Dockerfile.ai-arman-candidate -t ai-arman-dual-channel-candidate:verify .
+          CID="$(docker run -d -p 18080:8080 -e PORT=8080 -e AI_ARMAN_WIDGET_PREVIEW_ENABLED=false -e AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false -e AI_ARMAN_MODEL_SHADOW_ENABLED=false -e AI_ARMAN_MODEL_PROMOTION_ENABLED=false ai-arman-dual-channel-candidate:verify)"
+          trap 'docker logs "$CID" || true; docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
+          for attempt in {1..30}; do
+            if curl --silent --fail http://127.0.0.1:18080/ai-arman/foundation > "$RUNNER_TEMP/foundation.json"; then break; fi
+            sleep 1
+          done
+          jq -e '.ok == true and .productionActionsEnabled == false' "$RUNNER_TEMP/foundation.json" >/dev/null
+          docker rm -f "$CID" >/dev/null
+          trap - EXIT
+
+      - name: Build and smoke customer gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f Dockerfile.ai-arman-customer-gateway -t ai-arman-dual-channel-gateway:verify .
+          CID="$(docker run -d -p 18081:8080 -e PORT=8080 -e AI_ARMAN_CUSTOMER_WIDGET_ENABLED=false -e AI_ARMAN_CUSTOMER_IDENTITY_ENABLED=false -e AI_ARMAN_CUSTOMER_OTP_EMAIL_ENABLED=false -e AI_ARMAN_VENDRE_CUSTOMER_DIRECTORY_ENABLED=false -e AI_ARMAN_CUSTOMER_RESPONSE_ENABLED=false -e AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false -e AI_ARMAN_MODEL_SHADOW_ENABLED=false -e AI_ARMAN_MODEL_PROMOTION_ENABLED=false ai-arman-dual-channel-gateway:verify)"
+          trap 'docker logs "$CID" || true; docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
+          for attempt in {1..30}; do
+            if curl --silent --fail http://127.0.0.1:18081/health > "$RUNNER_TEMP/gateway-health.json"; then break; fi
+            sleep 1
+          done
+          jq -e '.ok == true and .service == "ai-arman-customer-gateway" and .productionActionsEnabled == false' "$RUNNER_TEMP/gateway-health.json" >/dev/null
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18081/ai-arman/foundation)" = "404"
+
+      - name: Verify dual-channel safety markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F "sendsCustomerMessage: false" src/ai-arman/admin/admin-reply-draft.service.ts >/dev/null
+          grep -F "executesWrites: false" src/ai-arman/admin/admin-reply-draft.service.ts >/dev/null
+          grep -F "x-ai-arman-admin-token" src/ai-arman/admin/admin-reply-draft.controller.ts >/dev/null
+          grep -F "return this.responses.formulate(request, backendResponse);" src/ai-arman/widget/customer/ai-arman-customer.controller.ts >/dev/null
+          grep -F "productionActionsEnabled: false" src/ai-arman/widget/customer/ai-arman-customer-response.service.ts >/dev/null
+          grep -F "writesExecuted: false" src/ai-arman/widget/customer/ai-arman-customer-response.service.ts >/dev/null
+
+      - name: Write verification checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > docs/ai-arman/DUAL_CHANNEL_VERIFY_LATEST.md <<EOF
+          # AI Arman dual-channel verification
+
+          - Verified at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Source commit: \`$GITHUB_SHA\`
+          - Overall: **PASS**
+          - Unit tests: PASS
+          - TypeScript build: PASS
+          - Candidate container smoke: PASS
+          - Customer gateway container smoke: PASS
+          - Customer responses remain backend-grounded: PASS
+          - Admin reply engine performs no send/write: PASS
+          - Internal admin app-token header boundary: PASS
+          - No deployment or production mutation performed.
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/ai-arman/DUAL_CHANNEL_VERIFY_LATEST.md
+          git commit -m 'Record AI Arman dual-channel verification'
+          git push origin HEAD:feature/ai-arman-foundation-v1
