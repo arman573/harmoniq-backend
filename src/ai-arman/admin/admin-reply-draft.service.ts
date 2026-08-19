@@ -91,7 +91,11 @@ export class AiArmanAdminReplyDraftService {
       });
 
       if (!response.ok) {
-        return { ok: false as const, code: 'admin_reply_model_unavailable' };
+        return {
+          ok: false as const,
+          code: 'admin_reply_model_http_error',
+          providerHttpStatus: response.status,
+        };
       }
 
       const body = (await response.json()) as unknown;
@@ -109,8 +113,14 @@ export class AiArmanAdminReplyDraftService {
             executesWrites: false,
           }
         : { ok: false as const, code: 'admin_reply_model_invalid' };
-    } catch {
-      return { ok: false as const, code: 'admin_reply_model_unavailable' };
+    } catch (error) {
+      return {
+        ok: false as const,
+        code:
+          error instanceof Error && error.name === 'AbortError'
+            ? 'admin_reply_model_timeout'
+            : 'admin_reply_model_request_failed',
+      };
     } finally {
       clearTimeout(timeout);
     }
