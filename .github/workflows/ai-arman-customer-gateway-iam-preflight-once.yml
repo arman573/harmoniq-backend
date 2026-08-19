@@ -1,0 +1,184 @@
+name: AI Arman customer gateway IAM preflight once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: ai-arman-customer-gateway-iam-preflight-once
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  PROJECT_NUMBER: '222024985388'
+  REGION: europe-north1
+  EXISTING_RUNTIME: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  REFERENCE_SECRET: VENDRE_API_KEY
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  RESULT_PATH: docs/ai-arman/CUSTOMER_GATEWAY_IAM_PREFLIGHT_LATEST.md
+
+jobs:
+  preflight:
+    if: github.event.head_commit.message == 'Preflight customer gateway IAM once'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+
+      - name: Authenticate deploy identity
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Test permissions without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
+
+          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          cat > "$RUNNER_TEMP/project-body.json" <<'JSON'
+          {"permissions":[
+            "run.services.create",
+            "run.services.get",
+            "run.services.update",
+            "iam.serviceAccounts.create",
+            "resourcemanager.projects.setIamPolicy",
+            "secretmanager.secrets.create"
+          ]}
+          JSON
+          curl --silent --show-error --fail \
+            --request POST \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data @"$RUNNER_TEMP/project-body.json" \
+            "https://cloudresourcemanager.googleapis.com/v1/projects/${PROJECT_ID}:testIamPermissions" \
+            > "$RUNNER_TEMP/project-permissions.json"
+
+          cat > "$RUNNER_TEMP/sa-body.json" <<'JSON'
+          {"permissions":["iam.serviceAccounts.actAs","iam.serviceAccounts.getIamPolicy","iam.serviceAccounts.setIamPolicy"]}
+          JSON
+          curl --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data @"$RUNNER_TEMP/sa-body.json" \
+            --write-out '%{http_code}' \
+            "https://iam.googleapis.com/v1/projects/-/serviceAccounts/${EXISTING_RUNTIME}:testIamPermissions" \
+            --output "$RUNNER_TEMP/sa-permissions.json" \
+            > "$RUNNER_TEMP/sa-http.txt"
+
+          cat > "$RUNNER_TEMP/secret-body.json" <<'JSON'
+          {"permissions":[
+            "secretmanager.secrets.getIamPolicy",
+            "secretmanager.secrets.setIamPolicy",
+            "secretmanager.versions.add",
+            "secretmanager.versions.access"
+          ]}
+          JSON
+          curl --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data @"$RUNNER_TEMP/secret-body.json" \
+            --write-out '%{http_code}' \
+            "https://secretmanager.googleapis.com/v1/projects/${PROJECT_ID}/secrets/${REFERENCE_SECRET}:testIamPermissions" \
+            --output "$RUNNER_TEMP/secret-permissions.json" \
+            > "$RUNNER_TEMP/secret-http.txt"
+
+          has_project() { jq -e --arg p "$1" '.permissions // [] | index($p) != null' "$RUNNER_TEMP/project-permissions.json" >/dev/null && echo yes || echo no; }
+          has_sa() { jq -e --arg p "$1" '.permissions // [] | index($p) != null' "$RUNNER_TEMP/sa-permissions.json" >/dev/null 2>&1 && echo yes || echo no; }
+          has_secret() { jq -e --arg p "$1" '.permissions // [] | index($p) != null' "$RUNNER_TEMP/secret-permissions.json" >/dev/null 2>&1 && echo yes || echo no; }
+
+          PROJECT_IAM_READ=unknown
+          PROJECT_SECRET_ACCESSOR_BINDING=unknown
+          if gcloud projects get-iam-policy "$PROJECT_ID" --format=json > "$RUNNER_TEMP/project-iam.json" 2>/dev/null; then
+            PROJECT_IAM_READ=yes
+            if jq -e --arg member "serviceAccount:${EXISTING_RUNTIME}" '
+              [.bindings[]? | select(.role == "roles/secretmanager.secretAccessor") | .members[]?] | index($member) != null
+            ' "$RUNNER_TEMP/project-iam.json" >/dev/null; then
+              PROJECT_SECRET_ACCESSOR_BINDING=yes
+            else
+              PROJECT_SECRET_ACCESSOR_BINDING=no
+            fi
+          fi
+
+          SECRET_IAM_READ=unknown
+          EXISTING_RUNTIME_SECRET_BINDING=unknown
+          if gcloud secrets get-iam-policy "$REFERENCE_SECRET" --project "$PROJECT_ID" --format=json > "$RUNNER_TEMP/secret-iam.json" 2>/dev/null; then
+            SECRET_IAM_READ=yes
+            if jq -e --arg member "serviceAccount:${EXISTING_RUNTIME}" '
+              [.bindings[]? | select(.role == "roles/secretmanager.secretAccessor") | .members[]?] | index($member) != null
+            ' "$RUNNER_TEMP/secret-iam.json" >/dev/null; then
+              EXISTING_RUNTIME_SECRET_BINDING=yes
+            else
+              EXISTING_RUNTIME_SECRET_BINDING=no
+            fi
+          fi
+
+          {
+            echo '# AI Arman – customer gateway IAM preflight'
+            echo
+            echo "- Recorded at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- Source commit: \`$GITHUB_SHA\`"
+            echo "- Active identity: \`$ACTIVE_ACCOUNT\`"
+            echo '- Mode: **permission tests and IAM metadata reads only; no mutation**'
+            echo
+            echo '## Project-level deployer permissions'
+            echo
+            for p in run.services.create run.services.get run.services.update iam.serviceAccounts.create resourcemanager.projects.setIamPolicy secretmanager.secrets.create; do
+              echo "- \`$p\`: **$(has_project "$p")**"
+            done
+            echo
+            echo '## Existing AI runtime service-account permissions available to deployer'
+            echo
+            echo "- testIamPermissions HTTP: \`$(cat "$RUNNER_TEMP/sa-http.txt")\`"
+            for p in iam.serviceAccounts.actAs iam.serviceAccounts.getIamPolicy iam.serviceAccounts.setIamPolicy; do
+              echo "- \`$p\`: **$(has_sa "$p")**"
+            done
+            echo
+            echo "## Reference Secret Manager permissions on \`$REFERENCE_SECRET\`"
+            echo
+            echo "- testIamPermissions HTTP: \`$(cat "$RUNNER_TEMP/secret-http.txt")\`"
+            for p in secretmanager.secrets.getIamPolicy secretmanager.secrets.setIamPolicy secretmanager.versions.add secretmanager.versions.access; do
+              echo "- \`$p\`: **$(has_secret "$p")**"
+            done
+            echo
+            echo '## Existing runtime secret-access metadata'
+            echo
+            echo "- project IAM readable: **$PROJECT_IAM_READ**"
+            echo "- existing AI runtime has project-level secretAccessor binding: **$PROJECT_SECRET_ACCESSOR_BINDING**"
+            echo "- reference secret IAM readable: **$SECRET_IAM_READ**"
+            echo "- existing AI runtime has secret-level accessor binding on reference secret: **$EXISTING_RUNTIME_SECRET_BINDING**"
+            echo
+            echo 'No IAM policy, service account, Secret Manager secret/version, Cloud Run service, or traffic setting was changed by this preflight.'
+          } > "$RESULT_PATH"
+
+      - name: Commit preflight checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record customer gateway IAM preflight'
+          git push origin HEAD:feature/ai-arman-foundation-v1
