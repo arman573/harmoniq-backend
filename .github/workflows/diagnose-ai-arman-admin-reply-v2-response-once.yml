@@ -1,0 +1,82 @@
+name: Diagnose AI Arman admin reply v2 response once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  diagnose:
+    if: github.event.head_commit.message == 'Diagnose AI Arman admin reply v2 response once'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PROJECT_ID: harmoniq-210513
+      REGION: europe-north1
+      SERVICE_NAME: harmoniq-ai-arman-beta0
+      WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+      DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+      CANDIDATE_URL: https://adminreplyv2-8ce9ab5f-1---harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
+      CANONICAL_URL: https://harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
+      TARGET_FULL_SHA: 8ce9ab5f3c42756eb90d7f7ab2ce4c1d6ef34d49
+      RESULT_PATH: docs/ai-arman/ADMIN_REPLY_V2_RESPONSE_DIAGNOSTIC_LATEST.md
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+          fetch-depth: 1
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - id: idtoken
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ env.CANONICAL_URL }}
+          id_token_include_email: true
+          create_credentials_file: false
+      - name: Probe safe response shape
+        id: probe
+        env:
+          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          APP_TOKEN="$(printf 'candidate:%s' "$TARGET_FULL_SHA" | sha256sum | awk '{print $1}')"
+          echo "::add-mask::$APP_TOKEN"; echo "::add-mask::$ID_TOKEN"
+          cat > "$RUNNER_TEMP/request.json" <<'JSON'
+          {"caseId":"HQR-SYNTHETIC-DIAGNOSTIC","caseType":"support","status":"chat_waiting_admin","customerName":"Testkund","messages":[{"direction":"inbound","sender":"Kund","subject":"Leveransfråga","text":"Hej, paketet uppges vara skickat men jag saknar spårningslänk. Kan ni hjälpa mig?","date":"2026-08-19T08:22:00Z"}]}
+          JSON
+          CODE="$(curl --silent --show-error --output "$RUNNER_TEMP/response.json" --write-out '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $APP_TOKEN" --header 'Content-Type: application/json' --data @"$RUNNER_TEMP/request.json" "$CANDIDATE_URL/ai-arman/internal/admin/reply-draft" || true)"
+          SAFE="$(jq -c '{ok:(.ok // null),code:(.code // null),draftType:(.draftText|type),draftLength:(if (.draftText|type)=="string" then (.draftText|length) else 0 end),requiresHumanDecisionType:(.requiresHumanDecision|type),decisionReasonsType:(.decisionReasons|type),confidenceType:(.confidence|type),sendsCustomerMessage:(.sendsCustomerMessage // null),executesWrites:(.executesWrites // null)}' "$RUNNER_TEMP/response.json" 2>/dev/null || echo '{"parse":"failed"}')"
+          echo "http=$CODE" >> "$GITHUB_OUTPUT"
+          echo "safe=$SAFE" >> "$GITHUB_OUTPUT"
+      - name: Record safe diagnostic
+        env:
+          HTTP: ${{ steps.probe.outputs.http }}
+          SAFE: ${{ steps.probe.outputs.safe }}
+        run: |
+          set -euo pipefail
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman admin reply v2 safe response diagnostic
+
+          - Checked at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Candidate traffic remains untouched by this workflow.
+          - HTTP status: \`$HTTP\`
+          - Safe response shape: \`$SAFE\`
+          - Draft text content: **not recorded**
+          - No GCP mutation performed.
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record AI Arman admin reply v2 response diagnostic'
+          git push origin HEAD:feature/ai-arman-foundation-v1
