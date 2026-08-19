@@ -4,6 +4,7 @@ import type { ChatRequestParser } from '../../chat/chat-request.parser';
 import type { SkincareSpecialistChatOrchestrator } from '../../skincare/skincare-specialist-chat-orchestrator.service';
 import { AiArmanCustomerController } from './ai-arman-customer.controller';
 import type { AiArmanCustomerIdentityService } from './ai-arman-customer-identity.service';
+import type { AiArmanCustomerResponseService } from './ai-arman-customer-response.service';
 import type { AiArmanCustomerSessionService } from './ai-arman-customer-session.service';
 import type { AiArmanCustomerWidgetConfig } from './ai-arman-customer-widget.config';
 import { AiArmanCustomerWidgetService } from './ai-arman-customer-widget.service';
@@ -33,7 +34,7 @@ function setup(options: {
     verify: jest.fn(() =>
       options.validSession === false
         ? null
-        : { v: 1 as const, sub: 'kund@example.se', exp: Date.now() + 60_000 },
+        : { v: 2 as const, sub: 'kund@example.se', exp: Date.now() + 60_000 },
     ),
   } as unknown as AiArmanCustomerSessionService;
   const parsed = {
@@ -46,13 +47,17 @@ function setup(options: {
   const parser = {
     parse: jest.fn(() => parsed),
   } as unknown as ChatRequestParser;
+  const backendResponse = {
+    contractVersion: 'ai-arman-chat-v1',
+    conversationId: 'conversation-customer-test',
+    blocks: [{ type: 'message', text: 'Hej från AI Arman' }],
+  };
   const conversations = {
-    handleWithShadow: jest.fn(async () => ({
-      contractVersion: 'ai-arman-chat-v1',
-      conversationId: 'conversation-customer-test',
-      blocks: [{ type: 'message', text: 'Hej från AI Arman' }],
-    })),
+    handleWithShadow: jest.fn(async () => backendResponse),
   } as unknown as SkincareSpecialistChatOrchestrator;
+  const responses = {
+    formulate: jest.fn(async (_request, response) => response),
+  } as unknown as AiArmanCustomerResponseService;
   const widget = new AiArmanCustomerWidgetService();
   const controller = new AiArmanCustomerController(
     config,
@@ -60,9 +65,10 @@ function setup(options: {
     sessions,
     parser,
     conversations,
+    responses,
     widget,
   );
-  return { controller, sessions, parser, conversations };
+  return { controller, sessions, parser, conversations, responses };
 }
 
 function req(authorization?: string): Request {
@@ -78,33 +84,36 @@ describe('AiArmanCustomerController', () => {
   });
 
   it('rejects chat before an identity session is presented', async () => {
-    const { controller, parser, conversations } = setup();
+    const { controller, parser, conversations, responses } = setup();
     await expect(
       controller.createMessage(requestBody, req()),
     ).rejects.toThrow(UnauthorizedException);
     expect(parser.parse).not.toHaveBeenCalled();
     expect(conversations.handleWithShadow).not.toHaveBeenCalled();
+    expect(responses.formulate).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid or expired identity session', async () => {
-    const { controller, parser, conversations } = setup({ validSession: false });
+    const { controller, parser, conversations, responses } = setup({ validSession: false });
     await expect(
       controller.createMessage(requestBody, req('Bearer invalid-token')),
     ).rejects.toThrow(UnauthorizedException);
     expect(parser.parse).not.toHaveBeenCalled();
     expect(conversations.handleWithShadow).not.toHaveBeenCalled();
+    expect(responses.formulate).not.toHaveBeenCalled();
   });
 
   it('rejects internal preview requests on the customer chat route', async () => {
-    const { controller, conversations } = setup({ channel: 'internal_preview' });
+    const { controller, conversations, responses } = setup({ channel: 'internal_preview' });
     await expect(
       controller.createMessage(requestBody, req('Bearer valid-token')),
     ).rejects.toThrow(UnauthorizedException);
     expect(conversations.handleWithShadow).not.toHaveBeenCalled();
+    expect(responses.formulate).not.toHaveBeenCalled();
   });
 
   it('allows web-widget chat only after a valid identity session', async () => {
-    const { controller, sessions, parser, conversations } = setup();
+    const { controller, sessions, parser, conversations, responses } = setup();
     await expect(
       controller.createMessage(requestBody, req('Bearer valid-token')),
     ).resolves.toEqual(
@@ -113,6 +122,7 @@ describe('AiArmanCustomerController', () => {
     expect(sessions.verify).toHaveBeenCalledWith('valid-token');
     expect(parser.parse).toHaveBeenCalledWith(requestBody);
     expect(conversations.handleWithShadow).toHaveBeenCalledTimes(1);
+    expect(responses.formulate).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed when customer identity is not activated', async () => {
