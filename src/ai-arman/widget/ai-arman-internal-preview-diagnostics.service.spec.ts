@@ -187,7 +187,7 @@ describe('AiArmanInternalPreviewDiagnosticsService', () => {
           modelAffectsTools: false,
           writesExecuted: false,
           productionActionsEnabled: false,
-          rawModelTextExposed: false,
+          modelOutputExposed: false,
           promptExposed: false,
         }),
       }),
