@@ -46,7 +46,7 @@ export class AiArmanCustomerIdentityService {
 
     const sent = await this.sender.send({
       email,
-      code: `${salt}:${code}`,
+      code,
       expiresAt: new Date(expiresAtMs).toISOString(),
     });
 
