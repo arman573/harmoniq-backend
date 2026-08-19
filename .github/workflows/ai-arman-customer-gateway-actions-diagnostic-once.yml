@@ -1,0 +1,98 @@
+name: AI Arman customer gateway Actions diagnostic once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: ai-arman-customer-gateway-actions-diagnostic-once
+  cancel-in-progress: false
+
+env:
+  TARGET_SHA: 75e339f18b1784c3a7ac8c8639d59065f4b41d8e
+  TARGET_WORKFLOW: ai-arman-customer-gateway-private-candidate-v2-once.yml
+  RESULT_PATH: docs/ai-arman/CUSTOMER_GATEWAY_ACTIONS_DIAG_LATEST.md
+
+jobs:
+  inspect-actions:
+    if: github.event.head_commit.message == 'Diagnose customer gateway Actions run once'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+
+      - name: Inspect target workflow run and steps
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          RUN_FOUND=no
+          RUN_ID='-'
+          RUN_STATUS='-'
+          RUN_CONCLUSION='-'
+          RUN_CREATED='-'
+          RUN_UPDATED='-'
+          JOB_COUNT=0
+          JOB_SUMMARY='-'
+          FAILED_STEP='-'
+
+          WORKFLOW_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$TARGET_WORKFLOW/runs?event=push&per_page=50" 2>/dev/null || true)"
+          if [ -n "$WORKFLOW_JSON" ]; then
+            TARGET_RUN="$(printf '%s' "$WORKFLOW_JSON" | jq -c --arg sha "$TARGET_SHA" '[.workflow_runs[]? | select(.head_sha == $sha)] | sort_by(.created_at) | last // empty')"
+            if [ -n "$TARGET_RUN" ]; then
+              RUN_FOUND=yes
+              RUN_ID="$(printf '%s' "$TARGET_RUN" | jq -r '.id // "-"')"
+              RUN_STATUS="$(printf '%s' "$TARGET_RUN" | jq -r '.status // "-"')"
+              RUN_CONCLUSION="$(printf '%s' "$TARGET_RUN" | jq -r '.conclusion // "-"')"
+              RUN_CREATED="$(printf '%s' "$TARGET_RUN" | jq -r '.created_at // "-"')"
+              RUN_UPDATED="$(printf '%s' "$TARGET_RUN" | jq -r '.updated_at // "-"')"
+
+              JOBS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" 2>/dev/null || true)"
+              if [ -n "$JOBS_JSON" ]; then
+                JOB_COUNT="$(printf '%s' "$JOBS_JSON" | jq '.jobs | length')"
+                JOB_SUMMARY="$(printf '%s' "$JOBS_JSON" | jq -r '[.jobs[]? | (.name + ":" + (.status // "-") + ":" + (.conclusion // "-"))] | join(", ")')"
+                FAILED_STEP="$(printf '%s' "$JOBS_JSON" | jq -r '[.jobs[]?.steps[]? | select(.conclusion == "failure") | .name] | first // "-"')"
+                printf '%s' "$JOBS_JSON" | jq -r '.jobs[]? as $job | $job.steps[]? | "- " + $job.name + " / " + .name + ": status=" + (.status // "-") + ", conclusion=" + (.conclusion // "-")' > "$RUNNER_TEMP/steps.txt"
+              fi
+            fi
+          fi
+
+          {
+            echo '# AI Arman – customer gateway Actions diagnostic latest'
+            echo
+            echo "- Recorded at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- Diagnostic source commit: \`$GITHUB_SHA\`"
+            echo "- Target workflow: \`$TARGET_WORKFLOW\`"
+            echo "- Target source commit: \`$TARGET_SHA\`"
+            echo '- Mode: **GitHub Actions metadata only; no GCP mutation**'
+            echo
+            echo "- Target run found: **$RUN_FOUND**"
+            echo "- Run ID: \`$RUN_ID\`"
+            echo "- Run status: \`$RUN_STATUS\`"
+            echo "- Run conclusion: \`$RUN_CONCLUSION\`"
+            echo "- Created: \`$RUN_CREATED\`"
+            echo "- Updated: \`$RUN_UPDATED\`"
+            echo "- Job count: **$JOB_COUNT**"
+            echo "- Job summary: \`$JOB_SUMMARY\`"
+            echo "- First failed step: **$FAILED_STEP**"
+            echo
+            echo '## Step results'
+            echo
+            if [ -s "$RUNNER_TEMP/steps.txt" ]; then cat "$RUNNER_TEMP/steps.txt"; else echo '- No step metadata available.'; fi
+            echo
+            echo 'No logs, credentials, secrets, tokens, customer data, or response bodies are written to this checkpoint.'
+          } > "$RESULT_PATH"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record customer gateway Actions diagnostic' || exit 0
+          git push origin HEAD:feature/ai-arman-foundation-v1
