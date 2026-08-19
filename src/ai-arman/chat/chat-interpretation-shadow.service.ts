@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ChatInterpretationValidator } from './chat-interpretation.validator';
 import type {
+  AiArmanIntent,
   AiArmanInterpretation,
   AiArmanModelInterpretationCandidate,
 } from './chat-messages.types';
@@ -8,6 +9,8 @@ import type {
 export type ChatInterpretationShadowComparison = {
   status: 'valid_candidate' | 'invalid_candidate';
   candidateSource: 'model_candidate' | null;
+  candidatePrimaryIntent: AiArmanIntent | null;
+  candidateConfidence: number | null;
   primaryIntentMatch: boolean | null;
   secondaryIntentOverlap: number | null;
   requestedProductTypeOverlap: number | null;
@@ -44,6 +47,8 @@ export class ChatInterpretationShadowService {
     return {
       status: 'valid_candidate',
       candidateSource: parsed.source,
+      candidatePrimaryIntent: parsed.primaryIntent,
+      candidateConfidence: parsed.confidence,
       primaryIntentMatch:
         deterministic.primaryIntent === parsed.primaryIntent,
       secondaryIntentOverlap: overlapRatio(
@@ -80,6 +85,8 @@ function invalidComparison(): ChatInterpretationShadowComparison {
   return {
     status: 'invalid_candidate',
     candidateSource: null,
+    candidatePrimaryIntent: null,
+    candidateConfidence: null,
     primaryIntentMatch: null,
     secondaryIntentOverlap: null,
     requestedProductTypeOverlap: null,
