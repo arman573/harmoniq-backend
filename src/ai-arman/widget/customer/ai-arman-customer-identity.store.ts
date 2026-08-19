@@ -12,13 +12,13 @@ export type CustomerOtpChallenge = {
 export class AiArmanCustomerIdentityStore {
   private readonly challenges = new Map<string, CustomerOtpChallenge>();
 
-  save(challenge: CustomerOtpChallenge): void {
-    this.prune();
+  save(challenge: CustomerOtpChallenge, now = Date.now()): void {
+    this.prune(now);
     this.challenges.set(challenge.id, { ...challenge });
   }
 
-  get(id: string): CustomerOtpChallenge | null {
-    this.prune();
+  get(id: string, now = Date.now()): CustomerOtpChallenge | null {
+    this.prune(now);
     const value = this.challenges.get(id);
     return value ? { ...value } : null;
   }
@@ -31,7 +31,7 @@ export class AiArmanCustomerIdentityStore {
     this.challenges.delete(id);
   }
 
-  private prune(now = Date.now()): void {
+  private prune(now: number): void {
     for (const [id, challenge] of this.challenges) {
       if (challenge.expiresAtMs <= now) this.challenges.delete(id);
     }
