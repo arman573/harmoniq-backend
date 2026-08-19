@@ -57,7 +57,7 @@ function setup(directoryOk = true) {
 }
 
 describe('AiArmanCustomerIdentityService', () => {
-  it('issues a short-lived signed session only after OTP and customer directory verification', async () => {
+  it('issues a short-lived encrypted session only after OTP and customer directory verification', async () => {
     const { identity, directory, sessions, getCode } = setup(true);
     const now = 1_900_000_000_000;
 
@@ -74,7 +74,7 @@ describe('AiArmanCustomerIdentityService', () => {
     if (!verified.ok) throw new Error('verify_failed');
     expect(directory.verifyEmail).toHaveBeenCalledWith('kund@example.se');
     expect(sessions.verify(verified.sessionToken, now + 2000)).toEqual(
-      expect.objectContaining({ sub: 'kund@example.se', v: 1 }),
+      expect.objectContaining({ sub: 'kund@example.se', v: 2 }),
     );
   });
 
