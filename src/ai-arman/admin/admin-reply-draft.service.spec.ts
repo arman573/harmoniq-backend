@@ -87,6 +87,33 @@ describe('AiArmanAdminReplyDraftService', () => {
       executesWrites: false,
     });
   });
+
+  it('classifies provider HTTP failures without exposing provider bodies', async () => {
+    enableModel();
+    global.fetch = jest.fn(async () => new Response('sensitive upstream body', { status: 429 })) as typeof fetch;
+
+    const service = new AiArmanAdminReplyDraftService(new AiArmanAdminReplyDraftConfig());
+    await expect(service.createDraft({ caseId: 'HQR-789' })).resolves.toEqual({
+      ok: false,
+      code: 'admin_reply_model_http_error',
+      providerHttpStatus: 429,
+    });
+  });
+
+  it('classifies provider timeouts without exposing request content', async () => {
+    enableModel();
+    global.fetch = jest.fn(async () => {
+      const error = new Error('timed out');
+      error.name = 'AbortError';
+      throw error;
+    }) as typeof fetch;
+
+    const service = new AiArmanAdminReplyDraftService(new AiArmanAdminReplyDraftConfig());
+    await expect(service.createDraft({ caseId: 'HQR-790' })).resolves.toEqual({
+      ok: false,
+      code: 'admin_reply_model_timeout',
+    });
+  });
 });
 
 function enableModel() {
