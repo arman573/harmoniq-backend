@@ -16,6 +16,8 @@ import {
 } from './ai-arman/widget/customer/ai-arman-customer-identity.providers';
 import { AiArmanCustomerIdentityStore } from './ai-arman/widget/customer/ai-arman-customer-identity.store';
 import { AiArmanCustomerOtpRateLimiter } from './ai-arman/widget/customer/ai-arman-customer-otp-rate-limiter';
+import { AiArmanCustomerResponseConfig } from './ai-arman/widget/customer/ai-arman-customer-response.config';
+import { AiArmanCustomerResponseService } from './ai-arman/widget/customer/ai-arman-customer-response.service';
 import { AiArmanCustomerSessionService } from './ai-arman/widget/customer/ai-arman-customer-session.service';
 import { AiArmanCustomerWidgetConfig } from './ai-arman/widget/customer/ai-arman-customer-widget.config';
 import { AiArmanCustomerWidgetService } from './ai-arman/widget/customer/ai-arman-customer-widget.service';
@@ -39,6 +41,8 @@ import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/c
     AiArmanCustomerIdentityService,
     AiArmanCustomerIdentityStore,
     AiArmanCustomerOtpRateLimiter,
+    AiArmanCustomerResponseConfig,
+    AiArmanCustomerResponseService,
     AiArmanCustomerSessionService,
     AiArmanCustomerWidgetConfig,
     AiArmanCustomerWidgetService,
