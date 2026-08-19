@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AiArmanModule } from './ai-arman/ai-arman.module';
+import { AiArmanAdminReplyDraftConfig } from './ai-arman/admin/admin-reply-draft.config';
+import { AiArmanAdminReplyDraftController } from './ai-arman/admin/admin-reply-draft.controller';
+import { AiArmanAdminReplyDraftService } from './ai-arman/admin/admin-reply-draft.service';
 import { AiArmanInternalPreviewDiagnosticsConfig } from './ai-arman/widget/ai-arman-internal-preview-diagnostics.config';
 import { AiArmanInternalPreviewDiagnosticsController } from './ai-arman/widget/ai-arman-internal-preview-diagnostics.controller';
 import { AiArmanInternalPreviewDiagnosticsService } from './ai-arman/widget/ai-arman-internal-preview-diagnostics.service';
@@ -22,11 +25,14 @@ import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/c
 @Module({
   imports: [AiArmanModule],
   controllers: [
+    AiArmanAdminReplyDraftController,
     AiArmanInternalPreviewDiagnosticsController,
     AiArmanInternalPreviewPageController,
     AiArmanCustomerController,
   ],
   providers: [
+    AiArmanAdminReplyDraftConfig,
+    AiArmanAdminReplyDraftService,
     AiArmanInternalPreviewDiagnosticsConfig,
     AiArmanInternalPreviewDiagnosticsService,
     AiArmanInternalPreviewPageService,
