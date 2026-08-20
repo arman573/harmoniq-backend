@@ -15,6 +15,7 @@ import { AiArmanAdminCommandPlannerService } from './ai-arman/admin/admin-comman
 import { AiArmanAdminLearningStore } from './ai-arman/admin/admin-learning.store';
 import { AiArmanAdminReplyDraftConfig } from './ai-arman/admin/admin-reply-draft.config';
 import { AiArmanAdminReplyDraftController } from './ai-arman/admin/admin-reply-draft.controller';
+import { AiArmanAdminReplyDraftRetryingService } from './ai-arman/admin/admin-reply-draft-retrying.service';
 import { AiArmanAdminReplyDraftService } from './ai-arman/admin/admin-reply-draft.service';
 import { AiArmanAdminReturnResolutionActionsService } from './ai-arman/admin/admin-return-resolution-actions.service';
 import { AiArmanAdminToolRegistryService } from './ai-arman/admin/admin-tool-registry.service';
@@ -64,7 +65,11 @@ import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/c
     AiArmanAdminReturnResolutionActionsService,
     AiArmanAdminToolRegistryService,
     AiArmanAdminReplyDraftConfig,
-    AiArmanAdminReplyDraftService,
+    AiArmanAdminReplyDraftRetryingService,
+    {
+      provide: AiArmanAdminReplyDraftService,
+      useExisting: AiArmanAdminReplyDraftRetryingService,
+    },
     AiArmanInternalPreviewDiagnosticsConfig,
     AiArmanInternalPreviewDiagnosticsService,
     AiArmanInternalPreviewPageService,
