@@ -16,6 +16,7 @@ import { AiArmanAdminLearningStore } from './ai-arman/admin/admin-learning.store
 import { AiArmanAdminReplyDraftConfig } from './ai-arman/admin/admin-reply-draft.config';
 import { AiArmanAdminReplyDraftController } from './ai-arman/admin/admin-reply-draft.controller';
 import { AiArmanAdminReplyDraftService } from './ai-arman/admin/admin-reply-draft.service';
+import { AiArmanAdminReturnResolutionActionsService } from './ai-arman/admin/admin-return-resolution-actions.service';
 import { AiArmanAdminToolRegistryService } from './ai-arman/admin/admin-tool-registry.service';
 import { AiArmanInternalPreviewDiagnosticsConfig } from './ai-arman/widget/ai-arman-internal-preview-diagnostics.config';
 import { AiArmanInternalPreviewDiagnosticsController } from './ai-arman/widget/ai-arman-internal-preview-diagnostics.controller';
@@ -60,6 +61,7 @@ import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/c
     AiArmanAdminCaseResolverService,
     AiArmanAdminCommandPlannerService,
     AiArmanAdminLearningStore,
+    AiArmanAdminReturnResolutionActionsService,
     AiArmanAdminToolRegistryService,
     AiArmanAdminReplyDraftConfig,
     AiArmanAdminReplyDraftService,
