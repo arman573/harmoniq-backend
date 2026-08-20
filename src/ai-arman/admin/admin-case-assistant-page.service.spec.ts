@@ -8,7 +8,7 @@ describe('AiArmanAdminCaseAssistantPageService', () => {
     expect(html).toContain('Lös');
     expect(html).toContain('Diskutera');
     expect(html).toContain('Godkänn och lär AI Arman');
-    expect(html).toContain("textContent=data.caseSummary");
+    expect(html).toContain("$('summary').textContent = data.caseSummary;");
     expect(html).not.toContain('.innerHTML');
     expect(html).not.toContain('document.write');
     expect(html).not.toContain('localStorage');
