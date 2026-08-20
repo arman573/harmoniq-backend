@@ -115,7 +115,7 @@ export class AiArmanAdminCaseAssistantPageService {
   'use strict';
   const learningEnabled = ${learningEnabled};
   const $ = (id) => document.getElementById(id);
-  const state = { result:null, learning:null, tab:'understand' };
+  const state = { result:null, learning:null, tab:'understand', discussion:[] };
   $('launcher').onclick = () => $('drawer').classList.add('open');
   $('close').onclick = () => $('drawer').classList.remove('open');
   document.querySelectorAll('.tab').forEach((button) => button.onclick = () => selectTab(button.dataset.tab));
@@ -132,7 +132,7 @@ export class AiArmanAdminCaseAssistantPageService {
     let messages = [];
     try { messages = JSON.parse($('messages').value || '[]'); } catch (_) { throw new Error('Meddelanden måste vara giltig JSON.'); }
     if (!Array.isArray(messages)) throw new Error('Meddelanden måste vara en lista.');
-    return { caseId:$('caseId').value.trim(), caseType:$('caseType').value, status:$('statusInput').value.trim(), customerName:$('customerName').value.trim(), messages, adminQuestion };
+    return { caseId:$('caseId').value.trim(), caseType:$('caseType').value, status:$('statusInput').value.trim(), customerName:$('customerName').value.trim(), messages, adminQuestion, discussion:state.discussion.slice(-12) };
   }
   async function run(question='') {
     $('status').textContent = 'AI Arman tänker…';
@@ -141,6 +141,9 @@ export class AiArmanAdminCaseAssistantPageService {
       const data = await response.json();
       if (!response.ok || data.ok !== true) throw new Error(data.code || 'assistant_failed');
       state.result = data; state.learning = data.learningCandidate || null;
+      if (question) state.discussion.push({ role:'admin', text:question });
+      state.discussion.push({ role:'assistant', text:data.answerToAdmin });
+      state.discussion = state.discussion.slice(-12);
       render(data, question);
       $('setup').open = false;
       $('caseLabel').textContent = ($('caseId').value.trim() || 'Ärende') + ' · ' + $('caseType').value;
@@ -167,8 +170,9 @@ export class AiArmanAdminCaseAssistantPageService {
     (Array.isArray(items) ? items : []).forEach((text) => { const li=document.createElement('li'); li.textContent=text; node.appendChild(li); });
   }
   function addBubble(kind, text) { const div=document.createElement('div'); div.className='bubble '+kind; div.textContent=text; $('chatlog').appendChild(div); }
+  function resetDiscussion() { state.discussion = []; state.learning = null; $('chatlog').replaceChildren(); $('learnBox').hidden = true; }
 
-  $('analyze').onclick = () => run('');
+  $('analyze').onclick = () => { resetDiscussion(); run(''); };
   $('send').onclick = async () => { const q=$('question').value.trim(); if(!q)return; $('question').value=''; await run(q); selectTab('discuss'); };
   $('approveLearn').onclick = async () => {
     if (!state.learning || !learningEnabled) return;
