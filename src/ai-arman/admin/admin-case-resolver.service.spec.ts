@@ -9,14 +9,21 @@ describe('AiArmanAdminCaseResolverService', () => {
       pauseCase: jest.fn(),
       completeCase: jest.fn(),
     } as any;
+    const returnActions = {
+      setReturnStatus: jest.fn(),
+      setProductDecision: jest.fn(),
+      createReturnLabel: jest.fn(),
+    } as any;
     const assistant = { assist: jest.fn() } as any;
     const replyDraft = { createDraft: jest.fn() } as any;
     return {
       actions,
+      returnActions,
       assistant,
       replyDraft,
       service: new AiArmanAdminCaseResolverService(
         actions,
+        returnActions,
         assistant,
         replyDraft,
       ),
@@ -98,6 +105,13 @@ describe('AiArmanAdminCaseResolverService', () => {
       sendsCustomerMessage: false,
       executesWrites: false,
     });
+    expect(result.availableActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action: 'case.return_status.set' }),
+        expect.objectContaining({ action: 'case.product_decision.set' }),
+        expect.objectContaining({ action: 'case.return_label.create' }),
+      ]),
+    );
   });
 
   it('still prepares safely when optional model drafting is unavailable', async () => {
@@ -175,6 +189,9 @@ describe('AiArmanAdminCaseResolverService', () => {
     expect(h.actions.sendCustomerMessage).not.toHaveBeenCalled();
     expect(h.actions.pauseCase).not.toHaveBeenCalled();
     expect(h.actions.completeCase).not.toHaveBeenCalled();
+    expect(h.returnActions.setReturnStatus).not.toHaveBeenCalled();
+    expect(h.returnActions.setProductDecision).not.toHaveBeenCalled();
+    expect(h.returnActions.createReturnLabel).not.toHaveBeenCalled();
   });
 
   it('executes one approved customer message action and verifies the case afterward', async () => {
@@ -225,6 +242,45 @@ describe('AiArmanAdminCaseResolverService', () => {
       writeExecuted: true,
       verifiedAfterWrite: true,
       caseSnapshot: { caseId: 'HQR-12345', messageCount: 1 },
+    });
+  });
+
+  it('routes an explicitly approved return-label action and verifies afterward', async () => {
+    const h = createHarness();
+    h.returnActions.createReturnLabel.mockResolvedValue({
+      ok: true,
+      action: 'case.return_label.create',
+      caseId: 'HQR-12345',
+      readOnly: false,
+      executed: true,
+      durationMs: 20,
+      data: { ok: true },
+    });
+    h.actions.readCase.mockResolvedValue({
+      ok: true,
+      action: 'case.read',
+      caseId: 'HQR-12345',
+      readOnly: true,
+      executed: true,
+      durationMs: 2,
+      data: { caseId: 'HQR-12345', type: 'return', status: 'return_label_pending' },
+    });
+
+    const result = await h.service.execute({
+      caseId: 'HQR-12345',
+      approved: true,
+      action: 'case.return_label.create',
+    });
+
+    expect(h.returnActions.createReturnLabel).toHaveBeenCalledWith(
+      'HQR-12345',
+      true,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      action: 'case.return_label.create',
+      writeExecuted: true,
+      verifiedAfterWrite: true,
     });
   });
 });
