@@ -4,9 +4,13 @@ import {
   type ReturnsAdminGatewayResult,
 } from '../integrations/returns-admin-gateway.client';
 
+const MAX_SUBJECT_LENGTH = 300;
+const MAX_MESSAGE_LENGTH = 4000;
+
 export type AiArmanAdminActionName =
   | 'case.read'
   | 'case.order_context.read'
+  | 'case.customer_message.send'
   | 'case.pause'
   | 'case.complete';
 
@@ -87,6 +91,56 @@ export class AiArmanAdminActionService {
     };
   }
 
+  async sendCustomerMessage(
+    caseId: string,
+    subject: string,
+    message: string,
+    explicitAdminApproval: boolean,
+  ): Promise<AiArmanAdminActionResult> {
+    const normalizedCaseId = normalizeCaseId(caseId);
+    if (!normalizedCaseId) {
+      return invalid('case.customer_message.send', caseId);
+    }
+
+    const normalizedSubject = normalizeText(subject, MAX_SUBJECT_LENGTH);
+    const normalizedMessage = normalizeText(message, MAX_MESSAGE_LENGTH);
+    if (!normalizedSubject || !normalizedMessage) {
+      return {
+        ok: false,
+        action: 'case.customer_message.send',
+        caseId: normalizedCaseId,
+        readOnly: false,
+        executed: false,
+        durationMs: 0,
+        error: 'invalid_customer_message',
+      };
+    }
+
+    const result = await this.gateway.execute({
+      method: 'POST',
+      path: `/api/admin/cases/${encodeURIComponent(normalizedCaseId)}/messages/send`,
+      body: {
+        subject: normalizedSubject,
+        message: normalizedMessage,
+      },
+      reason: `Send explicitly approved customer message for ${normalizedCaseId}`,
+      explicitAdminApproval,
+    });
+    if (!result.ok) {
+      return failed('case.customer_message.send', normalizedCaseId, result);
+    }
+
+    return {
+      ok: true,
+      action: 'case.customer_message.send',
+      caseId: normalizedCaseId,
+      readOnly: false,
+      executed: true,
+      durationMs: result.durationMs,
+      data: result.body,
+    };
+  }
+
   async pauseCase(
     caseId: string,
     explicitAdminApproval: boolean,
@@ -147,6 +201,16 @@ export class AiArmanAdminActionService {
 function normalizeCaseId(value: unknown): string {
   const normalized = String(value || '').trim().toUpperCase();
   return /^HQR-[A-Z0-9-]{3,40}$/.test(normalized) ? normalized : '';
+}
+
+function normalizeText(value: unknown, maxLength: number): string {
+  return String(value || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, maxLength);
 }
 
 function readCases(value: unknown): Array<Record<string, unknown>> {
