@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AiArmanModule } from './ai-arman/ai-arman.module';
+import { AiArmanAdminActionService } from './ai-arman/admin/admin-action.service';
 import { AiArmanAdminCaseAssistantConfig } from './ai-arman/admin/admin-case-assistant.config';
 import { AiArmanAdminCaseAssistantController } from './ai-arman/admin/admin-case-assistant.controller';
 import { AiArmanAdminCaseAssistantFastService } from './ai-arman/admin/admin-case-assistant-fast.service';
@@ -7,6 +8,7 @@ import { AiArmanAdminCaseAssistantOrchestratorService } from './ai-arman/admin/a
 import { AiArmanAdminCaseAssistantPageService } from './ai-arman/admin/admin-case-assistant-page.service';
 import { AiArmanAdminCaseAssistantService } from './ai-arman/admin/admin-case-assistant.service';
 import { AiArmanAdminCaseAssistantV2PageService } from './ai-arman/admin/admin-case-assistant-v2-page.service';
+import { AiArmanAdminCommandPlannerService } from './ai-arman/admin/admin-command-planner.service';
 import { AiArmanAdminLearningStore } from './ai-arman/admin/admin-learning.store';
 import { AiArmanAdminReplyDraftConfig } from './ai-arman/admin/admin-reply-draft.config';
 import { AiArmanAdminReplyDraftController } from './ai-arman/admin/admin-reply-draft.controller';
@@ -43,12 +45,14 @@ import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/c
     AiArmanCustomerController,
   ],
   providers: [
+    AiArmanAdminActionService,
     AiArmanAdminCaseAssistantConfig,
     AiArmanAdminCaseAssistantFastService,
     AiArmanAdminCaseAssistantOrchestratorService,
     AiArmanAdminCaseAssistantPageService,
     AiArmanAdminCaseAssistantService,
     AiArmanAdminCaseAssistantV2PageService,
+    AiArmanAdminCommandPlannerService,
     AiArmanAdminLearningStore,
     AiArmanAdminToolRegistryService,
     AiArmanAdminReplyDraftConfig,
