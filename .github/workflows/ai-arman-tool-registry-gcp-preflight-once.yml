@@ -1,12 +1,13 @@
 name: Inspect AI Arman tool registry GCP access once
 
 on:
-  push:
+  pull_request:
     branches:
-      - feature/ai-arman-foundation-v1
+      - trigger/ai-arman-tool-preflight-20260820
+    types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 env:
@@ -16,17 +17,15 @@ env:
   TRACKING_SERVICE: harmoniq-customer-tracking-widget
   DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
   WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
-  RESULT_PATH: docs/ai-arman/TOOL_REGISTRY_GCP_PREFLIGHT_LATEST.md
 
 jobs:
   preflight:
-    if: github.event.head_commit.message == 'Inspect AI Arman tool registry GCP access once'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: feature/ai-arman-foundation-v1
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
 
       - uses: google-github-actions/auth@v3
@@ -40,7 +39,6 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
 
       - name: Inspect services and secret references without reading secret values
-        id: inspect
         shell: bash
         run: |
           set -euo pipefail
@@ -54,11 +52,10 @@ jobs:
           AI_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/ai.json")"
           TRACKING_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/tracking.json")"
           TRACKING_PUBLIC=false
-          if jq -e '[.bindings[]?.members[]?] | any(.=="allUsers" or .=="allAuthenticatedUsers")' "$RUNNER_TEMP/tracking-iam.json" >/dev/null; then TRACKING_PUBLIC=true; fi
+          jq -e '[.bindings[]?.members[]?] | any(.=="allUsers" or .=="allAuthenticatedUsers")' "$RUNNER_TEMP/tracking-iam.json" >/dev/null && TRACKING_PUBLIC=true || true
           AI_PRIVATE=true
-          if jq -e '[.bindings[]?.members[]?] | any(.=="allUsers" or .=="allAuthenticatedUsers")' "$RUNNER_TEMP/ai-iam.json" >/dev/null; then AI_PRIVATE=false; fi
+          jq -e '[.bindings[]?.members[]?] | any(.=="allUsers" or .=="allAuthenticatedUsers")' "$RUNNER_TEMP/ai-iam.json" >/dev/null && AI_PRIVATE=false || true
 
-          jq -r '.spec.template.spec.containers[0].env[]? | select(.valueFrom.secretKeyRef.name != null) | [.name,.valueFrom.secretKeyRef.name] | @tsv' "$RUNNER_TEMP/ai.json" > "$RUNNER_TEMP/ai-secrets.tsv"
           jq -r '.spec.template.spec.containers[0].env[]? | select(.valueFrom.secretKeyRef.name != null) | [.name,.valueFrom.secretKeyRef.name] | @tsv' "$RUNNER_TEMP/tracking.json" > "$RUNNER_TEMP/tracking-secrets.tsv"
           jq -r '.spec.template.spec.containers[0].env[]? | select(.value != null) | [.name,.value] | @tsv' "$RUNNER_TEMP/tracking.json" > "$RUNNER_TEMP/tracking-env.tsv"
 
@@ -69,61 +66,20 @@ jobs:
           SECRET_ACCESS=unknown
           if [[ -n "$VENDRE_SECRET" && -n "$AI_RUNTIME" ]]; then
             if gcloud secrets get-iam-policy "$VENDRE_SECRET" --project "$PROJECT_ID" --format=json > "$RUNNER_TEMP/vendre-secret-iam.json" 2>/dev/null; then
-              if jq -e --arg member "serviceAccount:$AI_RUNTIME" '[.bindings[]? | select(.role=="roles/secretmanager.secretAccessor") | .members[]?] | any(.==$member)' "$RUNNER_TEMP/vendre-secret-iam.json" >/dev/null; then
-                SECRET_ACCESS=true
-              else
-                SECRET_ACCESS=false
-              fi
+              if jq -e --arg member "serviceAccount:$AI_RUNTIME" '[.bindings[]? | select(.role=="roles/secretmanager.secretAccessor") | .members[]?] | any(.==$member)' "$RUNNER_TEMP/vendre-secret-iam.json" >/dev/null; then SECRET_ACCESS=true; else SECRET_ACCESS=false; fi
             fi
           fi
 
-          echo "ai_runtime=$AI_RUNTIME" >> "$GITHUB_OUTPUT"
-          echo "tracking_runtime=$TRACKING_RUNTIME" >> "$GITHUB_OUTPUT"
-          echo "ai_url=$AI_URL" >> "$GITHUB_OUTPUT"
-          echo "tracking_url=$TRACKING_URL" >> "$GITHUB_OUTPUT"
-          echo "tracking_public=$TRACKING_PUBLIC" >> "$GITHUB_OUTPUT"
-          echo "ai_private=$AI_PRIVATE" >> "$GITHUB_OUTPUT"
-          echo "vendre_secret=$VENDRE_SECRET" >> "$GITHUB_OUTPUT"
-          echo "vendre_base_url=$VENDRE_BASE_URL" >> "$GITHUB_OUTPUT"
-          echo "secret_access=$SECRET_ACCESS" >> "$GITHUB_OUTPUT"
-
-      - name: Record safe preflight checkpoint
-        shell: bash
-        env:
-          AI_RUNTIME: ${{ steps.inspect.outputs.ai_runtime }}
-          TRACKING_RUNTIME: ${{ steps.inspect.outputs.tracking_runtime }}
-          AI_URL: ${{ steps.inspect.outputs.ai_url }}
-          TRACKING_URL: ${{ steps.inspect.outputs.tracking_url }}
-          TRACKING_PUBLIC: ${{ steps.inspect.outputs.tracking_public }}
-          AI_PRIVATE: ${{ steps.inspect.outputs.ai_private }}
-          VENDRE_SECRET: ${{ steps.inspect.outputs.vendre_secret }}
-          VENDRE_BASE_URL: ${{ steps.inspect.outputs.vendre_base_url }}
-          SECRET_ACCESS: ${{ steps.inspect.outputs.secret_access }}
-        run: |
-          set -euo pipefail
-          cat > "$RESULT_PATH" <<EOF
-          # AI Arman Tool Registry GCP preflight
-
-          - Observed at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-          - Source SHA: \`$GITHUB_SHA\`
-          - AI service: \`$AI_SERVICE\`
-          - AI runtime service account: \`$AI_RUNTIME\`
-          - AI canonical URL: \`$AI_URL\`
-          - AI private IAM: **$AI_PRIVATE**
-          - Tracking service: \`$TRACKING_SERVICE\`
-          - Tracking runtime service account: \`$TRACKING_RUNTIME\`
-          - Tracking canonical URL: \`$TRACKING_URL\`
-          - Tracking public IAM: **$TRACKING_PUBLIC**
-          - Existing Vendre secret reference found on tracking service: **$([[ -n "$VENDRE_SECRET" ]] && echo true || echo false)**
-          - Vendre secret reference name: \`${VENDRE_SECRET:-none}\`
-          - Existing Vendre base URL found: **$([[ -n "$VENDRE_BASE_URL" ]] && echo true || echo false)**
-          - Vendre base URL: \`${VENDRE_BASE_URL:-none}\`
-          - AI runtime explicit accessor binding on that Vendre secret: **$SECRET_ACCESS**
-          - Secret values read: **false**
-          - GCP mutations performed: **none**
-          EOF
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add "$RESULT_PATH"
-          git commit -m 'Record AI Arman tool registry GCP preflight'
-          git push origin HEAD:feature/ai-arman-foundation-v1
+          echo "AI_RUNTIME=$AI_RUNTIME"
+          echo "AI_URL=$AI_URL"
+          echo "AI_PRIVATE=$AI_PRIVATE"
+          echo "TRACKING_RUNTIME=$TRACKING_RUNTIME"
+          echo "TRACKING_URL=$TRACKING_URL"
+          echo "TRACKING_PUBLIC=$TRACKING_PUBLIC"
+          echo "VENDRE_SECRET_FOUND=$([[ -n "$VENDRE_SECRET" ]] && echo true || echo false)"
+          echo "VENDRE_SECRET_NAME=${VENDRE_SECRET:-none}"
+          echo "VENDRE_BASE_URL_FOUND=$([[ -n "$VENDRE_BASE_URL" ]] && echo true || echo false)"
+          echo "VENDRE_BASE_URL=${VENDRE_BASE_URL:-none}"
+          echo "AI_RUNTIME_VENDRE_SECRET_ACCESS=$SECRET_ACCESS"
+          echo "SECRET_VALUES_READ=false"
+          echo "GCP_MUTATIONS=false"
