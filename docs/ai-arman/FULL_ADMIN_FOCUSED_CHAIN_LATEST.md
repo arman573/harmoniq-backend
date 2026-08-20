@@ -1,0 +1,21 @@
+# AI Arman focused full-admin chain
+
+- Verified at: 2026-08-20T16:24:59Z
+- Frozen functional AI source: `d7d56949eb3c4c9985df73beb52001665459cba8`
+- Overall: **FAIL**
+- Returns candidate deploy: **failure**
+- Returns candidate revision: `none`
+- AI image build: **skipped**
+- AI candidate deploy: **skipped**
+- AI candidate revision: `none`
+- Private AI invocation token step: **skipped**
+- HQR-2494077 read probe: **skipped** HTTP `none`
+- case.read ok: **false**
+- case.order_context.read ok: **false**
+- Explicit pause probe: **skipped** HTTP `none`
+- Pause blocked before mutation: **false**
+- AI-side writes enabled: **false**
+- Returns-side writes enabled: **false**
+- Production traffic unchanged: **true**
+- Secret values recorded: **false**
+- Real customer writes executed by verifier: **none**
