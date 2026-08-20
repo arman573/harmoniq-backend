@@ -40,7 +40,7 @@ export class AiArmanAdminCommandPlannerService {
 
     return {
       caseId,
-      readCase: READ_CASE_PATTERN.test(text) || writeAction !== null,
+      readCase: READ_CASE_PATTERN.test(text) || pause || complete,
       readOrderContext: ORDER_CONTEXT_PATTERN.test(text),
       writeAction,
       explicitAdminApproval,
