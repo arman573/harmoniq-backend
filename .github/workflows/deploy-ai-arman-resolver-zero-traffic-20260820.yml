@@ -1,9 +1,9 @@
 name: Deploy AI Arman resolver zero traffic candidate 20260820
 
 on:
-  push:
+  pull_request:
     branches:
-      - ops/ai-arman-resolver-candidate-20260820
+      - feature/ai-arman-foundation-v1
 
 permissions:
   contents: read
@@ -26,6 +26,7 @@ env:
 
 jobs:
   deploy:
+    if: github.event.pull_request.head.ref == 'ops/ai-arman-resolver-candidate-20260820'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
