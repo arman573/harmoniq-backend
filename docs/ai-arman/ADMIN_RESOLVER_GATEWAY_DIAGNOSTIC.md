@@ -1,6 +1,6 @@
 # AI Arman resolver gateway diagnostic
 
-- Checked at: 2026-08-20T18:05:31Z
+- Checked at: 2026-08-20T18:10:13Z
 - Candidate revision: `harmoniq-ai-arman-beta0-resolver-3298af83-1`
 - Gateway enabled: `missing`
 - Gateway base URL present: **false**
