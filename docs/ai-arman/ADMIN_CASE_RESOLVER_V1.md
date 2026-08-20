@@ -20,7 +20,7 @@ EXECUTE (write)
   -> require explicit admin approval
   -> accept exactly one allowlisted typed action
   -> execute through ReturnsAdminGatewayClient
-  -> reuse the existing Returns Module admin route
+  -> reuse the existing Returns Module admin route/domain logic
   -> read the case back after the write
   -> report whether post-write verification succeeded
 ```
@@ -33,7 +33,7 @@ The resolver endpoints are guarded by:
 
 `AI_ARMAN_ADMIN_RESOLVER_ENABLED`
 
-Default is OFF. Merely including the resolver code in a container does not activate its routes.
+Default is OFF and is covered by a dedicated unit test. Merely including the resolver code in a container does not activate its routes.
 
 Candidate/internal endpoints:
 
@@ -64,7 +64,9 @@ If model analysis or reply drafting is unavailable, prepare may still succeed wi
 
 ## Execute contract
 
-One action per request.
+One action per request. `approved` must be exactly `true`. Missing/false approval executes no write.
+
+Unsupported action names are rejected before any gateway call.
 
 Example customer message:
 
@@ -78,111 +80,146 @@ Example customer message:
 }
 ```
 
-Queue actions:
+Example return status:
 
 ```json
 {
   "caseId": "HQR-12345",
   "approved": true,
-  "action": "case.pause"
+  "action": "case.return_status.set",
+  "status": "return_received",
+  "note": "Returen verifierad som mottagen."
 }
 ```
 
-or:
+Example product decision:
 
 ```json
 {
   "caseId": "HQR-12345",
   "approved": true,
-  "action": "case.complete"
+  "action": "case.product_decision.set",
+  "productIndex": 0,
+  "decision": "approved",
+  "adminNote": "Godkänt efter manuell granskning."
 }
 ```
 
-`approved` must be exactly `true`. A missing/false approval executes no write.
+A rejected product decision additionally requires a non-empty `rejectReason`.
 
-Unsupported action names are rejected before any gateway call.
+Example return label:
+
+```json
+{
+  "caseId": "HQR-12345",
+  "approved": true,
+  "action": "case.return_label.create"
+}
+```
+
+No customer address, carrier payload or shipment fields are accepted from the resolver request. The Returns Module constructs those from its authoritative case/Vendre data.
 
 ## Typed resolver actions in v1
 
 ### `case.customer_message.send`
 
-Uses the existing Returns Module route:
+Uses `POST /api/admin/cases/:caseId/messages/send` with fixed `{ subject, message }` payload.
 
-`POST /api/admin/cases/:caseId/messages/send`
-
-with the fixed payload:
-
-```json
-{
-  "subject": "...",
-  "message": "..."
-}
-```
-
-The Returns Module remains responsible for the real email, case message persistence, communication state, status history and Vendre communication logging.
-
-AI Arman does not duplicate those side effects.
+The Returns Module remains responsible for email, case message persistence, communication state, status history and Vendre communication logging.
 
 ### `case.pause`
 
-Uses the existing work-queue route with the fixed waiting state.
+Uses the existing work-queue route with fixed state `waiting`.
 
 ### `case.complete`
 
-Uses the existing work-queue route with the fixed completed state.
+Uses the existing work-queue route with fixed state `completed`.
+
+### `case.return_status.set`
+
+Uses `POST /api/admin/cases/:caseId/status`.
+
+AI Arman mirrors the Returns Module's exact return-status allowlist. The Returns Module remains responsible for GCS state, communication flags, Vendre status updates and its pre-dispatch withdrawal guards.
+
+The resolver marks this as requiring a human decision as well as explicit execute approval.
+
+### `case.product_decision.set`
+
+Uses `PATCH /api/admin/cases/:caseId/products/:productIndex/decision`.
+
+Allowed decisions are exactly `pending`, `approved` and `rejected`. Rejecting requires a reason. The Returns Module remains responsible for product state, aggregate decision summary, history and persistence.
+
+This action is a human decision executor. The model is not authorized to independently approve or reject a claim/product.
+
+### `case.return_label.create`
+
+Uses `POST /api/admin/cases/:caseId/return-label` with an empty JSON body.
+
+The Returns Module loads the case, checks case-type eligibility/cost policy, enriches authoritative order/address facts from Vendre when needed, creates the nShift shipment, builds the protected customer download and persists label state/history.
+
+AI Arman never constructs the nShift/address payload and the action requires explicit human approval.
 
 ## Read-back verification
 
-After a successful write, the resolver executes `case.read` for the same HQR case.
+After every successful resolver write, `case.read` is executed for the same HQR case.
 
-The result explicitly separates:
+The response explicitly separates:
 
-- `writeExecuted` — whether the typed write succeeded;
-- `verifiedAfterWrite` — whether authoritative case read-back also succeeded.
+- `writeExecuted` — the typed write succeeded;
+- `verifiedAfterWrite` — authoritative case read-back also succeeded.
 
 A write that succeeded but could not be read back must never be represented as fully verified.
 
 ## Safety boundaries
 
-Resolver v1 does NOT support:
+Resolver v1 still does NOT support:
 
 - refunds;
 - compensation/goodwill;
-- claim approval or denial;
+- automatic claim approval or denial by the model;
 - replacement-product decisions;
 - payment-state changes;
-- cancellation;
-- unrestricted status mutation;
-- return-label creation;
+- order cancellation;
+- unrestricted arbitrary status values;
+- browser/model-supplied return-label address or nShift payloads;
 - arbitrary Vendre/Gmail/nShift/GCS calls;
 - arbitrary Returns Module routes.
 
-Those capabilities may only be added after their exact existing Returns Module contracts are inspected and represented as narrow named typed actions with explicit policy/tests.
+Human-approved product decisions/status changes are execution of an explicit admin choice, not model autonomy.
 
 ## Current implementation
 
 - `src/ai-arman/admin/admin-case-resolver.config.ts`
+- `src/ai-arman/admin/admin-case-resolver.config.spec.ts`
 - `src/ai-arman/admin/admin-case-resolver.controller.ts`
 - `src/ai-arman/admin/admin-case-resolver.service.ts`
 - `src/ai-arman/admin/admin-case-resolver.service.spec.ts`
 - `src/ai-arman/admin/admin-action.service.ts`
 - `src/ai-arman/admin/admin-action.service.spec.ts`
+- `src/ai-arman/admin/admin-return-resolution-actions.service.ts`
+- `src/ai-arman/admin/admin-return-resolution-actions.service.spec.ts`
 
 The resolver is wired only into `AiArmanCandidateModule` at this stage.
 
+## Verified Returns Module contracts used for the expansion
+
+Read-only code inspection was performed against Returns PR #122 branch `feature/ai-arman-full-admin-access`.
+
+Verified domain routes:
+
+- customer message: `/api/admin/cases/:caseId/messages/send`;
+- return status: `/api/admin/cases/:caseId/status`;
+- product decision: `/api/admin/cases/:caseId/products/:productIndex/decision`;
+- return label: `/api/admin/cases/:caseId/return-label`.
+
+No Returns Module source file was changed by this resolver implementation.
+
 ## Verification checkpoint
 
-Core resolver implementation exact-head CI before this documentation update:
+Initial three-action resolver core at source `91e985a43e009d6d6e193938a443f8607eace2fd` passed workflow run `32396789876` completely: unit, TypeScript, AI candidate container/smoke and customer gateway boundary smoke.
 
-- source head: `91e985a43e009d6d6e193938a443f8607eace2fd`
-- workflow run: `32396789876`
-- unit tests: PASS
-- TypeScript build: PASS
-- isolated AI candidate container build/smoke: PASS
-- isolated customer gateway container build/boundary smoke: PASS
-
-A new exact-head CI run is required after final documentation/contract updates.
+The expanded resolver requires a new exact-head CI run after final docs/registry updates.
 
 ## Next expansion rule
 
-To make AI Arman resolve a wider percentage of cases, inspect the current Returns Module implementation one capability at a time, then add only exact typed actions. Prefer deterministic domain operations already implemented in Returns over new duplicated AI-side business logic.
+To raise the percentage of cases AI Arman can resolve, inspect each current Returns Module capability before adding it. Refunds, compensation, payment/order changes and other high-impact actions need separate typed contracts and explicit business policy; they must never be inferred from generic full-admin gateway access.
