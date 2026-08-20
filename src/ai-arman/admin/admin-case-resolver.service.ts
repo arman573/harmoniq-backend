@@ -5,16 +5,24 @@ import {
 } from './admin-action.service';
 import { AiArmanAdminCaseAssistantFastService } from './admin-case-assistant-fast.service';
 import { AiArmanAdminReplyDraftService } from './admin-reply-draft.service';
+import {
+  AiArmanAdminReturnResolutionActionsService,
+  type AiArmanReturnResolutionActionResult,
+} from './admin-return-resolution-actions.service';
 
 export type AiArmanResolverExecuteAction =
   | 'case.customer_message.send'
   | 'case.pause'
-  | 'case.complete';
+  | 'case.complete'
+  | 'case.return_status.set'
+  | 'case.product_decision.set'
+  | 'case.return_label.create';
 
 @Injectable()
 export class AiArmanAdminCaseResolverService {
   constructor(
     private readonly actions: AiArmanAdminActionService,
+    private readonly returnActions: AiArmanAdminReturnResolutionActionsService,
     private readonly assistant: AiArmanAdminCaseAssistantFastService,
     private readonly replyDraft: AiArmanAdminReplyDraftService,
   ) {}
@@ -83,9 +91,33 @@ export class AiArmanAdminCaseResolverService {
         {
           action: 'case.customer_message.send' as const,
           requiresExplicitApproval: true,
+          requiresHumanDecision: false,
         },
-        { action: 'case.pause' as const, requiresExplicitApproval: true },
-        { action: 'case.complete' as const, requiresExplicitApproval: true },
+        {
+          action: 'case.pause' as const,
+          requiresExplicitApproval: true,
+          requiresHumanDecision: false,
+        },
+        {
+          action: 'case.complete' as const,
+          requiresExplicitApproval: true,
+          requiresHumanDecision: false,
+        },
+        {
+          action: 'case.return_status.set' as const,
+          requiresExplicitApproval: true,
+          requiresHumanDecision: true,
+        },
+        {
+          action: 'case.product_decision.set' as const,
+          requiresExplicitApproval: true,
+          requiresHumanDecision: true,
+        },
+        {
+          action: 'case.return_label.create' as const,
+          requiresExplicitApproval: true,
+          requiresHumanDecision: true,
+        },
       ],
       sendsCustomerMessage: false,
       executesWrites: false,
@@ -139,7 +171,9 @@ export class AiArmanAdminCaseResolverService {
     };
   }
 
-  private executeAction(input: NormalizedExecuteInput): Promise<AiArmanAdminActionResult> {
+  private executeAction(
+    input: NormalizedExecuteInput,
+  ): Promise<AiArmanAdminActionResult | AiArmanReturnResolutionActionResult> {
     switch (input.action) {
       case 'case.customer_message.send':
         return this.actions.sendCustomerMessage(
@@ -152,6 +186,24 @@ export class AiArmanAdminCaseResolverService {
         return this.actions.pauseCase(input.caseId, true);
       case 'case.complete':
         return this.actions.completeCase(input.caseId, true);
+      case 'case.return_status.set':
+        return this.returnActions.setReturnStatus(
+          input.caseId,
+          input.status,
+          input.note,
+          true,
+        );
+      case 'case.product_decision.set':
+        return this.returnActions.setProductDecision(
+          input.caseId,
+          input.productIndex,
+          input.decision,
+          input.rejectReason,
+          input.adminNote,
+          true,
+        );
+      case 'case.return_label.create':
+        return this.returnActions.createReturnLabel(input.caseId, true);
     }
   }
 }
@@ -167,7 +219,23 @@ type NormalizedExecuteInput =
   | {
       caseId: string;
       approved: boolean;
-      action: 'case.pause' | 'case.complete';
+      action: 'case.pause' | 'case.complete' | 'case.return_label.create';
+    }
+  | {
+      caseId: string;
+      approved: boolean;
+      action: 'case.return_status.set';
+      status: string;
+      note: string;
+    }
+  | {
+      caseId: string;
+      approved: boolean;
+      action: 'case.product_decision.set';
+      productIndex: number;
+      decision: string;
+      rejectReason: string;
+      adminNote: string;
     };
 
 function normalizeExecuteInput(value: unknown): NormalizedExecuteInput | null {
@@ -176,7 +244,11 @@ function normalizeExecuteInput(value: unknown): NormalizedExecuteInput | null {
   const approved = value.approved === true;
   if (!caseId) return null;
 
-  if (value.action === 'case.pause' || value.action === 'case.complete') {
+  if (
+    value.action === 'case.pause' ||
+    value.action === 'case.complete' ||
+    value.action === 'case.return_label.create'
+  ) {
     return { caseId, approved, action: value.action };
   }
 
@@ -190,6 +262,33 @@ function normalizeExecuteInput(value: unknown): NormalizedExecuteInput | null {
       action: 'case.customer_message.send',
       subject,
       message,
+    };
+  }
+
+  if (value.action === 'case.return_status.set') {
+    const status = clean(value.status, 80);
+    if (!status) return null;
+    return {
+      caseId,
+      approved,
+      action: 'case.return_status.set',
+      status,
+      note: clean(value.note, 500),
+    };
+  }
+
+  if (value.action === 'case.product_decision.set') {
+    const productIndex = Number(value.productIndex);
+    const decision = clean(value.decision, 40);
+    if (!Number.isInteger(productIndex) || productIndex < 0 || !decision) return null;
+    return {
+      caseId,
+      approved,
+      action: 'case.product_decision.set',
+      productIndex,
+      decision,
+      rejectReason: clean(value.rejectReason, 500),
+      adminNote: clean(value.adminNote, 500),
     };
   }
 
