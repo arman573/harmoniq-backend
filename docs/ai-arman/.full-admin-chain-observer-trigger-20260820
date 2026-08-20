@@ -1,1 +1,0 @@
-Trigger read-only observation of the full-admin read-chain candidates. No deploy, traffic, IAM, secret, or case mutation is allowed.
