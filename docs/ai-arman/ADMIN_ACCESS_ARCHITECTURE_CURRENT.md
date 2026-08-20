@@ -37,6 +37,19 @@ The returns gateway is the technical full-access boundary. AI Arman's typed acti
 
 AI Arman must not expose a generic model-controlled `method + path + body` tool. The model may interpret the administrator's intent, but backend code selects a named action and its fixed route/payload contract.
 
+## Read fallback boundary
+
+The existing `AiArmanAdminToolRegistryService` is intentionally retained for read-only support capabilities. It is not a second admin write path.
+
+Current orchestrator behavior is:
+
+- authoritative admin case/order-context reads prefer typed gateway actions when the command plan requests them;
+- if authoritative `case.order_context.read` is unavailable and a verified `orderId` exists, the existing read-only Vendre/order and tracking clients may be used as a fallback;
+- product-intelligence reads continue through the existing Product Intelligence client;
+- all admin writes still go exclusively through typed `AiArmanAdminActionService` actions and `ReturnsAdminGatewayClient`.
+
+Do not remove these read fallbacks while they are still used by the orchestrator. Do not extend them into a parallel admin write system.
+
 ## Canonical AI-side configuration
 
 The admin integration uses these AI-side environment variables:
@@ -94,7 +107,8 @@ Admin companion -> admin action policy -> full-admin gateway -> admin capabiliti
 
 ## Development rules
 
-- Keep `ReturnsAdminGatewayClient` plus typed actions as the canonical admin path.
+- Keep `ReturnsAdminGatewayClient` plus typed actions as the canonical admin write path.
+- Keep the existing admin read fallbacks only where the orchestrator uses them for verified order/tracking/product reads.
 - Keep customer-facing verified read clients where they enforce customer scope.
 - Add new admin abilities as small named actions with tests for route, payload, read/write classification and approval semantics.
 - Never allow model output to construct arbitrary internal URLs, HTTP methods or mutation payloads.
