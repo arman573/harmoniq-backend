@@ -1,0 +1,216 @@
+name: Verify AI Arman returns full admin read chain once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  AI_SERVICE: harmoniq-ai-arman-beta0
+  RETURNS_SERVICE: harmoniq-returns-api
+  AI_SOURCE_SHA: d7d56949eb3c4c9985df73beb52001665459cba8
+  RETURNS_GATEWAY_REVISION: harmoniq-returns-api-aidiag-5beef7e5-4
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  RESULT_PATH: docs/ai-arman/RETURNS_FULL_ADMIN_READ_CHAIN_LATEST.md
+
+jobs:
+  verify:
+    if: github.event.head_commit.message == 'Verify AI Arman returns full admin read chain once'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.AI_SOURCE_SHA }}
+          fetch-depth: 1
+      - name: Guard frozen source
+        run: test "$(git rev-parse HEAD)" = "$AI_SOURCE_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Re-run frozen AI source gate
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test -- --runInBand
+          npm run build
+          docker build -f Dockerfile.ai-arman-candidate -t ai-arman-full-admin-read:verify .
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+      - name: Snapshot protected production traffic
+        run: |
+          set -euo pipefail
+          for service in "$AI_SERVICE" "$RETURNS_SERVICE"; do
+            gcloud run services describe "$service" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/$service-before.json"
+            jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent}] | sort_by(.revisionName)' "$RUNNER_TEMP/$service-before.json" > "$RUNNER_TEMP/$service-positive-before.json"
+          done
+          RETURNS_CANONICAL_URL="$(jq -r '.status.url' "$RUNNER_TEMP/$RETURNS_SERVICE-before.json")"
+          AI_CANONICAL_URL="$(jq -r '.status.url' "$RUNNER_TEMP/$AI_SERVICE-before.json")"
+          echo "RETURNS_CANONICAL_URL=$RETURNS_CANONICAL_URL" >> "$GITHUB_ENV"
+          echo "AI_CANONICAL_URL=$AI_CANONICAL_URL" >> "$GITHUB_ENV"
+          gcloud run revisions describe "$RETURNS_GATEWAY_REVISION" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-source-revision.json"
+          RETURNS_IMAGE="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/returns-source-revision.json")"
+          test -n "$RETURNS_IMAGE"
+          echo "RETURNS_IMAGE=$RETURNS_IMAGE" >> "$GITHUB_ENV"
+      - name: Generate ephemeral gateway token
+        run: |
+          set -euo pipefail
+          TOKEN="$(openssl rand -hex 32)"
+          echo "::add-mask::$TOKEN"
+          echo "RETURNS_GATEWAY_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+      - name: Deploy zero traffic returns gateway read candidate
+        id: returns
+        run: |
+          set -euo pipefail
+          TAG="aifullread-${GITHUB_RUN_NUMBER}"
+          gcloud run deploy "$RETURNS_SERVICE" \
+            --project "$PROJECT_ID" --region "$REGION" --platform managed \
+            --image "$RETURNS_IMAGE" \
+            --revision-suffix "aifr-${AI_SOURCE_SHA:0:8}-${GITHUB_RUN_NUMBER}" \
+            --tag "$TAG" --no-traffic \
+            --update-env-vars "AI_ARMAN_FULL_ADMIN_ENABLED=true,AI_ARMAN_FULL_ADMIN_WRITE_ENABLED=false,AI_ARMAN_FULL_ADMIN_ACCESS_TOKEN=$RETURNS_GATEWAY_TOKEN,AI_ARMAN_FULL_ADMIN_TIMEOUT_MS=30000" \
+            --quiet
+          gcloud run services describe "$RETURNS_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-after-deploy.json"
+          REV="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/returns-after-deploy.json" | head -n1)"
+          URL="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/returns-after-deploy.json" | head -n1)"
+          test -n "$REV"; test -n "$URL"
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/returns-after-deploy.json")" = '0'
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+      - name: Build and push immutable AI image
+        id: image
+        run: |
+          set -euo pipefail
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/harmoniq-containers/$AI_SERVICE:fulladminread-${AI_SOURCE_SHA:0:12}-$GITHUB_RUN_ID"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build -f Dockerfile.ai-arman-candidate -t "$IMAGE" .
+          docker push "$IMAGE"
+          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image=$REGION-docker.pkg.dev/$PROJECT_ID/harmoniq-containers/$AI_SERVICE@$DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Deploy private zero traffic AI full admin read candidate
+        id: ai
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          RETURNS_URL: ${{ steps.returns.outputs.url }}
+        run: |
+          set -euo pipefail
+          TAG="fulladminread-${AI_SOURCE_SHA:0:8}-${GITHUB_RUN_NUMBER}"
+          gcloud run deploy "$AI_SERVICE" \
+            --project "$PROJECT_ID" --region "$REGION" --platform managed \
+            --image "$IMAGE" \
+            --revision-suffix "far-${AI_SOURCE_SHA:0:8}-${GITHUB_RUN_NUMBER}" \
+            --tag "$TAG" --no-traffic \
+            --update-env-vars "AI_ARMAN_ADMIN_ASSISTANT_ENABLED=true,AI_ARMAN_ADMIN_LEARNING_ENABLED=false,AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED=true,AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL=$RETURNS_URL,AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE=$RETURNS_CANONICAL_URL,AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN=$RETURNS_GATEWAY_TOKEN,AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED=false,AI_ARMAN_MODEL_PROMOTION_ENABLED=false,AI_ARMAN_MODEL_SHADOW_ENABLED=false" \
+            --quiet
+          gcloud run services describe "$AI_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-after-deploy.json"
+          REV="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/ai-after-deploy.json" | head -n1)"
+          URL="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/ai-after-deploy.json" | head -n1)"
+          test -n "$REV"; test -n "$URL"
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai-after-deploy.json")" = '0'
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@v3
+        id: idtoken
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ env.AI_CANONICAL_URL }}
+          create_credentials_file: false
+      - name: Verify real enriched read without browser order id
+        id: read
+        env:
+          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+          AI_URL: ${{ steps.ai.outputs.url }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ID_TOKEN"
+          cat > "$RUNNER_TEMP/read.json" <<'JSON'
+          {"caseId":"HQR-2494077","caseType":"support","status":"waiting_admin","adminQuestion":"Kontrollera order, leverans och tracking för ärendet. Gör kontrollen själv.","messages":[],"discussion":[]}
+          JSON
+          STATUS="$(curl --max-time 40 -sS -o "$RUNNER_TEMP/read-response.json" -w '%{http_code}' -H "Authorization: Bearer $ID_TOKEN" -H 'Content-Type: application/json' --data @"$RUNNER_TEMP/read.json" "$AI_URL/ai-arman/internal/admin-assistant/assist")"
+          case "$STATUS" in 200|201) ;; *) cat "$RUNNER_TEMP/read-response.json" >&2; exit 1 ;; esac
+          jq -e '.ok==true and .verifiedFactsAvailable==true and .writeExecuted==false and ([.adminActions[]? | select(.action=="case.read" and .ok==true)] | length)>=1 and ([.adminActions[]? | select(.action=="case.order_context.read" and .ok==true)] | length)>=1' "$RUNNER_TEMP/read-response.json" >/dev/null
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+      - name: Verify pause command is blocked before mutation
+        id: writeblock
+        env:
+          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+          AI_URL: ${{ steps.ai.outputs.url }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/write.json" <<'JSON'
+          {"caseId":"HQR-2494077","caseType":"support","status":"waiting_admin","adminQuestion":"Pausa HQR-2494077.","messages":[],"discussion":[]}
+          JSON
+          STATUS="$(curl --max-time 40 -sS -o "$RUNNER_TEMP/write-response.json" -w '%{http_code}' -H "Authorization: Bearer $ID_TOKEN" -H 'Content-Type: application/json' --data @"$RUNNER_TEMP/write.json" "$AI_URL/ai-arman/internal/admin-assistant/assist")"
+          case "$STATUS" in 200|201) ;; *) cat "$RUNNER_TEMP/write-response.json" >&2; exit 1 ;; esac
+          jq -e '.ok==true and .writeExecuted==false and ([.adminActions[]? | select(.action=="case.pause" and .ok==false and .error=="returns_admin_gateway_write_disabled")] | length)==1' "$RUNNER_TEMP/write-response.json" >/dev/null
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+      - name: Verify protected traffic unchanged
+        env:
+          AI_REV: ${{ steps.ai.outputs.revision }}
+          RETURNS_REV: ${{ steps.returns.outputs.revision }}
+        run: |
+          set -euo pipefail
+          for service in "$AI_SERVICE" "$RETURNS_SERVICE"; do
+            gcloud run services describe "$service" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/$service-final.json"
+            jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent}] | sort_by(.revisionName)' "$RUNNER_TEMP/$service-final.json" > "$RUNNER_TEMP/$service-positive-final.json"
+            cmp "$RUNNER_TEMP/$service-positive-before.json" "$RUNNER_TEMP/$service-positive-final.json"
+          done
+          test "$(jq -r --arg r "$AI_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/$AI_SERVICE-final.json")" = '0'
+          test "$(jq -r --arg r "$RETURNS_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/$RETURNS_SERVICE-final.json")" = '0'
+      - name: Record checkpoint
+        env:
+          AI_REV: ${{ steps.ai.outputs.revision }}
+          AI_URL: ${{ steps.ai.outputs.url }}
+          RETURNS_REV: ${{ steps.returns.outputs.revision }}
+          RETURNS_URL: ${{ steps.returns.outputs.url }}
+          READ_HTTP: ${{ steps.read.outputs.status }}
+          WRITE_HTTP: ${{ steps.writeblock.outputs.status }}
+        run: |
+          set -euo pipefail
+          git fetch origin feature/ai-arman-foundation-v1
+          git checkout -B result origin/feature/ai-arman-foundation-v1
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman returns full-admin read chain
+
+          - Verified at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Frozen AI source: \`$AI_SOURCE_SHA\`
+          - Returns gateway source revision: \`$RETURNS_GATEWAY_REVISION\`
+          - Overall: **PASS**
+          - AI candidate: \`$AI_REV\` at **0%**
+          - Returns candidate: \`$RETURNS_REV\` at **0%**
+          - Real HQR-2494077 enriched read HTTP: \`$READ_HTTP\`
+          - case.read: **PASS**
+          - case.order_context.read: **PASS**
+          - Browser/orderId inference required: **false**
+          - Explicit pause while AI writes disabled HTTP: \`$WRITE_HTTP\`
+          - Pause mutation executed: **false**
+          - AI-side write kill switch: **PASS**
+          - Returns-side write kill switch: **OFF / writes disabled**
+          - AI production traffic: **unchanged**
+          - Returns production traffic: **unchanged**
+          - Customer messages sent: **none**
+          - Real writes executed: **none**
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record AI Arman returns full admin read chain'
+          git push origin HEAD:feature/ai-arman-foundation-v1
