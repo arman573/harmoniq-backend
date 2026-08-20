@@ -1,0 +1,93 @@
+name: Observe AI Arman returns full admin read chain once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  AI_SERVICE: harmoniq-ai-arman-beta0
+  RETURNS_SERVICE: harmoniq-returns-api
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  RESULT_PATH: docs/ai-arman/RETURNS_FULL_ADMIN_READ_CHAIN_OBSERVE_LATEST.md
+
+jobs:
+  observe:
+    if: github.event.head_commit.message == 'Observe AI Arman returns full admin read chain once'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+          fetch-depth: 1
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+      - name: Observe candidate revisions only
+        id: inspect
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$AI_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai.json"
+          gcloud run services describe "$RETURNS_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns.json"
+          AI_REV="$(jq -r '[.status.traffic[]? | select((.tag // "") | startswith("fulladminread-"))] | last | .revisionName // empty' "$RUNNER_TEMP/ai.json")"
+          AI_URL="$(jq -r '[.status.traffic[]? | select((.tag // "") | startswith("fulladminread-"))] | last | .url // empty' "$RUNNER_TEMP/ai.json")"
+          RETURNS_REV="$(jq -r '[.status.traffic[]? | select((.tag // "") | startswith("aifullread-"))] | last | .revisionName // empty' "$RUNNER_TEMP/returns.json")"
+          RETURNS_URL="$(jq -r '[.status.traffic[]? | select((.tag // "") | startswith("aifullread-"))] | last | .url // empty' "$RUNNER_TEMP/returns.json")"
+          AI_PERCENT="$(jq -r --arg r "$AI_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai.json")"
+          RETURNS_PERCENT="$(jq -r --arg r "$RETURNS_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/returns.json")"
+          AI_POSITIVE="$(jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent}] | sort_by(.revisionName)' "$RUNNER_TEMP/ai.json")"
+          RETURNS_POSITIVE="$(jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent}] | sort_by(.revisionName)' "$RUNNER_TEMP/returns.json")"
+          echo "ai_rev=$AI_REV" >> "$GITHUB_OUTPUT"
+          echo "ai_url=$AI_URL" >> "$GITHUB_OUTPUT"
+          echo "returns_rev=$RETURNS_REV" >> "$GITHUB_OUTPUT"
+          echo "returns_url=$RETURNS_URL" >> "$GITHUB_OUTPUT"
+          echo "ai_percent=$AI_PERCENT" >> "$GITHUB_OUTPUT"
+          echo "returns_percent=$RETURNS_PERCENT" >> "$GITHUB_OUTPUT"
+          echo "ai_positive=$AI_POSITIVE" >> "$GITHUB_OUTPUT"
+          echo "returns_positive=$RETURNS_POSITIVE" >> "$GITHUB_OUTPUT"
+      - name: Record observation
+        env:
+          AI_REV: ${{ steps.inspect.outputs.ai_rev }}
+          AI_URL: ${{ steps.inspect.outputs.ai_url }}
+          RETURNS_REV: ${{ steps.inspect.outputs.returns_rev }}
+          RETURNS_URL: ${{ steps.inspect.outputs.returns_url }}
+          AI_PERCENT: ${{ steps.inspect.outputs.ai_percent }}
+          RETURNS_PERCENT: ${{ steps.inspect.outputs.returns_percent }}
+          AI_POSITIVE: ${{ steps.inspect.outputs.ai_positive }}
+          RETURNS_POSITIVE: ${{ steps.inspect.outputs.returns_positive }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman returns full-admin read-chain observation
+
+          - Observed at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - AI candidate revision: \`${AI_REV:-none}\`
+          - AI candidate URL present: **$([[ -n "$AI_URL" ]] && echo true || echo false)**
+          - AI candidate traffic: \`${AI_PERCENT:-0}%\`
+          - Returns candidate revision: \`${RETURNS_REV:-none}\`
+          - Returns candidate URL present: **$([[ -n "$RETURNS_URL" ]] && echo true || echo false)**
+          - Returns candidate traffic: \`${RETURNS_PERCENT:-0}%\`
+          - AI positive traffic snapshot: \`$AI_POSITIVE\`
+          - Returns positive traffic snapshot: \`$RETURNS_POSITIVE\`
+          - GCP mutations performed by observer: **none**
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record AI Arman full admin chain observation'
+          git push origin HEAD:feature/ai-arman-foundation-v1
