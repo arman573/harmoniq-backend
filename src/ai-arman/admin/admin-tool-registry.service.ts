@@ -29,11 +29,9 @@ export type AiArmanAdminToolResult = {
 
 @Injectable()
 export class AiArmanAdminToolRegistryService {
-  constructor(
-    private readonly tracking: TrackingReadClient,
-    private readonly orders: VendreOrderReadClient,
-    private readonly productIntelligence: ProductIntelligenceClient,
-  ) {}
+  private readonly tracking = new TrackingReadClient();
+  private readonly orders = new VendreOrderReadClient();
+  private readonly productIntelligence = new ProductIntelligenceClient();
 
   list(): AiArmanAdminToolDescriptor[] {
     return [
