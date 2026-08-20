@@ -64,6 +64,69 @@ describe('AiArmanAdminActionService', () => {
     );
   });
 
+  it('maps an approved customer message to the existing returns send route', async () => {
+    const gateway = {
+      execute: jest.fn().mockResolvedValue({
+        ok: true,
+        configured: true,
+        durationMs: 15,
+        upstreamStatus: 200,
+        requestId: 'req-message',
+        method: 'POST',
+        path: '/api/admin/cases/HQR-12345/messages/send',
+        contentType: 'application/json',
+        isWrite: true,
+        body: { ok: true },
+      }),
+    } as any;
+    const service = new AiArmanAdminActionService(gateway);
+
+    const result = await service.sendCustomerMessage(
+      'hqr-12345',
+      'Angående ditt ärende',
+      'Hej! Vi har nu kontrollerat ditt ärende.',
+      true,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      action: 'case.customer_message.send',
+      caseId: 'HQR-12345',
+      readOnly: false,
+      executed: true,
+    });
+    expect(gateway.execute).toHaveBeenCalledWith({
+      method: 'POST',
+      path: '/api/admin/cases/HQR-12345/messages/send',
+      body: {
+        subject: 'Angående ditt ärende',
+        message: 'Hej! Vi har nu kontrollerat ditt ärende.',
+      },
+      reason: 'Send explicitly approved customer message for HQR-12345',
+      explicitAdminApproval: true,
+    });
+  });
+
+  it('rejects an invalid customer message before the gateway is called', async () => {
+    const gateway = { execute: jest.fn() } as any;
+    const service = new AiArmanAdminActionService(gateway);
+
+    const result = await service.sendCustomerMessage(
+      'HQR-12345',
+      '<b></b>',
+      '<div></div>',
+      true,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      action: 'case.customer_message.send',
+      executed: false,
+      error: 'invalid_customer_message',
+    });
+    expect(gateway.execute).not.toHaveBeenCalled();
+  });
+
   it('maps pause to the exact work queue route and forwards explicit approval', async () => {
     const gateway = {
       execute: jest.fn().mockResolvedValue({
