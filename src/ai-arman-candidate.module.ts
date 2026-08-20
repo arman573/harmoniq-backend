@@ -8,6 +8,9 @@ import { AiArmanAdminCaseAssistantOrchestratorService } from './ai-arman/admin/a
 import { AiArmanAdminCaseAssistantPageService } from './ai-arman/admin/admin-case-assistant-page.service';
 import { AiArmanAdminCaseAssistantService } from './ai-arman/admin/admin-case-assistant.service';
 import { AiArmanAdminCaseAssistantV2PageService } from './ai-arman/admin/admin-case-assistant-v2-page.service';
+import { AiArmanAdminCaseResolverConfig } from './ai-arman/admin/admin-case-resolver.config';
+import { AiArmanAdminCaseResolverController } from './ai-arman/admin/admin-case-resolver.controller';
+import { AiArmanAdminCaseResolverService } from './ai-arman/admin/admin-case-resolver.service';
 import { AiArmanAdminCommandPlannerService } from './ai-arman/admin/admin-command-planner.service';
 import { AiArmanAdminLearningStore } from './ai-arman/admin/admin-learning.store';
 import { AiArmanAdminReplyDraftConfig } from './ai-arman/admin/admin-reply-draft.config';
@@ -39,6 +42,7 @@ import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/c
   imports: [AiArmanModule],
   controllers: [
     AiArmanAdminCaseAssistantController,
+    AiArmanAdminCaseResolverController,
     AiArmanAdminReplyDraftController,
     AiArmanInternalPreviewDiagnosticsController,
     AiArmanInternalPreviewPageController,
@@ -52,6 +56,8 @@ import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/c
     AiArmanAdminCaseAssistantPageService,
     AiArmanAdminCaseAssistantService,
     AiArmanAdminCaseAssistantV2PageService,
+    AiArmanAdminCaseResolverConfig,
+    AiArmanAdminCaseResolverService,
     AiArmanAdminCommandPlannerService,
     AiArmanAdminLearningStore,
     AiArmanAdminToolRegistryService,
