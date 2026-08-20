@@ -3,6 +3,7 @@ import { AiArmanModule } from './ai-arman/ai-arman.module';
 import { AiArmanAdminCaseAssistantConfig } from './ai-arman/admin/admin-case-assistant.config';
 import { AiArmanAdminCaseAssistantController } from './ai-arman/admin/admin-case-assistant.controller';
 import { AiArmanAdminCaseAssistantFastService } from './ai-arman/admin/admin-case-assistant-fast.service';
+import { AiArmanAdminCaseAssistantOrchestratorService } from './ai-arman/admin/admin-case-assistant-orchestrator.service';
 import { AiArmanAdminCaseAssistantPageService } from './ai-arman/admin/admin-case-assistant-page.service';
 import { AiArmanAdminCaseAssistantService } from './ai-arman/admin/admin-case-assistant.service';
 import { AiArmanAdminCaseAssistantV2PageService } from './ai-arman/admin/admin-case-assistant-v2-page.service';
@@ -10,6 +11,7 @@ import { AiArmanAdminLearningStore } from './ai-arman/admin/admin-learning.store
 import { AiArmanAdminReplyDraftConfig } from './ai-arman/admin/admin-reply-draft.config';
 import { AiArmanAdminReplyDraftController } from './ai-arman/admin/admin-reply-draft.controller';
 import { AiArmanAdminReplyDraftService } from './ai-arman/admin/admin-reply-draft.service';
+import { AiArmanAdminToolRegistryService } from './ai-arman/admin/admin-tool-registry.service';
 import { AiArmanInternalPreviewDiagnosticsConfig } from './ai-arman/widget/ai-arman-internal-preview-diagnostics.config';
 import { AiArmanInternalPreviewDiagnosticsController } from './ai-arman/widget/ai-arman-internal-preview-diagnostics.controller';
 import { AiArmanInternalPreviewDiagnosticsService } from './ai-arman/widget/ai-arman-internal-preview-diagnostics.service';
@@ -43,10 +45,12 @@ import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/c
   providers: [
     AiArmanAdminCaseAssistantConfig,
     AiArmanAdminCaseAssistantFastService,
+    AiArmanAdminCaseAssistantOrchestratorService,
     AiArmanAdminCaseAssistantPageService,
     AiArmanAdminCaseAssistantService,
     AiArmanAdminCaseAssistantV2PageService,
     AiArmanAdminLearningStore,
+    AiArmanAdminToolRegistryService,
     AiArmanAdminReplyDraftConfig,
     AiArmanAdminReplyDraftService,
     AiArmanInternalPreviewDiagnosticsConfig,
