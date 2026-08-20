@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
+import {
+  AiArmanAdminActionService,
+  type AiArmanAdminActionResult,
+} from './admin-action.service';
 import { AiArmanAdminCaseAssistantFastService } from './admin-case-assistant-fast.service';
+import { AiArmanAdminCommandPlannerService } from './admin-command-planner.service';
 import {
   AiArmanAdminToolRegistryService,
   type AiArmanAdminToolResult,
@@ -13,6 +18,8 @@ const PRODUCT_PATTERN = /(produkt|inci|ingrediens|hud|hår|schampo|serum|kräm|c
 export class AiArmanAdminCaseAssistantOrchestratorService {
   constructor(
     private readonly tools: AiArmanAdminToolRegistryService,
+    private readonly actions: AiArmanAdminActionService,
+    private readonly planner: AiArmanAdminCommandPlannerService,
     private readonly assistant: AiArmanAdminCaseAssistantFastService,
   ) {}
 
@@ -21,7 +28,39 @@ export class AiArmanAdminCaseAssistantOrchestratorService {
     if (!normalized) return this.assistant.assist(input);
 
     const toolResults: AiArmanAdminToolResult[] = [];
+    const actionResults: AiArmanAdminActionResult[] = [];
     toolResults.push(await this.tools.readCase(normalized.caseContext));
+
+    const commandPlan = this.planner.plan(
+      normalized.adminQuestion,
+      normalized.caseContext.caseId,
+    );
+    if (commandPlan) {
+      if (commandPlan.readCase) {
+        actionResults.push(await this.actions.readCase(commandPlan.caseId));
+      }
+      if (commandPlan.readOrderContext) {
+        actionResults.push(
+          await this.actions.readOrderContext(commandPlan.caseId),
+        );
+      }
+      if (commandPlan.writeAction === 'pause') {
+        actionResults.push(
+          await this.actions.pauseCase(
+            commandPlan.caseId,
+            commandPlan.explicitAdminApproval,
+          ),
+        );
+      }
+      if (commandPlan.writeAction === 'complete') {
+        actionResults.push(
+          await this.actions.completeCase(
+            commandPlan.caseId,
+            commandPlan.explicitAdminApproval,
+          ),
+        );
+      }
+    }
 
     const intentText = [
       normalized.adminQuestion,
@@ -30,11 +69,23 @@ export class AiArmanAdminCaseAssistantOrchestratorService {
       .filter(Boolean)
       .join(' ');
 
-    if (normalized.orderId && ORDER_PATTERN.test(intentText)) {
+    const gatewayOrderContextOk = actionResults.some(
+      (action) => action.action === 'case.order_context.read' && action.ok,
+    );
+
+    if (
+      normalized.orderId &&
+      ORDER_PATTERN.test(intentText) &&
+      !gatewayOrderContextOk
+    ) {
       toolResults.push(await this.tools.readOrder(normalized.orderId));
     }
 
-    if (normalized.orderId && TRACKING_PATTERN.test(intentText)) {
+    if (
+      normalized.orderId &&
+      TRACKING_PATTERN.test(intentText) &&
+      !gatewayOrderContextOk
+    ) {
       toolResults.push(await this.tools.readTracking(normalized.orderId));
     }
 
@@ -50,7 +101,10 @@ export class AiArmanAdminCaseAssistantOrchestratorService {
     const originalMessages = isRecord(input) && Array.isArray(input.messages)
       ? input.messages
       : [];
-    const verifiedFactMessage = buildVerifiedFactMessage(toolResults);
+    const verifiedFactMessage = buildVerifiedFactMessage(
+      toolResults,
+      actionResults,
+    );
 
     const result = await this.assistant.assist({
       ...(isRecord(input) ? input : {}),
@@ -68,32 +122,59 @@ export class AiArmanAdminCaseAssistantOrchestratorService {
         source: tool.source,
         durationMs: tool.durationMs,
       })),
-      verifiedFactsAvailable: toolResults.some(
-        (tool) => tool.name !== 'case.read' && tool.ok,
+      adminActions: actionResults.map((action) => ({
+        action: action.action,
+        ok: action.ok,
+        caseId: action.caseId,
+        readOnly: action.readOnly,
+        executed: action.executed,
+        durationMs: action.durationMs,
+        ...(action.error ? { error: action.error } : {}),
+      })),
+      verifiedFactsAvailable:
+        actionResults.some((action) => action.ok && action.readOnly) ||
+        toolResults.some((tool) => tool.name !== 'case.read' && tool.ok),
+      writeExecuted: actionResults.some(
+        (action) => action.ok && !action.readOnly && action.executed,
       ),
     };
   }
 }
 
-function buildVerifiedFactMessage(toolResults: AiArmanAdminToolResult[]) {
+function buildVerifiedFactMessage(
+  toolResults: AiArmanAdminToolResult[],
+  actionResults: AiArmanAdminActionResult[],
+) {
   const externalFacts = toolResults.filter((tool) => tool.name !== 'case.read');
-  if (externalFacts.length === 0) return null;
-
-  const payload = externalFacts.map((tool) => ({
-    tool: tool.name,
-    ok: tool.ok,
-    source: tool.source,
-    readOnly: true,
-    ...(tool.ok ? { data: tool.data } : { error: tool.error || 'unavailable' }),
+  const actionFacts = actionResults.map((action) => ({
+    action: action.action,
+    ok: action.ok,
+    caseId: action.caseId,
+    readOnly: action.readOnly,
+    executed: action.executed,
+    ...(action.ok ? { data: action.data } : { error: action.error || 'unavailable' }),
   }));
+  if (externalFacts.length === 0 && actionFacts.length === 0) return null;
+
+  const payload = [
+    ...externalFacts.map((tool) => ({
+      tool: tool.name,
+      ok: tool.ok,
+      source: tool.source,
+      readOnly: true,
+      ...(tool.ok ? { data: tool.data } : { error: tool.error || 'unavailable' }),
+    })),
+    ...actionFacts,
+  ];
 
   return {
     direction: 'system',
     sender: 'VERIFIERADE SYSTEMFAKTA',
-    subject: 'Verifierade read-only fakta från Harmoniqs system',
+    subject: 'Verifierade fakta och admin-actions från Harmoniqs system',
     text:
-      'Följande fakta har hämtats server-side från verifierade read-only verktyg. '
-      + 'Behandla dem som auktoritativa systemfakta och hitta inte på värden som saknas. '
+      'Följande resultat har hämtats eller utförts server-side av verifierade backendverktyg. '
+      + 'Behandla lyckade reads som auktoritativa fakta. Om en write har ok=true och executed=true är den redan genomförd; föreslå inte att admin gör den igen. '
+      + 'Om en action misslyckades ska du beskriva det som ett systemfel/blockering och aldrig låtsas att den lyckades. '
       + JSON.stringify(payload),
     date: new Date().toISOString(),
   };
