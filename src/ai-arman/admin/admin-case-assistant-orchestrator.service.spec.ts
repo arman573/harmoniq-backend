@@ -1,7 +1,33 @@
 import { AiArmanAdminCaseAssistantOrchestratorService } from './admin-case-assistant-orchestrator.service';
+import { AiArmanAdminCommandPlannerService } from './admin-command-planner.service';
+
+function disabledActions() {
+  return {
+    readCase: jest.fn(async () => ({
+      ok: false,
+      action: 'case.read',
+      caseId: 'HQR-TEST',
+      readOnly: true,
+      executed: false,
+      durationMs: 0,
+      error: 'returns_admin_gateway_disabled',
+    })),
+    readOrderContext: jest.fn(async () => ({
+      ok: false,
+      action: 'case.order_context.read',
+      caseId: 'HQR-TEST',
+      readOnly: true,
+      executed: false,
+      durationMs: 0,
+      error: 'returns_admin_gateway_disabled',
+    })),
+    pauseCase: jest.fn(),
+    completeCase: jest.fn(),
+  };
+}
 
 describe('AiArmanAdminCaseAssistantOrchestratorService', () => {
-  it('runs order and tracking reads for a tracking case and injects verified system facts', async () => {
+  it('falls back to direct order and tracking reads when admin gateway order context is unavailable', async () => {
     const tools = {
       readCase: jest.fn(async (data) => ({
         name: 'case.read', ok: true, readOnly: true, source: 'returns_module', durationMs: 0, data,
@@ -16,6 +42,7 @@ describe('AiArmanAdminCaseAssistantOrchestratorService', () => {
       })),
       readProductIntelligence: jest.fn(),
     };
+    const actions = disabledActions();
     const assistant = {
       assist: jest.fn(async () => ({
         ok: true,
@@ -28,6 +55,8 @@ describe('AiArmanAdminCaseAssistantOrchestratorService', () => {
 
     const service = new AiArmanAdminCaseAssistantOrchestratorService(
       tools as never,
+      actions as never,
+      new AiArmanAdminCommandPlannerService(),
       assistant as never,
     );
     const result = await service.assist({
@@ -39,6 +68,7 @@ describe('AiArmanAdminCaseAssistantOrchestratorService', () => {
       messages: [{ direction: 'inbound', text: 'Hej, kan jag få Sändnings-ID?' }],
     });
 
+    expect(actions.readOrderContext).toHaveBeenCalledWith('HQR-2494077');
     expect(tools.readOrder).toHaveBeenCalledWith('2494077');
     expect(tools.readTracking).toHaveBeenCalledWith('2494077');
     expect(tools.readProductIntelligence).not.toHaveBeenCalled();
@@ -49,15 +79,11 @@ describe('AiArmanAdminCaseAssistantOrchestratorService', () => {
     expect(result).toMatchObject({
       ok: true,
       verifiedFactsAvailable: true,
-      toolsUsed: [
-        { tool: 'case.read', ok: true },
-        { tool: 'order.read', ok: true },
-        { tool: 'tracking.read', ok: true },
-      ],
+      writeExecuted: false,
     });
   });
 
-  it('does not run external reads when the case does not require them', async () => {
+  it('uses enriched gateway order context instead of duplicate direct order and tracking reads', async () => {
     const tools = {
       readCase: jest.fn(async (data) => ({
         name: 'case.read', ok: true, readOnly: true, source: 'returns_module', durationMs: 0, data,
@@ -66,20 +92,103 @@ describe('AiArmanAdminCaseAssistantOrchestratorService', () => {
       readTracking: jest.fn(),
       readProductIntelligence: jest.fn(),
     };
+    const actions = disabledActions();
+    actions.readOrderContext.mockResolvedValueOnce({
+      ok: true,
+      action: 'case.order_context.read',
+      caseId: 'HQR-2494077',
+      readOnly: true,
+      executed: true,
+      durationMs: 12,
+      data: { ok: true, orderId: '2494077', tracking: { available: true } },
+    } as never);
     const assistant = { assist: jest.fn(async () => ({ ok: true, sendsCustomerMessage: false, executesWrites: false })) };
-    const service = new AiArmanAdminCaseAssistantOrchestratorService(tools as never, assistant as never);
+    const service = new AiArmanAdminCaseAssistantOrchestratorService(
+      tools as never,
+      actions as never,
+      new AiArmanAdminCommandPlannerService(),
+      assistant as never,
+    );
 
-    await service.assist({
-      caseId: 'HQR-12345',
+    const result = await service.assist({
+      caseId: 'HQR-2494077',
       caseType: 'support',
-      orderId: '12345',
-      adminQuestion: 'Hur ska tonen i svaret vara?',
-      messages: [{ direction: 'inbound', text: 'Tack för hjälpen.' }],
+      orderId: '2494077',
+      adminQuestion: 'Kontrollera tracking och leverans för ärendet.',
+      messages: [],
     });
 
     expect(tools.readOrder).not.toHaveBeenCalled();
     expect(tools.readTracking).not.toHaveBeenCalled();
-    expect(tools.readProductIntelligence).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ verifiedFactsAvailable: true, writeExecuted: false });
+  });
+
+  it('executes an explicit pause command and reports the completed write to the model', async () => {
+    const tools = {
+      readCase: jest.fn(async (data) => ({
+        name: 'case.read', ok: true, readOnly: true, source: 'returns_module', durationMs: 0, data,
+      })),
+      readOrder: jest.fn(),
+      readTracking: jest.fn(),
+      readProductIntelligence: jest.fn(),
+    };
+    const actions = disabledActions();
+    actions.pauseCase.mockResolvedValueOnce({
+      ok: true,
+      action: 'case.pause',
+      caseId: 'HQR-12345',
+      readOnly: false,
+      executed: true,
+      durationMs: 8,
+      data: { ok: true, adminWorkQueueState: 'waiting' },
+    });
+    const assistant = { assist: jest.fn(async () => ({ ok: true, sendsCustomerMessage: false, executesWrites: false })) };
+    const service = new AiArmanAdminCaseAssistantOrchestratorService(
+      tools as never,
+      actions as never,
+      new AiArmanAdminCommandPlannerService(),
+      assistant as never,
+    );
+
+    const result = await service.assist({
+      caseId: 'HQR-12345',
+      caseType: 'support',
+      adminQuestion: 'Öppna HQR-12345 och pausa ärendet.',
+      messages: [],
+    });
+
+    expect(actions.pauseCase).toHaveBeenCalledWith('HQR-12345', true);
+    expect(result).toMatchObject({ writeExecuted: true });
+    const modelInput = assistant.assist.mock.calls[0][0] as { messages: Array<Record<string, unknown>> };
+    expect(String(modelInput.messages.at(-1)?.text)).toContain('case.pause');
+    expect(String(modelInput.messages.at(-1)?.text)).toContain('already');
+  });
+
+  it('does not execute a deliberative pause question', async () => {
+    const tools = {
+      readCase: jest.fn(async (data) => ({
+        name: 'case.read', ok: true, readOnly: true, source: 'returns_module', durationMs: 0, data,
+      })),
+      readOrder: jest.fn(), readTracking: jest.fn(), readProductIntelligence: jest.fn(),
+    };
+    const actions = disabledActions();
+    const assistant = { assist: jest.fn(async () => ({ ok: true, sendsCustomerMessage: false, executesWrites: false })) };
+    const service = new AiArmanAdminCaseAssistantOrchestratorService(
+      tools as never,
+      actions as never,
+      new AiArmanAdminCommandPlannerService(),
+      assistant as never,
+    );
+
+    await service.assist({
+      caseId: 'HQR-12345',
+      caseType: 'support',
+      adminQuestion: 'Borde vi pausa ärendet?',
+      messages: [],
+    });
+
+    expect(actions.pauseCase).not.toHaveBeenCalled();
+    expect(actions.completeCase).not.toHaveBeenCalled();
   });
 
   it('runs product intelligence for product questions', async () => {
@@ -94,8 +203,14 @@ describe('AiArmanAdminCaseAssistantOrchestratorService', () => {
         data: { analyses: [{ productId: '42729' }] },
       })),
     };
+    const actions = disabledActions();
     const assistant = { assist: jest.fn(async () => ({ ok: true, sendsCustomerMessage: false, executesWrites: false })) };
-    const service = new AiArmanAdminCaseAssistantOrchestratorService(tools as never, assistant as never);
+    const service = new AiArmanAdminCaseAssistantOrchestratorService(
+      tools as never,
+      actions as never,
+      new AiArmanAdminCommandPlannerService(),
+      assistant as never,
+    );
 
     await service.assist({
       caseId: 'HQR-42729',
