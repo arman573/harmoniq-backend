@@ -35,7 +35,8 @@ describe('AiArmanAdminCaseAssistantService', () => {
           missingFacts: ['Verifierad fraktstatus'],
           learningCandidate: null,
         }) }] }],
-      }), { status: 200 })) as typeof fetch;
+      }), { status: 200 });
+    }) as typeof fetch;
 
     const service = new AiArmanAdminCaseAssistantService(new AiArmanAdminCaseAssistantConfig(), learning);
     const result = await service.assist({
