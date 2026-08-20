@@ -47,16 +47,16 @@ export class AiArmanAdminCaseAssistantOrchestratorService {
       );
     }
 
+    const originalMessages = isRecord(input) && Array.isArray(input.messages)
+      ? input.messages
+      : [];
+    const verifiedFactMessage = buildVerifiedFactMessage(toolResults);
+
     const result = await this.assistant.assist({
       ...(isRecord(input) ? input : {}),
-      verifiedFacts: toolResults.map((tool) => ({
-        tool: tool.name,
-        ok: tool.ok,
-        source: tool.source,
-        readOnly: tool.readOnly,
-        durationMs: tool.durationMs,
-        ...(tool.ok ? { data: tool.data } : { error: tool.error || 'unavailable' }),
-      })),
+      messages: verifiedFactMessage
+        ? [...originalMessages, verifiedFactMessage]
+        : originalMessages,
     });
 
     if (!isRecord(result)) return result;
@@ -73,6 +73,30 @@ export class AiArmanAdminCaseAssistantOrchestratorService {
       ),
     };
   }
+}
+
+function buildVerifiedFactMessage(toolResults: AiArmanAdminToolResult[]) {
+  const externalFacts = toolResults.filter((tool) => tool.name !== 'case.read');
+  if (externalFacts.length === 0) return null;
+
+  const payload = externalFacts.map((tool) => ({
+    tool: tool.name,
+    ok: tool.ok,
+    source: tool.source,
+    readOnly: true,
+    ...(tool.ok ? { data: tool.data } : { error: tool.error || 'unavailable' }),
+  }));
+
+  return {
+    direction: 'system',
+    sender: 'VERIFIERADE SYSTEMFAKTA',
+    subject: 'Verifierade read-only fakta från Harmoniqs system',
+    text:
+      'Följande fakta har hämtats server-side från verifierade read-only verktyg. '
+      + 'Behandla dem som auktoritativa systemfakta och hitta inte på värden som saknas. '
+      + JSON.stringify(payload),
+    date: new Date().toISOString(),
+  };
 }
 
 function normalizeToolInput(value: unknown) {
