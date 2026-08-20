@@ -5,26 +5,27 @@ import { AiArmanAdminLearningStore } from './admin-learning.store';
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_TEXT = 3000;
-const MAX_DISCUSSION_TEXT = 2000;
+const MAX_DISCUSSION_TURNS = 12;
+const MAX_DISCUSSION_TEXT = 1200;
 
 const OUTPUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    caseSummary: { type: 'string', minLength: 1, maxLength: 1200 },
-    customerNeed: { type: 'string', minLength: 1, maxLength: 600 },
+    caseSummary: { type: 'string', minLength: 1, maxLength: 800 },
+    customerNeed: { type: 'string', minLength: 1, maxLength: 400 },
     recommendedActions: {
       type: 'array',
-      maxItems: 6,
-      items: { type: 'string', minLength: 1, maxLength: 500 },
+      maxItems: 5,
+      items: { type: 'string', minLength: 1, maxLength: 300 },
     },
-    reasoning: { type: 'string', minLength: 1, maxLength: 1600 },
-    answerToAdmin: { type: 'string', minLength: 1, maxLength: 2500 },
+    reasoning: { type: 'string', minLength: 1, maxLength: 1000 },
+    answerToAdmin: { type: 'string', minLength: 1, maxLength: 1600 },
     requiresHumanDecision: { type: 'boolean' },
     missingFacts: {
       type: 'array',
-      maxItems: 8,
-      items: { type: 'string', minLength: 1, maxLength: 300 },
+      maxItems: 6,
+      items: { type: 'string', minLength: 1, maxLength: 200 },
     },
     learningCandidate: {
       type: ['object', 'null'],
@@ -84,15 +85,16 @@ export class AiArmanAdminCaseAssistantService {
           store: false,
           instructions: [
             'Du är AI Arman, intern ärendeassistent för HARMONIQ.',
-            'Du ska hjälpa admin att förstå ett kundärende, resonera om säkra nästa steg och diskutera lösningar.',
+            'Hjälp admin att förstå kundärendet, resonera om säkra nästa steg och diskutera lösningar.',
+            'Svara kompakt och konkret eftersom svaret visas i en smal sidopanel.',
             'Du får inte fatta eller påstå att HARMONIQ har fattat beslut om återbetalning, avslag, goodwill, ersättningsvara, juridik eller annan känslig affärsåtgärd.',
-            'Använd endast fakta i ärendekontexten och godkända supportlärdomar.',
+            'Använd endast fakta i ärendekontexten, tidigare diskussion och godkända supportlärdomar.',
             'Om fakta saknas ska de listas under missingFacts i stället för att hittas på.',
-            'answerToAdmin ska vara ett direkt svar till administratören, inte automatiskt kundutskick.',
+            'answerToAdmin ska vara ett direkt svar till administratören, aldrig ett automatiskt kundutskick.',
             'learningCandidate ska bara föreslås när adminens diskussion innehåller en generaliserbar arbetsregel som kan vara värd att spara.',
           ].join(' '),
           input: JSON.stringify({ case: normalized, approvedLearnings: lessons }),
-          max_output_tokens: 1600,
+          max_output_tokens: 1000,
           text: {
             format: {
               type: 'json_schema',
@@ -105,21 +107,32 @@ export class AiArmanAdminCaseAssistantService {
       });
 
       if (!response.ok) {
-        return { ok: false as const, code: 'admin_assistant_model_unavailable', providerHttpStatus: response.status };
+        return {
+          ok: false as const,
+          code: 'admin_assistant_model_unavailable',
+          providerHttpStatus: response.status,
+        };
       }
-      const body = await response.json() as unknown;
+      const body = (await response.json()) as unknown;
       const text = extractOutputText(body);
       const parsed = text ? JSON.parse(text) : null;
       const result = projectResult(parsed);
       return result
-        ? { ok: true as const, ...result, approvedLearningsUsed: lessons.length, sendsCustomerMessage: false, executesWrites: false }
+        ? {
+            ok: true as const,
+            ...result,
+            approvedLearningsUsed: lessons.length,
+            sendsCustomerMessage: false,
+            executesWrites: false,
+          }
         : { ok: false as const, code: 'admin_assistant_model_invalid' };
     } catch (error) {
       return {
         ok: false as const,
-        code: error instanceof Error && error.name === 'AbortError'
-          ? 'admin_assistant_timeout'
-          : 'admin_assistant_model_unavailable',
+        code:
+          error instanceof Error && error.name === 'AbortError'
+            ? 'admin_assistant_timeout'
+            : 'admin_assistant_model_unavailable',
       };
     } finally {
       clearTimeout(timeout);
@@ -128,7 +141,9 @@ export class AiArmanAdminCaseAssistantService {
 
   async approveLearning(input: unknown) {
     const config = this.config.read();
-    if (!config.learningEnabled) return { ok: false as const, code: 'admin_learning_disabled' };
+    if (!config.learningEnabled) {
+      return { ok: false as const, code: 'admin_learning_disabled' };
+    }
     if (!isRecord(input) || input.approved !== true) {
       return { ok: false as const, code: 'admin_learning_requires_approval' };
     }
@@ -137,15 +152,30 @@ export class AiArmanAdminCaseAssistantService {
     const avoid = clean(input.avoid, 500);
     const createdBy = clean(input.createdBy, 120);
     const caseType = clean(input.caseType, 80).toLowerCase();
-    if (!principle || !createdBy) return { ok: false as const, code: 'invalid_admin_learning' };
+    if (!principle || !createdBy) {
+      return { ok: false as const, code: 'invalid_admin_learning' };
+    }
 
     try {
-      const lesson = await this.learning.save({ principle, appliesWhen, avoid, createdBy, caseType });
-      return { ok: true as const, lessonId: lesson.id, createdAt: lesson.createdAt };
+      const lesson = await this.learning.save({
+        principle,
+        appliesWhen,
+        avoid,
+        createdBy,
+        caseType,
+      });
+      return {
+        ok: true as const,
+        lessonId: lesson.id,
+        createdAt: lesson.createdAt,
+      };
     } catch (error) {
       return {
         ok: false as const,
-        code: error instanceof Error ? error.message : 'admin_learning_save_failed',
+        code:
+          error instanceof Error
+            ? error.message
+            : 'admin_learning_save_failed',
       };
     }
   }
@@ -158,14 +188,32 @@ function normalizeInput(value: unknown) {
   const status = clean(value.status, 120);
   const adminQuestion = clean(value.adminQuestion, MAX_DISCUSSION_TEXT);
   const messages = Array.isArray(value.messages)
-    ? value.messages.slice(-MAX_MESSAGES).filter(isRecord).map((message) => ({
-        direction: clean(message.direction, 20),
-        sender: clean(message.sender, 80),
-        subject: clean(message.subject, 500),
-        text: clean(message.text, MAX_MESSAGE_TEXT),
-        date: clean(message.date, 64),
-      })).filter((message) => message.text || message.subject)
+    ? value.messages
+        .slice(-MAX_MESSAGES)
+        .filter(isRecord)
+        .map((message) => ({
+          direction: clean(message.direction, 20),
+          sender: clean(message.sender, 80),
+          subject: clean(message.subject, 500),
+          text: clean(message.text, MAX_MESSAGE_TEXT),
+          date: clean(message.date, 64),
+        }))
+        .filter((message) => message.text || message.subject)
     : [];
+  const discussion = Array.isArray(value.discussion)
+    ? value.discussion
+        .slice(-MAX_DISCUSSION_TURNS)
+        .filter(isRecord)
+        .map((turn) => ({
+          role:
+            String(turn.role || '').toLowerCase() === 'assistant'
+              ? 'assistant'
+              : 'admin',
+          text: clean(turn.text, MAX_DISCUSSION_TEXT),
+        }))
+        .filter((turn) => turn.text)
+    : [];
+
   if (!caseId || !caseType) return null;
   return {
     caseId,
@@ -173,36 +221,65 @@ function normalizeInput(value: unknown) {
     status,
     customerName: clean(value.customerName, 100),
     adminQuestion,
+    discussion,
     messages,
   };
 }
 
 function projectResult(value: unknown) {
   if (!isRecord(value)) return null;
-  const caseSummary = clean(value.caseSummary, 1200);
-  const customerNeed = clean(value.customerNeed, 600);
-  const recommendedActions = readStringArray(value.recommendedActions, 6, 500);
-  const reasoning = clean(value.reasoning, 1600);
-  const answerToAdmin = clean(value.answerToAdmin, 2500);
-  const missingFacts = readStringArray(value.missingFacts, 8, 300);
+  const caseSummary = clean(value.caseSummary, 800);
+  const customerNeed = clean(value.customerNeed, 400);
+  const recommendedActions = readStringArray(value.recommendedActions, 5, 300);
+  const reasoning = clean(value.reasoning, 1000);
+  const answerToAdmin = clean(value.answerToAdmin, 1600);
+  const missingFacts = readStringArray(value.missingFacts, 6, 200);
   const requiresHumanDecision = value.requiresHumanDecision;
-  const learningCandidate = value.learningCandidate === null
-    ? null
-    : isRecord(value.learningCandidate)
-      ? {
-          principle: clean(value.learningCandidate.principle, 800),
-          appliesWhen: clean(value.learningCandidate.appliesWhen, 500),
-          avoid: clean(value.learningCandidate.avoid, 500),
-        }
-      : undefined;
+  const learningCandidate =
+    value.learningCandidate === null
+      ? null
+      : isRecord(value.learningCandidate)
+        ? {
+            principle: clean(value.learningCandidate.principle, 800),
+            appliesWhen: clean(value.learningCandidate.appliesWhen, 500),
+            avoid: clean(value.learningCandidate.avoid, 500),
+          }
+        : undefined;
 
-  if (!caseSummary || !customerNeed || !recommendedActions || !reasoning || !answerToAdmin || !missingFacts) return null;
-  if (typeof requiresHumanDecision !== 'boolean' || learningCandidate === undefined) return null;
+  if (
+    !caseSummary ||
+    !customerNeed ||
+    !recommendedActions ||
+    !reasoning ||
+    !answerToAdmin ||
+    !missingFacts
+  ) {
+    return null;
+  }
+  if (
+    typeof requiresHumanDecision !== 'boolean' ||
+    learningCandidate === undefined
+  ) {
+    return null;
+  }
   if (learningCandidate && !learningCandidate.principle) return null;
-  return { caseSummary, customerNeed, recommendedActions, reasoning, answerToAdmin, missingFacts, requiresHumanDecision, learningCandidate };
+  return {
+    caseSummary,
+    customerNeed,
+    recommendedActions,
+    reasoning,
+    answerToAdmin,
+    missingFacts,
+    requiresHumanDecision,
+    learningCandidate,
+  };
 }
 
-function readStringArray(value: unknown, maxItems: number, maxLength: number): string[] | null {
+function readStringArray(
+  value: unknown,
+  maxItems: number,
+  maxLength: number,
+): string[] | null {
   if (!Array.isArray(value) || value.length > maxItems) return null;
   const result: string[] = [];
   for (const item of value) {
@@ -214,12 +291,26 @@ function readStringArray(value: unknown, maxItems: number, maxLength: number): s
 }
 
 function extractOutputText(body: unknown): string | null {
-  if (!isRecord(body) || body.status !== 'completed' || !Array.isArray(body.output)) return null;
+  if (
+    !isRecord(body) ||
+    body.status !== 'completed' ||
+    !Array.isArray(body.output)
+  ) {
+    return null;
+  }
   const parts: string[] = [];
   for (const item of body.output) {
-    if (!isRecord(item) || item.type !== 'message' || !Array.isArray(item.content)) continue;
+    if (!isRecord(item) || item.type !== 'message' || !Array.isArray(item.content)) {
+      continue;
+    }
     for (const content of item.content) {
-      if (isRecord(content) && content.type === 'output_text' && typeof content.text === 'string') parts.push(content.text);
+      if (
+        isRecord(content) &&
+        content.type === 'output_text' &&
+        typeof content.text === 'string'
+      ) {
+        parts.push(content.text);
+      }
     }
   }
   return parts.join('').trim() || null;
