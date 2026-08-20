@@ -1,9 +1,10 @@
 # AI Arman admin resolver candidate
 
-- Verified at: 2026-08-20T21:21:03Z
+- Verified at: 2026-08-20T21:26:29Z
+- Run ID: 32419314017
 - Frozen source: `3298af83deea3d186f4295e4637b20e62badb0a5`
 - Overall: **PASS**
-- Candidate revision: `harmoniq-ai-arman-beta0-resolverfix-3298af83-7`
+- Candidate revision: `harmoniq-ai-arman-beta0-resolverdraft-3298af83-3`
 - Candidate URL: `https://resolver-ai-3298af83---harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app`
 - Candidate traffic: **0%**
 - Production positive traffic: **unchanged**
@@ -11,11 +12,16 @@
 - Resolver enabled: **true**
 - Admin gateway configured from traffic-serving Returns revision: `harmoniq-returns-api-aifullv2-1`
 - Full-admin writes on candidate: **false**
+- Admin reply draft: **enabled**
+- Model interpretation: **enabled for draft only in this candidate configuration**
+- Model shadow: **false**
 - Model promotion: **false**
 - Real case prepare: **PASS**
 - Verified case: **true**
 - Verified order context: **true**
 - Analysis status: `available`
-- Draft status: `resolver_reply_draft_unavailable`
+- Draft status: `available`
+- Draft confidence: `0.86`
+- Draft requires human decision: **false**
 - Customer message sent: **false**
 - Write executed: **false**
