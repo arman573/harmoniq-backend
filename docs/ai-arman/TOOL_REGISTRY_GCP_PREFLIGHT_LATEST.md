@@ -1,7 +1,7 @@
 # AI Arman Tool Registry GCP preflight
 
-- Observed at: 2026-08-20T15:28:39Z
-- Source SHA: `5cb6011ec86038bf61bd52088eeb7b3edb6ce700`
+- Observed at: 2026-08-20T15:31:34Z
+- Source SHA: `faff3507baf55d0177e341f5a47f168d8d9ae853`
 - AI service: `harmoniq-ai-arman-beta0`
 - AI runtime service account: `ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com`
 - AI canonical URL: `https://harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app`
