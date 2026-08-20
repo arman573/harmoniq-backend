@@ -1,15 +1,17 @@
 import { Body, Controller, Get, Post, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { AiArmanAdminCaseAssistantConfig } from './admin-case-assistant.config';
+import { AiArmanAdminCaseAssistantFastService } from './admin-case-assistant-fast.service';
 import { AiArmanAdminCaseAssistantService } from './admin-case-assistant.service';
-import { AiArmanAdminCaseAssistantPageService } from './admin-case-assistant-page.service';
+import { AiArmanAdminCaseAssistantV2PageService } from './admin-case-assistant-v2-page.service';
 
 @Controller('ai-arman/internal/admin-assistant')
 export class AiArmanAdminCaseAssistantController {
   constructor(
     private readonly config: AiArmanAdminCaseAssistantConfig,
-    private readonly assistant: AiArmanAdminCaseAssistantService,
-    private readonly page: AiArmanAdminCaseAssistantPageService,
+    private readonly assistant: AiArmanAdminCaseAssistantFastService,
+    private readonly learning: AiArmanAdminCaseAssistantService,
+    private readonly page: AiArmanAdminCaseAssistantV2PageService,
   ) {}
 
   @Get()
@@ -29,6 +31,6 @@ export class AiArmanAdminCaseAssistantController {
 
   @Post('learn')
   async learn(@Body() body: unknown) {
-    return this.assistant.approveLearning(body);
+    return this.learning.approveLearning(body);
   }
 }
