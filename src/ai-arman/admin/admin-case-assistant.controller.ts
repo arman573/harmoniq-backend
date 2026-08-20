@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Post, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { AiArmanAdminCaseAssistantConfig } from './admin-case-assistant.config';
-import { AiArmanAdminCaseAssistantFastService } from './admin-case-assistant-fast.service';
+import { AiArmanAdminCaseAssistantOrchestratorService } from './admin-case-assistant-orchestrator.service';
 import { AiArmanAdminCaseAssistantService } from './admin-case-assistant.service';
 import { AiArmanAdminCaseAssistantV2PageService } from './admin-case-assistant-v2-page.service';
 
@@ -9,7 +9,7 @@ import { AiArmanAdminCaseAssistantV2PageService } from './admin-case-assistant-v
 export class AiArmanAdminCaseAssistantController {
   constructor(
     private readonly config: AiArmanAdminCaseAssistantConfig,
-    private readonly assistant: AiArmanAdminCaseAssistantFastService,
+    private readonly assistant: AiArmanAdminCaseAssistantOrchestratorService,
     private readonly learning: AiArmanAdminCaseAssistantService,
     private readonly page: AiArmanAdminCaseAssistantV2PageService,
   ) {}
