@@ -13,7 +13,7 @@ jobs:
   diagnose:
     if: github.event.head_commit.message == 'Diagnose AI Arman resolver gateway'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 16
     env:
       PROJECT_ID: harmoniq-210513
       REGION: europe-north1
