@@ -194,6 +194,7 @@ jobs:
           # AI Arman admin resolver candidate
 
           - Verified at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Run ID: $GITHUB_RUN_ID
           - Frozen source: \`$SOURCE_SHA\`
           - Overall: **PASS**
           - Candidate revision: \`$REV\`
@@ -222,4 +223,36 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add "$RESULT_PATH"
           git commit -m 'Record resolver draft candidate PASS'
+          git push origin HEAD:feature/ai-arman-foundation-v1
+
+      - name: Record failure checkpoint
+        if: failure()
+        shell: bash
+        env:
+          REV: ${{ steps.deploy.outputs.revision }}
+          TAG_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -euo pipefail
+          git fetch origin feature/ai-arman-foundation-v1
+          git checkout -B result origin/feature/ai-arman-foundation-v1
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman admin resolver candidate
+
+          - Verified at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Run ID: $GITHUB_RUN_ID
+          - Frozen source: \`$SOURCE_SHA\`
+          - Overall: **FAIL**
+          - Candidate revision: \`${REV:-not-created}\`
+          - Candidate URL: \`${TAG_URL:-not-created}\`
+          - Intended candidate traffic: **0%**
+          - Intended full-admin writes: **false**
+          - Intended model promotion: **false**
+          - Customer message intentionally sent by workflow: **false**
+          - Resolver write intentionally executed by workflow: **false**
+          - Next action: inspect this run's failed job logs before changing production.
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record resolver draft candidate failure'
           git push origin HEAD:feature/ai-arman-foundation-v1
