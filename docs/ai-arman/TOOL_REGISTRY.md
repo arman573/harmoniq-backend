@@ -35,23 +35,29 @@ The canonical return/reclamation admin path is:
 
 ```text
 admin intent
-  -> deterministic command/policy layer
+  -> deterministic command/policy layer or resolver
   -> named typed admin action
   -> ReturnsAdminGatewayClient
   -> returns full-admin gateway
-  -> existing returns admin route
+  -> existing returns admin route/domain logic
 ```
 
-Current permanent typed actions:
+Current permanent typed admin actions:
 
-| Action | Purpose | Access | Approval |
+| Action | Purpose | Access | Approval / decision boundary |
 | --- | --- | --- | --- |
 | `case.read` | Read the authoritative case | READ | No |
 | `case.order_context.read` | Read authoritative live order + tracking context | READ | No |
-| `case.pause` | Set work queue to waiting | WRITE | Explicit admin instruction required |
-| `case.complete` | Set work queue to completed | WRITE | Explicit admin instruction required |
+| `case.customer_message.send` | Send a reviewed customer message through the real returns communication path | WRITE | Explicit admin approval |
+| `case.pause` | Set work queue to waiting | WRITE | Explicit admin approval |
+| `case.complete` | Set work queue to completed | WRITE | Explicit admin approval |
+| `case.return_status.set` | Set one exact allowed return status; Returns owns GCS/Vendre/pre-dispatch guards | WRITE | Explicit admin approval + human decision |
+| `case.product_decision.set` | Persist one product decision (`pending/approved/rejected`) | WRITE | Explicit admin approval + human decision; rejection requires reason |
+| `case.return_label.create` | Create a real return label using authoritative case/Vendre data | WRITE/EXTERNAL | Explicit admin approval + human decision |
 
 The gateway itself can technically forward the admin methods supported by the Returns Module, but that raw capability is not a model tool. New admin functionality must be introduced as another named typed action with a fixed route, fixed payload semantics, tests and policy.
+
+The controlled resolver is documented in `ADMIN_CASE_RESOLVER_V1.md`. Its `prepare` phase is read-only. Its `execute` phase accepts one allowlisted action, requires `approved:true`, and reads the case back after a successful write.
 
 ## Tool/action envelope
 
@@ -71,7 +77,7 @@ type ToolPolicy = {
 };
 ```
 
-For admin writes, `requiresConfirmation` maps to deterministic explicit-admin-approval semantics in backend policy. Technical write capability alone is not sufficient to execute a mutation.
+For admin writes, `requiresConfirmation` maps to deterministic explicit-admin-approval semantics in backend policy. Technical write capability alone is not sufficient to execute a mutation. Sensitive return/product decisions are treated as human decisions that AI Arman may execute only after explicit approval; the model does not independently approve/deny them.
 
 ## Ownership boundaries
 
@@ -80,9 +86,9 @@ For admin writes, `requiresConfirmation` maps to deterministic explicit-admin-ap
 - Hello Retail owns bounded behavioral personalization signals.
 - Vendre owns current operational product and order facts.
 - Returns Module owns return/claim workflows, stored case state and the authenticated admin routes that perform return-domain writes.
-- AI Arman owns interpretation, orchestration, typed action policy and the explanation/discussion layer.
+- AI Arman owns interpretation, orchestration, typed action policy and the explanation/discussion/resolver layer.
 
-AI Arman should reuse existing authenticated backend routes instead of duplicating Vendre, GCS, Gmail or tracking write logic.
+AI Arman should reuse existing authenticated backend routes instead of duplicating Vendre, GCS, Gmail, nShift or tracking write logic.
 
 ## Recommendation sequence
 
@@ -108,18 +114,24 @@ verify customer identity
   -> return verified result
 ```
 
-## Admin case sequence
+## Admin case resolver sequence
 
 ```text
-understand admin question
-  -> read authoritative case/order context when useful
-  -> discuss/recommend
-  -> if the admin gives an explicit supported write instruction:
-       backend selects named typed action
-       -> AI-side write gate
-       -> returns-side write gate
-       -> existing admin route
-       -> verified action result returned to AI Arman
+prepare(caseId)
+  -> authoritative case.read
+  -> authoritative case.order_context.read when available
+  -> bounded AI analysis + optional customer reply draft
+  -> show supported named actions
+  -> no write
+
+execute(one action, approved=true)
+  -> validate action-specific input
+  -> execute one typed admin action
+  -> Returns Module applies its own domain guards + side effects
+  -> case.read post-write verification
+  -> distinguish writeExecuted from verifiedAfterWrite
 ```
+
+Refunds, compensation, order cancellation, payment changes and unrestricted arbitrary mutations are not resolver actions simply because the full-admin gateway could technically reach admin routes.
 
 See `ADMIN_ACCESS_ARCHITECTURE_CURRENT.md` for the current full-admin production boundary and configuration rules.
