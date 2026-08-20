@@ -1,0 +1,65 @@
+name: Diagnose split AI Arman companion v3 once
+on:
+  push:
+    branches: [feature/ai-arman-foundation-v1]
+permissions:
+  actions: read
+  contents: write
+env:
+  RESULT_PATH: docs/ai-arman/ADMIN_COMPANION_V3_RUN_DIAGNOSTIC.md
+
+jobs:
+  diagnose:
+    if: github.event.head_commit.message == 'Diagnose split AI Arman companion v3 once'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+          fetch-depth: 1
+      - name: Inspect v3 run
+        id: diag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ai-arman-admin-companion-v3-zero-traffic-once.yml/runs?event=push&branch=feature%2Fai-arman-foundation-v1&per_page=10" > "$RUNNER_TEMP/runs.json"
+          RUN_ID="$(jq -r '[.workflow_runs[] | select(.head_sha=="fcd1e26f49e6ec8e9a84c7413fc178263f504943")] | first | .id // empty' "$RUNNER_TEMP/runs.json")"
+          if [[ -z "$RUN_ID" ]]; then STATUS=not_found; CONCLUSION=not_found; CURRENT=none; FAILED=none; else
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?filter=latest" > "$RUNNER_TEMP/jobs.json"
+            STATUS="$(jq -r '[.jobs[]] | first | .status // "unknown"' "$RUNNER_TEMP/jobs.json")"
+            CONCLUSION="$(jq -r '[.jobs[]] | first | .conclusion // "none"' "$RUNNER_TEMP/jobs.json")"
+            CURRENT="$(jq -r '[.jobs[].steps[]? | select(.status=="in_progress") | .name] | first // "none"' "$RUNNER_TEMP/jobs.json")"
+            FAILED="$(jq -r '[.jobs[].steps[]? | select(.conclusion=="failure") | .name] | first // "none"' "$RUNNER_TEMP/jobs.json")"
+          fi
+          echo "run_id=${RUN_ID:-none}" >> "$GITHUB_OUTPUT"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "conclusion=$CONCLUSION" >> "$GITHUB_OUTPUT"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
+      - name: Record diagnostic
+        env:
+          RUN_ID: ${{ steps.diag.outputs.run_id }}
+          STATUS: ${{ steps.diag.outputs.status }}
+          CONCLUSION: ${{ steps.diag.outputs.conclusion }}
+          CURRENT: ${{ steps.diag.outputs.current }}
+          FAILED: ${{ steps.diag.outputs.failed }}
+        shell: bash
+        run: |
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman companion v3 run diagnostic
+
+          - Checked at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Run id: \`$RUN_ID\`
+          - Status: \`$STATUS\`
+          - Conclusion: \`$CONCLUSION\`
+          - Current step: \`$CURRENT\`
+          - Failed step: \`$FAILED\`
+          - No GCP call or mutation performed.
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record split AI Arman companion v3 run diagnostic'
+          git push origin HEAD:feature/ai-arman-foundation-v1
