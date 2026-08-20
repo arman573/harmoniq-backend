@@ -59,6 +59,7 @@ import {
 } from './integrations/product-live-facts.client';
 import { readProductLiveFactsProviderConfig } from './integrations/product-live-facts-provider.config';
 import { resolveProductLiveFactsProvider } from './integrations/product-live-facts-provider.resolver';
+import { ReturnsAdminGatewayClient } from './integrations/returns-admin-gateway.client';
 import { ReturnsModuleReadClient } from './integrations/returns-module-read.client';
 import { ReturnsModuleReadTools } from './integrations/returns-module-read.tools';
 import { SearchBrainClient } from './integrations/search-brain.client';
@@ -176,6 +177,7 @@ import { AiArmanWidgetPreviewService } from './widget/ai-arman-widget-preview.se
     ProductIntelligenceAuthProvider,
     ProductIntelligenceClient,
     ProductRecommendationCardService,
+    ReturnsAdminGatewayClient,
     ReturnsModuleReadClient,
     ReturnsModuleReadTools,
     SearchBrainClient,
@@ -216,6 +218,7 @@ import { AiArmanWidgetPreviewService } from './widget/ai-arman-widget-preview.se
     ProductIntelligenceClient,
     ProductLiveFactsClient,
     ProductRecommendationCardService,
+    ReturnsAdminGatewayClient,
     ReturnsModuleReadClient,
     ReturnsModuleReadTools,
     SearchBrainClient,
