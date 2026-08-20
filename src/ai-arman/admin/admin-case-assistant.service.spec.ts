@@ -12,7 +12,7 @@ describe('AiArmanAdminCaseAssistantService', () => {
     jest.restoreAllMocks();
   });
 
-  it('returns a read-only admin analysis and uses approved learnings', async () => {
+  it('returns a compact read-only analysis with approved learning and prior discussion', async () => {
     enableAssistant();
     const learning = {
       listRelevant: jest.fn().mockResolvedValue([{ id: 'l1', createdAt: '2026-08-20T10:00:00Z', createdBy: 'admin', caseType: 'support', principle: 'Kontrollera fraktstatus först.', appliesWhen: 'Tracking saknas.', avoid: 'Lova leveransdatum.' }]),
@@ -22,7 +22,9 @@ describe('AiArmanAdminCaseAssistantService', () => {
     global.fetch = jest.fn(async (_url, init) => {
       const request = JSON.parse(String(init?.body || '{}'));
       expect(request.store).toBe(false);
+      expect(request.max_output_tokens).toBe(1000);
       expect(request.input).toContain('Kontrollera fraktstatus först.');
+      expect(request.input).toContain('Vi brukar kontrollera transportören först.');
       return new Response(JSON.stringify({
         status: 'completed',
         output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({
@@ -43,6 +45,8 @@ describe('AiArmanAdminCaseAssistantService', () => {
       caseId: 'HQR-123',
       caseType: 'support',
       messages: [{ direction: 'inbound', sender: 'Kund', text: 'Var är min spårningslänk?' }],
+      discussion: [{ role: 'admin', text: 'Vi brukar kontrollera transportören först.' }],
+      adminQuestion: 'Hur skulle du göra nu?',
     });
 
     expect(result).toMatchObject({
