@@ -1,1 +1,0 @@
-Trigger read-only inspection of the AI deployer roles relevant to the returns service. No IAM or Cloud Run mutations.
