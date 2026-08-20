@@ -8,7 +8,7 @@ on:
       - .github/workflows/ai-arman-resolver-zero-traffic-candidate-once.yml
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 concurrency:
@@ -202,3 +202,38 @@ jobs:
             echo '- Unauthorized app-token boundary: **PASS**'
             echo '- Execute without explicit approval: **blocked**'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record sanitized result in repository
+        if: always()
+        shell: bash
+        env:
+          JOB_STATUS: ${{ job.status }}
+          REV: ${{ steps.deploy.outputs.revision }}
+          TAG_URL: ${{ steps.deploy.outputs.url }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          git fetch origin feature/ai-arman-foundation-v1
+          git checkout -B feature/ai-arman-foundation-v1 origin/feature/ai-arman-foundation-v1
+          mkdir -p docs/ai-arman
+          cat > docs/ai-arman/RESOLVER_ZERO_TRAFFIC_CANDIDATE_RESULT.md <<EOF
+          # AI Arman resolver zero-traffic candidate result
+
+          - Run ID: $GITHUB_RUN_ID
+          - Job status: $JOB_STATUS
+          - Frozen source: $SOURCE_SHA
+          - Candidate revision: ${REV:-not-created}
+          - Candidate tagged URL: ${TAG_URL:-not-created}
+          - Image digest: ${DIGEST:-not-created}
+          - Intended traffic: 0%
+          - Resolver intended enabled on candidate: true
+          - Admin writes intended on candidate: false
+          - Model promotion intended: false
+          - Production traffic mutation intended: none
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/ai-arman/RESOLVER_ZERO_TRAFFIC_CANDIDATE_RESULT.md
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Record resolver zero-traffic candidate result'
+          git push origin HEAD:feature/ai-arman-foundation-v1
