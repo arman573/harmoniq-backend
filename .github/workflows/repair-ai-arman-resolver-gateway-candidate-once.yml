@@ -13,11 +13,12 @@ jobs:
   repair:
     if: github.event.head_commit.message == 'Repair AI Arman resolver gateway candidate'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       PROJECT_ID: harmoniq-210513
       REGION: europe-north1
       SERVICE_NAME: harmoniq-ai-arman-beta0
+      RETURNS_SERVICE_NAME: harmoniq-returns-api
       RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
       CANDIDATE_TAG: resolver-ai-3298af83
       SOURCE_SHA: 3298af83deea3d186f4295e4637b20e62badb0a5
@@ -31,6 +32,12 @@ jobs:
           ref: feature/ai-arman-foundation-v1
           fetch-depth: 1
 
+      - name: Guard trigger and actor
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTOR" = 'arman573'
+          test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
+
       - uses: google-github-actions/auth@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
@@ -41,40 +48,44 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Snapshot production traffic and recover gateway config in memory
+      - name: Snapshot AI production boundary and recover Returns full-admin config in memory
         id: before
         shell: bash
         run: |
           set -euo pipefail
-          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-before.json"
-          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/service-before.json" > "$RUNNER_TEMP/positive-before.json"
-          PROD_REV="$(jq -r '[.status.traffic[]? | select((.percent // 0)>0)] | sort_by(.percent) | last | .revisionName // empty' "$RUNNER_TEMP/service-before.json")"
-          OLD_CANDIDATE_REV="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/service-before.json" | head -n1)"
-          SERVICE_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/service-before.json")"
-          test -n "$PROD_REV"; test -n "$OLD_CANDIDATE_REV"; test -n "$SERVICE_URL"
-          gcloud run revisions describe "$PROD_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/prod-rev.json"
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-before.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-iam.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/ai-iam.json" >/dev/null; then
+            echo 'AI service unexpectedly public; refusing repair.' >&2
+            exit 1
+          fi
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/ai-before.json" > "$RUNNER_TEMP/positive-before.json"
+          OLD_CANDIDATE_REV="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/ai-before.json" | head -n1)"
+          AI_SERVICE_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/ai-before.json")"
+          test -n "$OLD_CANDIDATE_REV"; test -n "$AI_SERVICE_URL"
           gcloud run revisions describe "$OLD_CANDIDATE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/old-candidate.json"
-          envv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/prod-rev.json"; }
-          GW_ENABLED="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED)"
-          GW_BASE="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL)"
-          GW_AUDIENCE="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE)"
-          GW_TOKEN="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN)"
-          GW_TIMEOUT="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_TIMEOUT_MS)"
-          test "$GW_ENABLED" = 'true'
-          test -n "$GW_BASE"; test -n "$GW_AUDIENCE"; test "${#GW_TOKEN}" -ge 32
-          echo "::add-mask::$GW_TOKEN"
-          echo "::add-mask::$GW_BASE"
-          echo "::add-mask::$GW_AUDIENCE"
-          echo "GW_ENABLED=$GW_ENABLED" >> "$GITHUB_ENV"
-          echo "GW_BASE=$GW_BASE" >> "$GITHUB_ENV"
-          echo "GW_AUDIENCE=$GW_AUDIENCE" >> "$GITHUB_ENV"
-          echo "GW_TOKEN=$GW_TOKEN" >> "$GITHUB_ENV"
-          echo "GW_TIMEOUT=${GW_TIMEOUT:-20000}" >> "$GITHUB_ENV"
           IMAGE="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/old-candidate.json")"
           test -n "$IMAGE"
+
+          gcloud run services describe "$RETURNS_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-service.json"
+          RETURNS_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/returns-service.json")"
+          RETURNS_REV="$(jq -r '[.status.traffic[]? | select((.percent // 0)>0)] | sort_by(.percent) | last | .revisionName // empty' "$RUNNER_TEMP/returns-service.json")"
+          test -n "$RETURNS_URL"; test -n "$RETURNS_REV"
+          gcloud run revisions describe "$RETURNS_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-revision.json"
+          envr(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/returns-revision.json"; }
+          FULL_ENABLED="$(envr AI_ARMAN_FULL_ADMIN_ENABLED)"
+          FULL_TOKEN="$(envr AI_ARMAN_FULL_ADMIN_ACCESS_TOKEN)"
+          test "$FULL_ENABLED" = 'true'
+          test "${#FULL_TOKEN}" -ge 32
+          echo "::add-mask::$FULL_TOKEN"
+          echo "::add-mask::$RETURNS_URL"
+          echo "RETURNS_URL=$RETURNS_URL" >> "$GITHUB_ENV"
+          echo "FULL_TOKEN=$FULL_TOKEN" >> "$GITHUB_ENV"
+
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-          echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
-          echo "production_revision=$PROD_REV" >> "$GITHUB_OUTPUT"
+          echo "ai_service_url=$AI_SERVICE_URL" >> "$GITHUB_OUTPUT"
+          echo "returns_revision=$RETURNS_REV" >> "$GITHUB_OUTPUT"
 
       - name: Deploy repaired zero traffic resolver revision
         id: deploy
@@ -90,7 +101,7 @@ jobs:
             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
             --revision-suffix "resolverfix-${SOURCE_SHA:0:8}-${GITHUB_RUN_NUMBER}" \
             --tag "$CANDIDATE_TAG" --no-traffic \
-            --update-env-vars "AI_ARMAN_ADMIN_RESOLVER_ENABLED=true,AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN=$APP_TOKEN,AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED=$GW_ENABLED,AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL=$GW_BASE,AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE=$GW_AUDIENCE,AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN=$GW_TOKEN,AI_ARMAN_RETURNS_ADMIN_GATEWAY_TIMEOUT_MS=$GW_TIMEOUT,AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED=false,AI_ARMAN_MODEL_PROMOTION_ENABLED=false" \
+            --update-env-vars "AI_ARMAN_ADMIN_RESOLVER_ENABLED=true,AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN=$APP_TOKEN,AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED=true,AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL=$RETURNS_URL,AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE=$RETURNS_URL,AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN=$FULL_TOKEN,AI_ARMAN_RETURNS_ADMIN_GATEWAY_TIMEOUT_MS=20000,AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED=false,AI_ARMAN_MODEL_PROMOTION_ENABLED=false" \
             --quiet
           gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/after.json"
           REV="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/after.json" | head -n1)"
@@ -113,11 +124,14 @@ jobs:
           envc(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/repaired.json"; }
           test "$(envc AI_ARMAN_ADMIN_RESOLVER_ENABLED)" = 'true'
           test "$(envc AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED)" = 'true'
-          test -n "$(envc AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL)"
-          test -n "$(envc AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE)"
-          test "${#GW_TOKEN}" -ge 32
+          test "$(envc AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL)" = "$RETURNS_URL"
+          test "$(envc AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE)" = "$RETURNS_URL"
           test "$(envc AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED)" = 'false'
           test "$(envc AI_ARMAN_MODEL_PROMOTION_ENABLED)" = 'false'
+          TOKEN_CHECK="$(envc AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN)"
+          test "${#TOKEN_CHECK}" -ge 32
+          echo "::add-mask::$TOKEN_CHECK"
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/final.json")" = '0'
 
       - name: Mint private identity token
         id: idtoken
@@ -127,7 +141,7 @@ jobs:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
           token_format: id_token
-          id_token_audience: ${{ steps.before.outputs.service_url }}
+          id_token_audience: ${{ steps.before.outputs.ai_service_url }}
           id_token_include_email: true
           create_credentials_file: false
 
@@ -147,7 +161,10 @@ jobs:
             jq '{ok,code,error}' "$RUNNER_TEMP/prepare.json" >&2 2>/dev/null || true
             exit 1
           fi
-          jq -e --arg id "$CASE_ID" '.ok==true and .mode=="prepare" and .caseId==$id and .verifiedCase==true and .executesWrites==false and .sendsCustomerMessage==false' "$RUNNER_TEMP/prepare.json" >/dev/null
+          if ! jq -e --arg id "$CASE_ID" '.ok==true and .mode=="prepare" and .caseId==$id and .verifiedCase==true and .executesWrites==false and .sendsCustomerMessage==false' "$RUNNER_TEMP/prepare.json" >/dev/null; then
+            jq '{ok,code,error,mode,caseId,verifiedCase,verifiedOrderContext,analysisStatus,draftStatus,sendsCustomerMessage,executesWrites}' "$RUNNER_TEMP/prepare.json" >&2 || true
+            exit 1
+          fi
           VERIFIED_ORDER="$(jq -r '.verifiedOrderContext // false' "$RUNNER_TEMP/prepare.json")"
           ANALYSIS_STATUS="$(jq -r '.analysisStatus // "unknown"' "$RUNNER_TEMP/prepare.json")"
           DRAFT_STATUS="$(jq -r '.draftStatus // "unknown"' "$RUNNER_TEMP/prepare.json")"
@@ -160,7 +177,7 @@ jobs:
         env:
           REV: ${{ steps.deploy.outputs.revision }}
           TAG_URL: ${{ steps.deploy.outputs.url }}
-          PROD_REV: ${{ steps.before.outputs.production_revision }}
+          RETURNS_REV: ${{ steps.before.outputs.returns_revision }}
           VERIFIED_ORDER: ${{ steps.prepare.outputs.verified_order }}
           ANALYSIS_STATUS: ${{ steps.prepare.outputs.analysis_status }}
           DRAFT_STATUS: ${{ steps.prepare.outputs.draft_status }}
@@ -179,10 +196,9 @@ jobs:
           - Candidate URL: \`$TAG_URL\`
           - Candidate traffic: **0%**
           - Production positive traffic: **unchanged**
-          - Production reference revision: \`$PROD_REV\`
           - Private IAM: **unchanged**
           - Resolver enabled: **true**
-          - Admin gateway restored from traffic-serving production revision: **true**
+          - Admin gateway configured from traffic-serving Returns revision: \`$RETURNS_REV\`
           - Full-admin writes on candidate: **false**
           - Model promotion: **false**
           - Real case prepare: **PASS**
