@@ -161,7 +161,7 @@ describe('AiArmanAdminCaseAssistantOrchestratorService', () => {
     expect(result).toMatchObject({ writeExecuted: true });
     const modelInput = assistant.assist.mock.calls[0][0] as { messages: Array<Record<string, unknown>> };
     expect(String(modelInput.messages.at(-1)?.text)).toContain('case.pause');
-    expect(String(modelInput.messages.at(-1)?.text)).toContain('already');
+    expect(String(modelInput.messages.at(-1)?.text)).toContain('"executed":true');
   });
 
   it('does not execute a deliberative pause question', async () => {
