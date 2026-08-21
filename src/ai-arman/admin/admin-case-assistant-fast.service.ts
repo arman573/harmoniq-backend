@@ -8,24 +8,41 @@ const MAX_MESSAGE_TEXT = 3000;
 const MAX_DISCUSSION_TURNS = 12;
 const MAX_DISCUSSION_TEXT = 1200;
 
+const REPLY_DRAFT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    draftText: { type: 'string', minLength: 1, maxLength: 1800 },
+    requiresHumanDecision: { type: 'boolean' },
+    decisionReasons: {
+      type: 'array',
+      maxItems: 4,
+      items: { type: 'string', minLength: 1, maxLength: 160 },
+    },
+    confidence: { type: 'number', minimum: 0, maximum: 1 },
+  },
+  required: ['draftText', 'requiresHumanDecision', 'decisionReasons', 'confidence'],
+} as const;
+
 const ANALYSIS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    caseSummary: { type: 'string', minLength: 1, maxLength: 600 },
-    customerNeed: { type: 'string', minLength: 1, maxLength: 300 },
+    caseSummary: { type: 'string', minLength: 1, maxLength: 420 },
+    customerNeed: { type: 'string', minLength: 1, maxLength: 240 },
     recommendedActions: {
       type: 'array',
-      maxItems: 4,
-      items: { type: 'string', minLength: 1, maxLength: 220 },
+      maxItems: 3,
+      items: { type: 'string', minLength: 1, maxLength: 180 },
     },
-    reasoning: { type: 'string', minLength: 1, maxLength: 600 },
+    reasoning: { type: 'string', minLength: 1, maxLength: 420 },
     requiresHumanDecision: { type: 'boolean' },
     missingFacts: {
       type: 'array',
-      maxItems: 5,
-      items: { type: 'string', minLength: 1, maxLength: 160 },
+      maxItems: 4,
+      items: { type: 'string', minLength: 1, maxLength: 140 },
     },
+    replyDraft: REPLY_DRAFT_SCHEMA,
   },
   required: [
     'caseSummary',
@@ -34,6 +51,7 @@ const ANALYSIS_SCHEMA = {
     'reasoning',
     'requiresHumanDecision',
     'missingFacts',
+    'replyDraft',
   ],
 } as const;
 
@@ -91,10 +109,16 @@ export class AiArmanAdminCaseAssistantFastService {
       maxOutputTokens: 700,
       instructions: [
         'Du är AI Arman, intern ärendeassistent för HARMONIQ.',
-        'Analysera ärendet kort och konkret för en smal adminpanel.',
-        'Identifiera kundens faktiska behov, säkra nästa steg och vilka verifierade fakta som saknas.',
+        'Gör en enda snabb analys som både hjälper admin förstå ärendet och ger ett färdigt kundsvar. Undvik dubbelarbete.',
+        'Analysera kort och konkret för en smal adminpanel: kundens faktiska behov, säkra nästa steg och verifierade fakta som saknas.',
+        'Skriv replyDraft som Arman på HARMONIQ: varm, personlig, vänskaplig, trygg och lösningsorienterad. Kunden ska känna att en riktig människa bryr sig och hjälper en vän.',
+        'Ord som "vännen" eller "bästa" och uttryck som "självklart", "det löser vi" och "jag hjälper dig" får användas naturligt och sparsamt, normalt högst en gång per svar.',
+        'ReplyDraft ska normalt vara 2-5 korta meningar. Skriv enkelt talspråkligt svenska. En varm emoji som 🤍 eller 🙏 får användas när det passar.',
+        'Skriv endast brödtexten i replyDraft. Skriv inte Hej, kundnamn, hälsningsfras, Vänliga hälsningar, Varmt tack, HARMONIQ-signatur eller footer; mailmotorn lägger på detta automatiskt.',
         'Fatta aldrig beslut om återbetalning, avslag, goodwill, ersättningsvara, juridik eller annan känslig affärsåtgärd.',
-        'Använd endast fakta i ärendekontexten och godkända supportlärdomar. Hitta aldrig på fakta.',
+        'Om ett sådant beslut krävs ska både analysens requiresHumanDecision och replyDraft.requiresHumanDecision vara true, och replyDraft får inte påstå att beslutet redan är fattat.',
+        'Använd endast fakta i ärendekontexten och godkända supportlärdomar. Hitta aldrig på pris, lager, orderstatus, tracking, returutfall eller andra fakta.',
+        'Undvik stel företagsjargong och utfyllnad som "vi beklagar eventuella olägenheter", "tack för att du kontaktar oss" och "vänligen" om det inte verkligen behövs.',
       ].join(' '),
       payload: { case: normalized, approvedLearnings: lessons },
     });
@@ -264,17 +288,19 @@ function normalizeInput(value: unknown) {
 
 function projectAnalysis(value: unknown) {
   if (!isRecord(value)) return null;
-  const caseSummary = clean(value.caseSummary, 600);
-  const customerNeed = clean(value.customerNeed, 300);
-  const recommendedActions = readStringArray(value.recommendedActions, 4, 220);
-  const reasoning = clean(value.reasoning, 600);
-  const missingFacts = readStringArray(value.missingFacts, 5, 160);
+  const caseSummary = clean(value.caseSummary, 420);
+  const customerNeed = clean(value.customerNeed, 240);
+  const recommendedActions = readStringArray(value.recommendedActions, 3, 180);
+  const reasoning = clean(value.reasoning, 420);
+  const missingFacts = readStringArray(value.missingFacts, 4, 140);
+  const replyDraft = projectReplyDraft(value.replyDraft);
   if (
     !caseSummary ||
     !customerNeed ||
     !recommendedActions ||
     !reasoning ||
     !missingFacts ||
+    !replyDraft ||
     typeof value.requiresHumanDecision !== 'boolean'
   ) {
     return null;
@@ -286,7 +312,39 @@ function projectAnalysis(value: unknown) {
     reasoning,
     requiresHumanDecision: value.requiresHumanDecision,
     missingFacts,
+    replyDraft,
   };
+}
+
+function projectReplyDraft(value: unknown) {
+  if (!isRecord(value)) return null;
+  const draftText = stripMailWrapper(clean(value.draftText, 1800));
+  const decisionReasons = readStringArray(value.decisionReasons, 4, 160);
+  const confidence = value.confidence;
+  if (
+    !draftText ||
+    !decisionReasons ||
+    typeof value.requiresHumanDecision !== 'boolean' ||
+    typeof confidence !== 'number' ||
+    !Number.isFinite(confidence) ||
+    confidence < 0 ||
+    confidence > 1
+  ) {
+    return null;
+  }
+  return {
+    draftText,
+    requiresHumanDecision: value.requiresHumanDecision,
+    decisionReasons,
+    confidence,
+  };
+}
+
+function stripMailWrapper(value: string): string {
+  return value
+    .replace(/^Hej(?:\s+[^\n,!]+)?[!,]?\s*(?:👋)?\s*\n*/i, '')
+    .replace(/\n*\s*(?:Vänliga hälsningar|Med vänliga hälsningar|Varmt tack)[,!]?\s*(?:🤍)?\s*\n\s*(?:HARMONIQ(?: Kundservice)?)\s*$/i, '')
+    .trim();
 }
 
 function projectDiscussion(value: unknown) {
