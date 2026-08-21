@@ -267,7 +267,7 @@ function normalizeInput(value: unknown) {
     : [];
 
   const discussion = Array.isArray(value.discussion)
-    ? value.disussion
+    ? value.discussion
         .slice(-MAX_DISCUSSION_TURNS)
         .filter(isRecord)
         .map((turn) => ({
