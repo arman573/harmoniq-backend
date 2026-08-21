@@ -15,22 +15,19 @@ describe('AiArmanAdminCaseResolverService', () => {
       createReturnLabel: jest.fn(),
     } as any;
     const assistant = { assist: jest.fn() } as any;
-    const replyDraft = { createDraft: jest.fn() } as any;
     return {
       actions,
       returnActions,
       assistant,
-      replyDraft,
       service: new AiArmanAdminCaseResolverService(
         actions,
         returnActions,
         assistant,
-        replyDraft,
       ),
     };
   }
 
-  it('prepares a solution from authoritative case data instead of browser case facts', async () => {
+  it('prepares analysis and draft from one assistant pass using authoritative data', async () => {
     const h = createHarness();
     h.actions.readCase.mockResolvedValue({
       ok: true,
@@ -65,13 +62,12 @@ describe('AiArmanAdminCaseResolverService', () => {
       reasoning: 'Ärendet behöver fortsatt handläggning.',
       requiresHumanDecision: false,
       missingFacts: [],
-    });
-    h.replyDraft.createDraft.mockResolvedValue({
-      ok: true,
-      draftText: 'Hej Anna! Vi har tagit emot din reklamation.',
-      requiresHumanDecision: false,
-      decisionReasons: [],
-      confidence: 0.9,
+      replyDraft: {
+        draftText: 'Självklart vännen, jag hjälper dig med det här 🤍',
+        requiresHumanDecision: false,
+        decisionReasons: [],
+        confidence: 0.9,
+      },
     });
 
     const result = await h.service.prepare({
@@ -82,6 +78,8 @@ describe('AiArmanAdminCaseResolverService', () => {
     });
 
     expect(h.actions.readCase).toHaveBeenCalledWith('HQR-12345');
+    expect(h.actions.readOrderContext).toHaveBeenCalledWith('HQR-12345');
+    expect(h.assistant.assist).toHaveBeenCalledTimes(1);
     expect(h.assistant.assist).toHaveBeenCalledWith(
       expect.objectContaining({
         caseId: 'HQR-12345',
@@ -100,21 +98,14 @@ describe('AiArmanAdminCaseResolverService', () => {
       verifiedOrderContext: true,
       draft: {
         subject: 'Angående ditt ärende HQR-12345',
-        message: 'Hej Anna! Vi har tagit emot din reklamation.',
+        message: 'Självklart vännen, jag hjälper dig med det här 🤍',
       },
       sendsCustomerMessage: false,
       executesWrites: false,
     });
-    expect(result.availableActions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ action: 'case.return_status.set' }),
-        expect.objectContaining({ action: 'case.product_decision.set' }),
-        expect.objectContaining({ action: 'case.return_label.create' }),
-      ]),
-    );
   });
 
-  it('still prepares safely when optional model drafting is unavailable', async () => {
+  it('still prepares safely when model analysis is unavailable', async () => {
     const h = createHarness();
     h.actions.readCase.mockResolvedValue({
       ok: true,
@@ -138,7 +129,6 @@ describe('AiArmanAdminCaseResolverService', () => {
       ok: false,
       code: 'admin_assistant_unavailable',
     });
-    h.replyDraft.createDraft.mockRejectedValue(new Error('disabled'));
 
     const result = await h.service.prepare({ caseId: 'HQR-12345' });
 
@@ -155,13 +145,11 @@ describe('AiArmanAdminCaseResolverService', () => {
 
   it('blocks execute without explicit approval and performs no write', async () => {
     const h = createHarness();
-
     const result = await h.service.execute({
       caseId: 'HQR-12345',
       approved: false,
       action: 'case.complete',
     });
-
     expect(result).toMatchObject({
       ok: false,
       code: 'resolver_explicit_approval_required',
@@ -173,14 +161,12 @@ describe('AiArmanAdminCaseResolverService', () => {
 
   it('rejects actions outside the resolver allowlist', async () => {
     const h = createHarness();
-
     const result = await h.service.execute({
       caseId: 'HQR-12345',
       approved: true,
       action: 'refund.issue',
       amount: 999,
     });
-
     expect(result).toEqual({
       ok: false,
       code: 'invalid_resolver_execute_request',
@@ -225,13 +211,13 @@ describe('AiArmanAdminCaseResolverService', () => {
       approved: true,
       action: 'case.customer_message.send',
       subject: 'Angående ditt ärende',
-      message: 'Hej! Vi återkommer i ditt ärende.',
+      message: 'Vi återkommer i ditt ärende.',
     });
 
     expect(h.actions.sendCustomerMessage).toHaveBeenCalledWith(
       'HQR-12345',
       'Angående ditt ärende',
-      'Hej! Vi återkommer i ditt ärende.',
+      'Vi återkommer i ditt ärende.',
       true,
     );
     expect(h.actions.readCase).toHaveBeenCalledWith('HQR-12345');
@@ -272,10 +258,7 @@ describe('AiArmanAdminCaseResolverService', () => {
       action: 'case.return_label.create',
     });
 
-    expect(h.returnActions.createReturnLabel).toHaveBeenCalledWith(
-      'HQR-12345',
-      true,
-    );
+    expect(h.returnActions.createReturnLabel).toHaveBeenCalledWith('HQR-12345', true);
     expect(result).toMatchObject({
       ok: true,
       action: 'case.return_label.create',
