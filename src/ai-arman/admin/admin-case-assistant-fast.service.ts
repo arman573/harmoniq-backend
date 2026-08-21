@@ -106,20 +106,24 @@ export class AiArmanAdminCaseAssistantFastService {
       config,
       schemaName: 'ai_arman_admin_case_analysis',
       schema: ANALYSIS_SCHEMA,
-      maxOutputTokens: 700,
+      maxOutputTokens: 650,
       instructions: [
         'Du är AI Arman, intern ärendeassistent för HARMONIQ.',
         'Gör en enda snabb analys som både hjälper admin förstå ärendet och ger ett färdigt kundsvar. Undvik dubbelarbete.',
         'Analysera kort och konkret för en smal adminpanel: kundens faktiska behov, säkra nästa steg och verifierade fakta som saknas.',
-        'Skriv replyDraft som Arman på HARMONIQ: varm, personlig, vänskaplig, trygg och lösningsorienterad. Kunden ska känna att en riktig människa bryr sig och hjälper en vän.',
-        'Ord som "vännen" eller "bästa" och uttryck som "självklart", "det löser vi" och "jag hjälper dig" får användas naturligt och sparsamt, normalt högst en gång per svar.',
-        'ReplyDraft ska normalt vara 2-5 korta meningar. Skriv enkelt talspråkligt svenska. En varm emoji som 🤍 eller 🙏 får användas när det passar.',
-        'Skriv endast brödtexten i replyDraft. Skriv aldrig Hej, Hallå, kundnamn som hälsning, Vänliga hälsningar, Med vänliga hälsningar, Varma hälsningar, Varmt tack, HARMONIQ, HARMONIQ Kundservice eller annan signatur/footer; mailmotorn lägger på hela ramen automatiskt.',
-        'Lägg inte till generiska avslutningsfraser som Trevlig helg, Ha en fin dag eller Trevlig resa om kunden inte uttryckligen har gett en anledning till just den frasen.',
+        'ReplyDraft ska låta som Arman själv skriver till kunden: varm, go, mänsklig, rak, personlig och lite talspråklig. Det ska kännas som att en riktig person hjälper någon man bryr sig om, inte som ett kundservice-manus.',
+        'Använd gärna jag-form när det känns naturligt: "jag hjälper dig", "jag kollar det", "det löser vi". Undvik opersonligt myndighets- eller företagspråk.',
+        'Arman kan kalla kunden "vännen" eller "bästa", men naturligt och sparsamt, normalt högst en gång per svar och inte mekaniskt i varje svar.',
+        'Skriv kort: normalt 2-4 korta meningar. En varm emoji som 🤍, 🙏 eller 🫶 får användas när det passar, normalt högst en eller två.',
+        'Om kunden berättar att problemet redan löst sig ska du inte skapa en ny onödig fråga. Bekräfta varmt och avsluta naturligt.',
+        'Stilnivå, inte faktamallar: "Åh vad skönt vännen att det löste sig 🤍 Då behöver vi inte göra något mer. Ha en superfin resa!" eller "Självklart bästa, jag kollar det åt dig 🤍".',
+        'Skriv endast själva brödtexten i replyDraft. Mailmotorn äger hälsning och signatur.',
+        'Skriv därför ALDRIG Hej, Hallå, Tjena eller kundnamn som inledande hälsning. Skriv ALDRIG Mvh, MVH, Vänliga hälsningar, Med vänlig hälsning, Med vänliga hälsningar, Varma hälsningar, Bästa hälsningar, Varmt tack, HARMONIQ, HARMONIQ Kundservice eller annan signatur/footer.',
+        'Undvik generiska kundservicefraser som "tack för att du kontaktar oss", "vi beklagar eventuella olägenheter", "vänligen", "hör av dig så hjälper vi dig vidare" och "återkom gärna om du har fler frågor" när du kan säga samma sak mer mänskligt och direkt.',
+        'Lägg inte till generiska avslutningsfraser som Trevlig helg, Ha en fin dag eller Trevlig resa om kundens meddelande inte ger en naturlig anledning till just den frasen.',
         'Fatta aldrig beslut om återbetalning, avslag, goodwill, ersättningsvara, juridik eller annan känslig affärsåtgärd.',
         'Om ett sådant beslut krävs ska både analysens requiresHumanDecision och replyDraft.requiresHumanDecision vara true, och replyDraft får inte påstå att beslutet redan är fattat.',
         'Använd endast fakta i ärendekontexten och godkända supportlärdomar. Hitta aldrig på pris, lager, orderstatus, tracking, returutfall eller andra fakta.',
-        'Undvik stel företagsjargong och utfyllnad som "vi beklagar eventuella olägenheter", "tack för att du kontaktar oss" och "vänligen" om det inte verkligen behövs.',
       ].join(' '),
       payload: { case: normalized, approvedLearnings: lessons },
     });
@@ -263,7 +267,7 @@ function normalizeInput(value: unknown) {
     : [];
 
   const discussion = Array.isArray(value.discussion)
-    ? value.discussion
+    ? value.disussion
         .slice(-MAX_DISCUSSION_TURNS)
         .filter(isRecord)
         .map((turn) => ({
@@ -319,7 +323,7 @@ function projectAnalysis(value: unknown) {
 
 function projectReplyDraft(value: unknown) {
   if (!isRecord(value)) return null;
-  const draftText = stripMailWrapper(clean(value.draftText, 1800));
+  const draftText = stripMailWrapper(cleanDraftText(value.draftText, 1800));
   const decisionReasons = readStringArray(value.decisionReasons, 4, 160);
   const confidence = value.confidence;
   if (
@@ -344,13 +348,14 @@ function projectReplyDraft(value: unknown) {
 function stripMailWrapper(value: string): string {
   let text = String(value || '').trim();
 
-  text = text.replace(/^(?:Hej|Hallå)(?:\s+[^\n,!]+)?[!,]?\s*(?:👋|🤍)?\s*\n*/i, '');
-
   text = text.replace(
-    /\n*\s*(?:Vänliga hälsningar|Med vänlig hälsning|Med vänliga hälsningar|Varma hälsningar|Bästa hälsningar|Varmt tack)[,!]?\s*(?:🤍)?\s*\n+\s*(?:HARMONIQ(?: Kundservice)?|Arman(?:\s*[-–—]\s*HARMONIQ)?)\s*$/i,
+    /^(?:Hej|Hallå|Tjena)(?:\s+[^\n,!?.]{1,80})?[!,]?\s*(?:👋|🤍|🫶)?\s*/i,
     '',
   );
-  text = text.replace(/\n+\s*(?:HARMONIQ Kundservice|HARMONIQ)\s*$/i, '');
+
+  const trailingSignoff = /\s+(?:Mvh|MVH|Vänliga hälsningar|Med vänlig hälsning|Med vänliga hälsningar|Varma hälsningar|Bästa hälsningar|Varmt tack)[,!]?\s*(?:🤍|🫶)?\s*(?:(?:HARMONIQ(?: Kundservice)?)|(?:Arman(?:\s*[-–—]\s*HARMONIQ)?))?\s*$/i;
+  text = text.replace(trailingSignoff, '');
+  text = text.replace(/\s+(?:HARMONIQ Kundservice|HARMONIQ)\s*$/i, '');
 
   return text.trim();
 }
@@ -412,6 +417,19 @@ function extractOutputText(body: unknown): string | null {
     }
   }
   return parts.join('').trim() || null;
+}
+
+function cleanDraftText(value: unknown, max: number): string {
+  return String(value || '')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email_redacted]')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u0000-\u0009\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, max);
 }
 
 function clean(value: unknown, max: number): string {
