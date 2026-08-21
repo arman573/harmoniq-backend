@@ -17,10 +17,12 @@ describe('AiArmanAdminCaseAssistantFastService', () => {
     const fetchMock = jest.fn(async (_url, init) => {
       const request = JSON.parse(String(init?.body || '{}'));
       expect(request.reasoning).toEqual({ effort: 'minimal' });
-      expect(request.max_output_tokens).toBe(700);
+      expect(request.max_output_tokens).toBe(650);
       expect(request.text.format.name).toBe('ai_arman_admin_case_analysis');
       expect(request.text.format.schema.properties).toHaveProperty('replyDraft');
       expect(request.text.format.schema.properties).not.toHaveProperty('answerToAdmin');
+      expect(request.instructions).toContain('låta som Arman själv skriver');
+      expect(request.instructions).toContain('ALDRIG Mvh');
       return modelResponse({
         caseSummary: 'Kunden saknar tracking.',
         customerNeed: 'Verifierad leveransinformation.',
@@ -55,6 +57,37 @@ describe('AiArmanAdminCaseAssistantFastService', () => {
       },
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes greeting and legacy signature even when the model returns the full old mail wrapper', async () => {
+    enableAssistant();
+    const learning = learningStore();
+    global.fetch = jest.fn(async () => modelResponse({
+      caseSummary: 'Kunden meddelar att paketet nu går att hämta.',
+      customerNeed: 'Ingen ytterligare åtgärd behövs.',
+      recommendedActions: ['Bekräfta varmt att det löst sig.'],
+      reasoning: 'Kunden säger själv att problemet är löst.',
+      requiresHumanDecision: false,
+      missingFacts: [],
+      replyDraft: {
+        draftText: 'Hej,\n\nÅh vad skönt vännen att det löste sig 🤍 Då behöver vi inte göra något mer. Ha en superfin resa!\n\nMvh,\nHARMONIQ Kundservice',
+        requiresHumanDecision: false,
+        decisionReasons: [],
+        confidence: 0.96,
+      },
+    })) as typeof fetch;
+
+    const service = new AiArmanAdminCaseAssistantFastService(new AiArmanAdminCaseAssistantConfig(), learning);
+    await expect(service.assist({
+      caseId: 'HQR-2494077',
+      caseType: 'support',
+      messages: [{ direction: 'inbound', text: 'Jag fick precis meddelande att jag kan hämta paketet. Tack så mycket! Jag ska resa tidigt på måndag.' }],
+    })).resolves.toMatchObject({
+      ok: true,
+      replyDraft: {
+        draftText: 'Åh vad skönt vännen att det löste sig 🤍 Då behöver vi inte göra något mer. Ha en superfin resa!',
+      },
+    });
   });
 
   it('uses a separate compact schema and prior turns for discussion', async () => {
