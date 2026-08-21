@@ -114,7 +114,8 @@ export class AiArmanAdminCaseAssistantFastService {
         'Skriv replyDraft som Arman på HARMONIQ: varm, personlig, vänskaplig, trygg och lösningsorienterad. Kunden ska känna att en riktig människa bryr sig och hjälper en vän.',
         'Ord som "vännen" eller "bästa" och uttryck som "självklart", "det löser vi" och "jag hjälper dig" får användas naturligt och sparsamt, normalt högst en gång per svar.',
         'ReplyDraft ska normalt vara 2-5 korta meningar. Skriv enkelt talspråkligt svenska. En varm emoji som 🤍 eller 🙏 får användas när det passar.',
-        'Skriv endast brödtexten i replyDraft. Skriv inte Hej, kundnamn, hälsningsfras, Vänliga hälsningar, Varmt tack, HARMONIQ-signatur eller footer; mailmotorn lägger på detta automatiskt.',
+        'Skriv endast brödtexten i replyDraft. Skriv aldrig Hej, Hallå, kundnamn som hälsning, Vänliga hälsningar, Med vänliga hälsningar, Varma hälsningar, Varmt tack, HARMONIQ, HARMONIQ Kundservice eller annan signatur/footer; mailmotorn lägger på hela ramen automatiskt.',
+        'Lägg inte till generiska avslutningsfraser som Trevlig helg, Ha en fin dag eller Trevlig resa om kunden inte uttryckligen har gett en anledning till just den frasen.',
         'Fatta aldrig beslut om återbetalning, avslag, goodwill, ersättningsvara, juridik eller annan känslig affärsåtgärd.',
         'Om ett sådant beslut krävs ska både analysens requiresHumanDecision och replyDraft.requiresHumanDecision vara true, och replyDraft får inte påstå att beslutet redan är fattat.',
         'Använd endast fakta i ärendekontexten och godkända supportlärdomar. Hitta aldrig på pris, lager, orderstatus, tracking, returutfall eller andra fakta.',
@@ -341,10 +342,17 @@ function projectReplyDraft(value: unknown) {
 }
 
 function stripMailWrapper(value: string): string {
-  return value
-    .replace(/^Hej(?:\s+[^\n,!]+)?[!,]?\s*(?:👋)?\s*\n*/i, '')
-    .replace(/\n*\s*(?:Vänliga hälsningar|Med vänliga hälsningar|Varmt tack)[,!]?\s*(?:🤍)?\s*\n\s*(?:HARMONIQ(?: Kundservice)?)\s*$/i, '')
-    .trim();
+  let text = String(value || '').trim();
+
+  text = text.replace(/^(?:Hej|Hallå)(?:\s+[^\n,!]+)?[!,]?\s*(?:👋|🤍)?\s*\n*/i, '');
+
+  text = text.replace(
+    /\n*\s*(?:Vänliga hälsningar|Med vänlig hälsning|Med vänliga hälsningar|Varma hälsningar|Bästa hälsningar|Varmt tack)[,!]?\s*(?:🤍)?\s*\n+\s*(?:HARMONIQ(?: Kundservice)?|Arman(?:\s*[-–—]\s*HARMONIQ)?)\s*$/i,
+    '',
+  );
+  text = text.replace(/\n+\s*(?:HARMONIQ Kundservice|HARMONIQ)\s*$/i, '');
+
+  return text.trim();
 }
 
 function projectDiscussion(value: unknown) {
