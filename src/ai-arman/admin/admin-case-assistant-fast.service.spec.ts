@@ -11,14 +11,15 @@ describe('AiArmanAdminCaseAssistantFastService', () => {
     process.env = { ...originalEnv };
   });
 
-  it('uses a small minimal-reasoning schema for initial analysis', async () => {
+  it('returns analysis and customer draft in one minimal-reasoning model call', async () => {
     enableAssistant();
     const learning = learningStore();
-    global.fetch = jest.fn(async (_url, init) => {
+    const fetchMock = jest.fn(async (_url, init) => {
       const request = JSON.parse(String(init?.body || '{}'));
       expect(request.reasoning).toEqual({ effort: 'minimal' });
       expect(request.max_output_tokens).toBe(700);
       expect(request.text.format.name).toBe('ai_arman_admin_case_analysis');
+      expect(request.text.format.schema.properties).toHaveProperty('replyDraft');
       expect(request.text.format.schema.properties).not.toHaveProperty('answerToAdmin');
       return modelResponse({
         caseSummary: 'Kunden saknar tracking.',
@@ -27,8 +28,15 @@ describe('AiArmanAdminCaseAssistantFastService', () => {
         reasoning: 'Tracking måste verifieras innan den kommuniceras.',
         requiresHumanDecision: false,
         missingFacts: ['Verifierad fraktstatus'],
+        replyDraft: {
+          draftText: 'Hej Anna! Självklart vännen, jag hjälper dig att reda ut det här 🤍',
+          requiresHumanDecision: false,
+          decisionReasons: [],
+          confidence: 0.92,
+        },
       });
-    }) as typeof fetch;
+    });
+    global.fetch = fetchMock as typeof fetch;
 
     const service = new AiArmanAdminCaseAssistantFastService(new AiArmanAdminCaseAssistantConfig(), learning);
     await expect(service.assist({
@@ -40,7 +48,13 @@ describe('AiArmanAdminCaseAssistantFastService', () => {
       mode: 'analysis',
       sendsCustomerMessage: false,
       executesWrites: false,
+      replyDraft: {
+        draftText: 'Självklart vännen, jag hjälper dig att reda ut det här 🤍',
+        requiresHumanDecision: false,
+        confidence: 0.92,
+      },
     });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('uses a separate compact schema and prior turns for discussion', async () => {
