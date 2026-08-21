@@ -186,7 +186,8 @@ function extractOutputText(body: unknown): string | null {
 
 function projectResult(value: unknown) {
   if (!isRecord(value)) return null;
-  const draftText = typeof value.draftText === 'string' ? value.draftText.trim() : '';
+  const rawDraftText = typeof value.draftText === 'string' ? value.draftText.trim() : '';
+  const draftText = sanitizeDraftText(rawDraftText);
   const requiresHumanDecision = value.requiresHumanDecision;
   const decisionReasons = value.decisionReasons;
   const confidence = value.confidence;
@@ -201,6 +202,18 @@ function projectResult(value: unknown) {
     decisionReasons: decisionReasons.map((reason) => reason.trim()),
     confidence,
   };
+}
+
+function sanitizeDraftText(value: string): string {
+  let text = String(value || '').trim();
+
+  text = text.replace(/^Hej(?:\s+[^\n,!]+)?[!,]?\s*(?:👋)?\s*\n*/i, '');
+  text = text.replace(/^Hallå(?:\s+[^\n,!]+)?[!,]?\s*\n*/i, '');
+
+  text = text.replace(/\n+\s*(?:Vänliga hälsningar|Med vänliga hälsningar|Varmt tack)[,!]?\s*(?:🤍)?\s*\n+\s*(?:HARMONIQ(?: Kundservice)?)\s*$/i, '');
+  text = text.replace(/\n+\s*(?:HARMONIQ Kundservice|HARMONIQ)\s*$/i, '');
+
+  return text.trim();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
