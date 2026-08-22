@@ -12,6 +12,8 @@ export type AiArmanApprovedLearning = {
   internalRationale?: string;
 };
 
+export type AiArmanModelLearning = Omit<AiArmanApprovedLearning, 'internalRationale'>;
+
 const MAX_LESSONS = 500;
 const MAX_RELEVANT_LESSONS = 8;
 const MAX_BYTES = 512_000;
@@ -37,14 +39,15 @@ export class AiArmanAdminLearningStore {
   private inFlightRead: Promise<LearningEnvelope> | null = null;
   private inFlightKey = '';
 
-  async listRelevant(caseType: string): Promise<AiArmanApprovedLearning[]> {
+  async listRelevant(caseType: string): Promise<AiArmanModelLearning[]> {
     const config = storageConfig();
     if (!config) return [];
     const envelope = await this.readCachedEnvelope(config);
     const normalizedType = clean(caseType, 80).toLowerCase();
     return envelope.lessons
       .filter((lesson) => !normalizedType || !lesson.caseType || lesson.caseType === normalizedType)
-      .slice(-MAX_RELEVANT_LESSONS);
+      .slice(-MAX_RELEVANT_LESSONS)
+      .map(projectForModel);
   }
 
   async save(input: Omit<AiArmanApprovedLearning, 'id' | 'createdAt'>): Promise<AiArmanApprovedLearning> {
@@ -114,6 +117,14 @@ export class AiArmanAdminLearningStore {
 
     return this.inFlightRead;
   }
+}
+
+function projectForModel(lesson: AiArmanApprovedLearning): AiArmanModelLearning {
+  const {
+    internalRationale: _privateInternalRationale,
+    ...safeLearning
+  } = lesson;
+  return safeLearning;
 }
 
 function storageConfig() {
