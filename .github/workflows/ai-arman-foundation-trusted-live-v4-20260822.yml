@@ -32,6 +32,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+          fetch-depth: 1
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
@@ -45,6 +50,8 @@ jobs:
 
       - name: Diagnose existing stable versus candidate config
         shell: bash
+        env:
+          DIAG_PATH: docs/ai-arman/AI_ARMAN_FOUNDATION_V4_CONFIG_DIAG_20260822.md
         run: |
           set -euo pipefail
           test "$GITHUB_ACTOR" = 'arman573'
@@ -59,20 +66,44 @@ jobs:
           test "$CANDIDATE_POSITIVE" = '0'
           gcloud run revisions describe "$STABLE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/stable-rev.json"
           gcloud run revisions describe "$CANDIDATE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate-rev.json"
-          echo "stable_revision=$STABLE_REV"
-          echo "candidate_revision=$CANDIDATE_REV"
-          echo "candidate_positive_traffic=$CANDIDATE_POSITIVE"
           mismatch=0
+          mismatches=''
           for name in AI_ARMAN_ADMIN_RESOLVER_ENABLED AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED AI_ARMAN_ADMIN_ASSISTANT_ENABLED AI_ARMAN_MODEL_INTERPRETATION_ENABLED AI_ARMAN_OPENAI_MODEL AI_ARMAN_MODEL_PROMOTION_ENABLED; do
             OLD="$(jq -r --arg n "$name" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/stable-rev.json" | head -n1)"
             NEW="$(jq -r --arg n "$name" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/candidate-rev.json" | head -n1)"
             if [ "$OLD" != "$NEW" ]; then
               echo "::error title=AI Arman config parity mismatch::$name differs between stable and candidate"
+              mismatches="${mismatches}- ${name}\n"
               mismatch=1
             else
               echo "parity_ok=$name"
             fi
           done
+          mkdir -p "$(dirname "$DIAG_PATH")"
+          {
+            echo '# AI Arman foundation v4 config diagnosis'
+            echo
+            echo "- Run ID: \`$GITHUB_RUN_ID\`"
+            echo "- Checked at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- Source SHA: \`$SOURCE_SHA\`"
+            echo "- Stable revision: \`$STABLE_REV\`"
+            echo "- Candidate revision: \`$CANDIDATE_REV\`"
+            echo "- Candidate positive traffic: \`$CANDIDATE_POSITIVE\`"
+            echo '- Secret values recorded: **false**'
+            if [ "$mismatch" -eq 0 ]; then
+              echo '- Config parity: **PASS**'
+              echo '- Mismatched variable names: none'
+            else
+              echo '- Config parity: **FAIL**'
+              echo '- Mismatched variable names:'
+              printf '%b' "$mismatches"
+            fi
+          } > "$DIAG_PATH"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$DIAG_PATH"
+          git commit -m 'Record AI Arman v4 config diagnosis' || true
+          git push origin HEAD:feature/ai-arman-foundation-v1
           exit "$mismatch"
 
   deploy-verify:
