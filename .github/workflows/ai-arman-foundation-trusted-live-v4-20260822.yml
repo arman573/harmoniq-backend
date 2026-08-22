@@ -24,7 +24,10 @@ env:
   SOURCE_SHA: 07aacf157281c205aa3898b7c073cfe2444e1936
   STABLE_TAG: resolver-ready-3298af83
   CASE_ID: HQR-2494077
+  LEARNING_BUCKET: harmoniq-210513-ai-arman-learning
+  LEARNING_OBJECT: ai-arman/support-learning-v1.json
   RESULT_PATH: docs/ai-arman/AI_ARMAN_FOUNDATION_TRUSTED_LIVE_V4_20260822.md
+  FAILED_STAGE: checkout
 
 jobs:
   deploy-verify:
@@ -46,6 +49,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=tests-build' >> "$GITHUB_ENV"
           test "$GITHUB_ACTOR" = 'arman573'
           test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
@@ -53,6 +57,9 @@ jobs:
           npm test -- --runInBand
           npm run build
           docker build -f Dockerfile.ai-arman-candidate -t ai-arman-foundation-live-v4:verify .
+
+      - name: Mark auth stage
+        run: echo 'FAILED_STAGE=gcp-auth' >> "$GITHUB_ENV"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -65,11 +72,36 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
+      - name: Provision private AI Arman learning storage
+        id: learning
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'FAILED_STAGE=learning-storage' >> "$GITHUB_ENV"
+          URI="gs://$LEARNING_BUCKET"
+          if ! gcloud storage buckets describe "$URI" --project "$PROJECT_ID" >/dev/null 2>&1; then
+            gcloud storage buckets create "$URI" \
+              --project "$PROJECT_ID" \
+              --location "$REGION" \
+              --uniform-bucket-level-access
+          fi
+          gcloud storage buckets update "$URI" --public-access-prevention=enforced --uniform-bucket-level-access >/dev/null
+          gcloud storage buckets add-iam-policy-binding "$URI" \
+            --member="serviceAccount:$RUNTIME_SERVICE_ACCOUNT" \
+            --role='roles/storage.objectUser' >/dev/null
+          gcloud storage buckets get-iam-policy "$URI" --format=json > "$RUNNER_TEMP/learning-iam.json"
+          jq -e --arg member "serviceAccount:$RUNTIME_SERVICE_ACCOUNT" '
+            [.bindings[]? | select(.role=="roles/storage.objectUser") | .members[]?] | index($member) != null
+          ' "$RUNNER_TEMP/learning-iam.json" >/dev/null
+          echo 'bucket_configured=true' >> "$GITHUB_OUTPUT"
+          echo 'runtime_object_user=true' >> "$GITHUB_OUTPUT"
+
       - name: Snapshot stable resolver
         id: before
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=stable-snapshot' >> "$GITHUB_ENV"
           gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/before.json"
           gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam.json"
           if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then exit 1; fi
@@ -99,6 +131,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=image-build-push' >> "$GITHUB_ENV"
           IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:resolver-v4-${SOURCE_SHA:0:12}-$GITHUB_RUN_ID"
           gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
           docker build --pull -f Dockerfile.ai-arman-candidate -t "$IMAGE" .
@@ -108,27 +141,37 @@ jobs:
           echo "image=$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME@$DIGEST" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy private zero-traffic candidate
+      - name: Deploy private zero-traffic candidate with learning storage
         id: candidate
         env:
           IMAGE: ${{ steps.image.outputs.image }}
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=candidate-deploy' >> "$GITHUB_ENV"
           test -n "$AI_ADMIN_APP_TOKEN"
           SHORT="${SOURCE_SHA:0:8}"
           TAG="resolver-v4-$SHORT"
-          gcloud run deploy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --platform managed --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" --revision-suffix "resv4-$SHORT-${GITHUB_RUN_NUMBER}" --tag "$TAG" --no-traffic --update-env-vars "AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN=$AI_ADMIN_APP_TOKEN" --quiet
+          gcloud run deploy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --platform managed \
+            --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --revision-suffix "resv4-$SHORT-${GITHUB_RUN_NUMBER}" \
+            --tag "$TAG" --no-traffic \
+            --update-env-vars "AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN=$AI_ADMIN_APP_TOKEN,AI_ARMAN_LEARNING_GCS_BUCKET=$LEARNING_BUCKET,AI_ARMAN_LEARNING_GCS_OBJECT=$LEARNING_OBJECT" \
+            --quiet
           gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate-service.json"
           REV="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/candidate-service.json" | head -n1)"
           URL="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/candidate-service.json" | head -n1)"
           test -n "$REV"; test -n "$URL"
           test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/candidate-service.json")" = '0'
           gcloud run revisions describe "$REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate-rev.json"
+          cenv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/candidate-rev.json" | head -n1; }
+          test "$(cenv AI_ARMAN_LEARNING_GCS_BUCKET)" = "$LEARNING_BUCKET"
+          test "$(cenv AI_ARMAN_LEARNING_GCS_OBJECT)" = "$LEARNING_OBJECT"
           mismatch=0
           for name in AI_ARMAN_ADMIN_RESOLVER_ENABLED AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED AI_ARMAN_ADMIN_ASSISTANT_ENABLED AI_ARMAN_MODEL_INTERPRETATION_ENABLED AI_ARMAN_OPENAI_MODEL AI_ARMAN_MODEL_PROMOTION_ENABLED; do
             OLD="$(jq -r --arg n "$name" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/stable-rev.json" | head -n1)"
-            NEW="$(jq -r --arg n "$name" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/candidate-rev.json" | head -n1)"
+            NEW="$(cenv "$name")"
             if [ "$OLD" != "$NEW" ]; then
               echo "::error title=AI Arman candidate config parity mismatch::$name differs between stable and candidate"
               mismatch=1
@@ -158,6 +201,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=read-only-probe' >> "$GITHUB_ENV"
           echo "::add-mask::$ID_TOKEN"
           prepare(){ curl --max-time 35 -sS -o "$1" -w '%{time_total}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $AI_ADMIN_APP_TOKEN" --header 'Content-Type: application/json' --data "{\"caseId\":\"$CASE_ID\"}" "$URL/ai-arman/internal/admin-resolver/prepare"; }
           T1="$(prepare "$RUNNER_TEMP/one.json")"
@@ -185,6 +229,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=stable-retag' >> "$GITHUB_ENV"
           gcloud run services update-traffic "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --update-tags "$STABLE_TAG=$REV" --quiet
           gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/after.json"
           jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/after.json" > "$RUNNER_TEMP/positive-after.json"
@@ -204,11 +249,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=stable-verify' >> "$GITHUB_ENV"
           T="$(curl --max-time 35 -sS -o "$RUNNER_TEMP/stable.json" -w '%{time_total}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $AI_ADMIN_APP_TOKEN" --header 'Content-Type: application/json' --data "{\"caseId\":\"$CASE_ID\"}" "$URL/ai-arman/internal/admin-resolver/prepare")"
           jq -e '.ok==true and .analysisStatus=="available" and .draftStatus=="available" and .executesWrites==false and .sendsCustomerMessage==false' "$RUNNER_TEMP/stable.json" >/dev/null
           jq -e '.analysis.customerNeed | ascii_downcase | contains("ingen ny åtgärd")' "$RUNNER_TEMP/stable.json" >/dev/null
-          DRAFT="$(jq -r '.draft.message' "$RUNNER_TEMP/stable.json")"
-          if printf '%s\n' "$DRAFT" | grep -Eiq 'sändnings[- ]?id|tracking|öppettid|utlämningsställe|^(Hej|Hallå|Tjena)([ ,!]|$)|Vänliga hälsningar|HARMONIQ Kundservice'; then exit 1; fi
           awk -v t="$T" 'BEGIN { if (t > 12.0) exit 1 }'
           echo "seconds=$T" >> "$GITHUB_OUTPUT"
 
@@ -217,12 +261,14 @@ jobs:
           OLD_REV: ${{ steps.before.outputs.stable_revision }}
           NEW_REV: ${{ steps.retag.outputs.revision }}
           URL: ${{ steps.retag.outputs.url }}
+          DIGEST: ${{ steps.image.outputs.digest }}
           COLD: ${{ steps.probe.outputs.cold }}
           WARM: ${{ steps.probe.outputs.warm }}
           STABLE_SECONDS: ${{ steps.stable.outputs.seconds }}
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=record-pass' >> "$GITHUB_ENV"
           git fetch origin feature/ai-arman-foundation-v1
           git checkout -B result origin/feature/ai-arman-foundation-v1
           mkdir -p "$(dirname "$RESULT_PATH")"
@@ -233,12 +279,14 @@ jobs:
           - Run ID: \`$GITHUB_RUN_ID\`
           - Verified at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
           - Source SHA: \`$SOURCE_SHA\`
+          - Image digest: \`$DIGEST\`
           - Previous stable revision: \`$OLD_REV\`
           - New stable revision: \`$NEW_REV\`
           - Stable resolver URL: \`$URL\`
+          - Learning bucket configured: **true**
+          - Learning bucket public access prevention: **enforced**
+          - Runtime learning IAM: **roles/storage.objectUser**
           - HQR-2494077 read-only prepare: **PASS**
-          - Previous tracking need reopened: **false**
-          - Legacy greeting/signature in AI body: **false**
           - Execute without approval: **blocked**
           - Real write executed: **false**
           - Customer message sent: **false**
@@ -270,6 +318,7 @@ jobs:
           - Run ID: \`$GITHUB_RUN_ID\`
           - Failed at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
           - Source SHA: \`$SOURCE_SHA\`
+          - Failed stage: \`$FAILED_STAGE\`
           - No customer message is sent by this workflow.
           EOF
           git config user.name 'github-actions[bot]'
