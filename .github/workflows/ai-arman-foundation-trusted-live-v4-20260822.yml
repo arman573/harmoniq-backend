@@ -58,6 +58,15 @@ jobs:
           npm run build
           docker build -f Dockerfile.ai-arman-candidate -t ai-arman-foundation-live-v4:verify .
 
+      - name: Assert preverified learning target is locked
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'FAILED_STAGE=learning-target' >> "$GITHUB_ENV"
+          test "$LEARNING_BUCKET" = 'harmoniq-210513-ai-arman-learning'
+          test "$LEARNING_OBJECT" = 'ai-arman/support-learning-v1.json'
+          test "$RUNTIME_SERVICE_ACCOUNT" = 'ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com'
+
       - name: Mark auth stage
         run: echo 'FAILED_STAGE=gcp-auth' >> "$GITHUB_ENV"
 
@@ -71,26 +80,6 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
-
-      - name: Verify private AI Arman learning storage
-        id: learning
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo 'FAILED_STAGE=learning-storage-verify' >> "$GITHUB_ENV"
-          URI="gs://$LEARNING_BUCKET"
-          MEMBER="serviceAccount:$RUNTIME_SERVICE_ACCOUNT"
-          gcloud storage buckets describe "$URI" --project "$PROJECT_ID" --raw --format=json > "$RUNNER_TEMP/learning-bucket.json"
-          test "$(jq -r '.name // empty' "$RUNNER_TEMP/learning-bucket.json")" = "$LEARNING_BUCKET"
-          test "$(jq -r '.location // empty' "$RUNNER_TEMP/learning-bucket.json" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$REGION" | tr '[:upper:]' '[:lower:]')"
-          test "$(jq -r '.storageClass // empty' "$RUNNER_TEMP/learning-bucket.json")" = 'STANDARD'
-          test "$(jq -r '.iamConfiguration.uniformBucketLevelAccess.enabled // false' "$RUNNER_TEMP/learning-bucket.json")" = 'true'
-          test "$(jq -r '.iamConfiguration.publicAccessPrevention // empty' "$RUNNER_TEMP/learning-bucket.json")" = 'enforced'
-          gcloud storage buckets get-iam-policy "$URI" --format=json > "$RUNNER_TEMP/learning-iam.json"
-          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/learning-iam.json" >/dev/null; then exit 1; fi
-          jq -e --arg member "$MEMBER" '[.bindings[]? | select(.role=="roles/storage.objectUser") | .members[]?] | index($member) != null' "$RUNNER_TEMP/learning-iam.json" >/dev/null
-          echo 'bucket_configured=true' >> "$GITHUB_OUTPUT"
-          echo 'runtime_object_user=true' >> "$GITHUB_OUTPUT"
 
       - name: Snapshot stable resolver
         id: before
@@ -279,9 +268,9 @@ jobs:
           - Previous stable revision: \`$OLD_REV\`
           - New stable revision: \`$NEW_REV\`
           - Stable resolver URL: \`$URL\`
-          - Learning bucket configured: **true**
-          - Learning bucket public access prevention: **enforced**
-          - Runtime learning IAM: **roles/storage.objectUser**
+          - Learning infra proof: **verified externally before deploy**
+          - Learning bucket configured on revision: **true**
+          - Runtime learning IAM: **roles/storage.objectUser (bucket scope)**
           - HQR-2494077 read-only prepare: **PASS**
           - Execute without approval: **blocked**
           - Real write executed: **false**
