@@ -194,20 +194,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -n "$AI_ADMIN_APP_TOKEN"
           SHORT="${SOURCE_SHA:0:8}"
           TAG="resolver-v4-$SHORT"
-          gcloud run deploy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --platform managed --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" --revision-suffix "resv4-$SHORT-${GITHUB_RUN_NUMBER}" --tag "$TAG" --no-traffic --quiet
+          gcloud run deploy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --platform managed --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" --revision-suffix "resv4-$SHORT-${GITHUB_RUN_NUMBER}" --tag "$TAG" --no-traffic --update-env-vars "AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN=$AI_ADMIN_APP_TOKEN" --quiet
           gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate-service.json"
           REV="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/candidate-service.json" | head -n1)"
           URL="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/candidate-service.json" | head -n1)"
           test -n "$REV"; test -n "$URL"
           test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/candidate-service.json")" = '0'
           gcloud run revisions describe "$REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate-rev.json"
+          mismatch=0
           for name in AI_ARMAN_ADMIN_RESOLVER_ENABLED AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED AI_ARMAN_ADMIN_ASSISTANT_ENABLED AI_ARMAN_MODEL_INTERPRETATION_ENABLED AI_ARMAN_OPENAI_MODEL AI_ARMAN_MODEL_PROMOTION_ENABLED; do
             OLD="$(jq -r --arg n "$name" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/stable-rev.json" | head -n1)"
             NEW="$(jq -r --arg n "$name" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/candidate-rev.json" | head -n1)"
-            test "$OLD" = "$NEW"
+            if [ "$OLD" != "$NEW" ]; then
+              echo "::error title=AI Arman candidate config parity mismatch::$name differs between stable and candidate"
+              mismatch=1
+            fi
           done
+          test "$mismatch" = '0'
           echo "revision=$REV" >> "$GITHUB_OUTPUT"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
