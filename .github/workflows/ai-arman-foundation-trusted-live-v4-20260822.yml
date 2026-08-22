@@ -72,27 +72,23 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Provision private AI Arman learning storage
+      - name: Verify private AI Arman learning storage
         id: learning
         shell: bash
         run: |
           set -euo pipefail
-          echo 'FAILED_STAGE=learning-storage' >> "$GITHUB_ENV"
+          echo 'FAILED_STAGE=learning-storage-verify' >> "$GITHUB_ENV"
           URI="gs://$LEARNING_BUCKET"
-          if ! gcloud storage buckets describe "$URI" --project "$PROJECT_ID" >/dev/null 2>&1; then
-            gcloud storage buckets create "$URI" \
-              --project "$PROJECT_ID" \
-              --location "$REGION" \
-              --uniform-bucket-level-access
-          fi
-          gcloud storage buckets update "$URI" --public-access-prevention=enforced --uniform-bucket-level-access >/dev/null
-          gcloud storage buckets add-iam-policy-binding "$URI" \
-            --member="serviceAccount:$RUNTIME_SERVICE_ACCOUNT" \
-            --role='roles/storage.objectUser' >/dev/null
+          MEMBER="serviceAccount:$RUNTIME_SERVICE_ACCOUNT"
+          gcloud storage buckets describe "$URI" --project "$PROJECT_ID" --raw --format=json > "$RUNNER_TEMP/learning-bucket.json"
+          test "$(jq -r '.name // empty' "$RUNNER_TEMP/learning-bucket.json")" = "$LEARNING_BUCKET"
+          test "$(jq -r '.location // empty' "$RUNNER_TEMP/learning-bucket.json" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$REGION" | tr '[:upper:]' '[:lower:]')"
+          test "$(jq -r '.storageClass // empty' "$RUNNER_TEMP/learning-bucket.json")" = 'STANDARD'
+          test "$(jq -r '.iamConfiguration.uniformBucketLevelAccess.enabled // false' "$RUNNER_TEMP/learning-bucket.json")" = 'true'
+          test "$(jq -r '.iamConfiguration.publicAccessPrevention // empty' "$RUNNER_TEMP/learning-bucket.json")" = 'enforced'
           gcloud storage buckets get-iam-policy "$URI" --format=json > "$RUNNER_TEMP/learning-iam.json"
-          jq -e --arg member "serviceAccount:$RUNTIME_SERVICE_ACCOUNT" '
-            [.bindings[]? | select(.role=="roles/storage.objectUser") | .members[]?] | index($member) != null
-          ' "$RUNNER_TEMP/learning-iam.json" >/dev/null
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/learning-iam.json" >/dev/null; then exit 1; fi
+          jq -e --arg member "$MEMBER" '[.bindings[]? | select(.role=="roles/storage.objectUser") | .members[]?] | index($member) != null' "$RUNNER_TEMP/learning-iam.json" >/dev/null
           echo 'bucket_configured=true' >> "$GITHUB_OUTPUT"
           echo 'runtime_object_user=true' >> "$GITHUB_OUTPUT"
 
