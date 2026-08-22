@@ -85,9 +85,78 @@ describe('AiArmanAdminCaseAssistantFastService', () => {
     })).resolves.toMatchObject({
       ok: true,
       replyDraft: {
-        draftText: 'Åh vad skönt vännen att det löste sig 🤍 Då behöver vi inte göra något mer. Ha en superfin resa!',
+        draftText: 'Åh vad skönt vännen att det löste sig 🤍 Ha en superfin resa! 🫶',
       },
     });
+  });
+
+  it('does not reopen an old tracking need after the latest customer message confirms collection is available', async () => {
+    enableAssistant();
+    const learning = learningStore();
+    const fetchMock = jest.fn(async (_url, init) => {
+      const request = JSON.parse(String(init?.body || '{}'));
+      expect(request.input).toContain('latestCustomerMessage');
+      expect(request.input).toContain('latestCustomerMessageClosesPreviousNeed');
+      expect(request.input).toContain('Jag fick precis ett meddelande om att jag kan hämta det från utlämningsstället.');
+
+      return modelResponse({
+        caseSummary: 'Kunden har tidigare efterfrågat sändnings-ID.',
+        customerNeed: 'Skicka sändnings-ID.',
+        recommendedActions: [
+          'Skicka sändnings-ID.',
+          'Informera om öppettider på utlämningsstället.',
+        ],
+        reasoning: 'Det fanns en tidigare fråga om tracking.',
+        requiresHumanDecision: false,
+        missingFacts: ['Öppettider'],
+        replyDraft: {
+          draftText: 'Behöver du fortfarande sändnings-ID så ordnar jag det, och jag kan även hjälpa med öppettider.',
+          requiresHumanDecision: false,
+          decisionReasons: [],
+          confidence: 0.91,
+        },
+      });
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    const service = new AiArmanAdminCaseAssistantFastService(new AiArmanAdminCaseAssistantConfig(), learning);
+    const result = await service.assist({
+      caseId: 'HQR-2494077',
+      caseType: 'support',
+      messages: [
+        {
+          direction: 'inbound',
+          sender: 'Kund',
+          date: '2026-08-19T20:18:00+02:00',
+          text: 'Hej, kan jag få Sändnings-ID?',
+        },
+        {
+          direction: 'inbound',
+          sender: 'Kund',
+          date: '2026-08-21T13:09:00+02:00',
+          text: 'Jag får ingenting, så jag tror att jag vill inte ha den, jag reser på måndag.',
+        },
+        {
+          direction: 'inbound',
+          sender: 'Kund',
+          date: '2026-08-21T13:19:00+02:00',
+          text: 'Jag ber verkligen om ursäkt! Jag fick precis ett meddelande om att jag kan hämta det från utlämningsstället. Tack så mycket för den snabba leveransen, och ursäkta igen att jag hade så bråttom. Jag ska resa tidigt på måndag morgon.',
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      mode: 'analysis',
+      customerNeed: 'Kunden bekräftar att det tidigare problemet är löst och efterfrågar ingen ny åtgärd.',
+      recommendedActions: ['Bekräfta varmt att det löste sig och återöppna inte tidigare frågor.'],
+      missingFacts: [],
+      replyDraft: {
+        draftText: 'Åh vad skönt vännen att det löste sig 🤍 Du behöver verkligen inte be om ursäkt, jag fattar att det blev stressigt. Ha en superfin resa! 🫶',
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/sändnings-id|öppettider/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('uses a separate compact schema and prior turns for discussion', async () => {
