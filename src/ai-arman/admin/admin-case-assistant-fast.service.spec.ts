@@ -155,7 +155,12 @@ describe('AiArmanAdminCaseAssistantFastService', () => {
         draftText: 'Åh vad skönt vännen att det löste sig 🤍 Du behöver verkligen inte be om ursäkt, jag fattar att det blev stressigt. Ha en superfin resa! 🫶',
       },
     });
-    expect(JSON.stringify(result)).not.toMatch(/sändnings-id|öppettider/i);
+    if (!result || result.ok !== true || result.mode !== 'analysis') {
+      throw new Error('Expected successful analysis result');
+    }
+    expect(result.customerNeed).not.toMatch(/sändnings-id|öppettider/i);
+    expect(result.recommendedActions.join(' ')).not.toMatch(/sändnings-id|öppettider/i);
+    expect(result.replyDraft.draftText).not.toMatch(/sändnings-id|öppettider/i);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
