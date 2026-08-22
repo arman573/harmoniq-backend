@@ -21,7 +21,7 @@ env:
   ARTIFACT_REPOSITORY: harmoniq-containers
   WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
   DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
-  SOURCE_SHA: 8ad1c47e31dfb82aef879f9cc63837fe1befe21a
+  SOURCE_SHA: 07aacf157281c205aa3898b7c073cfe2444e1936
   STABLE_TAG: resolver-ready-3298af83
   CASE_ID: HQR-2494077
   RESULT_PATH: docs/ai-arman/AI_ARMAN_FOUNDATION_TRUSTED_LIVE_V4_20260822.md
