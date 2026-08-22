@@ -4,6 +4,7 @@ import {
   type AiArmanAdminActionResult,
 } from './admin-action.service';
 import { AiArmanAdminCaseAssistantFastService } from './admin-case-assistant-fast.service';
+import { AiArmanAdminLearningStore } from './admin-learning.store';
 import {
   AiArmanAdminReturnResolutionActionsService,
   type AiArmanReturnResolutionActionResult,
@@ -23,6 +24,7 @@ export class AiArmanAdminCaseResolverService {
     private readonly actions: AiArmanAdminActionService,
     private readonly returnActions: AiArmanAdminReturnResolutionActionsService,
     private readonly assistant: AiArmanAdminCaseAssistantFastService,
+    private readonly learning: AiArmanAdminLearningStore,
   ) {}
 
   async prepare(input: unknown) {
@@ -152,6 +154,7 @@ export class AiArmanAdminCaseResolverService {
     }
 
     const readBack = await this.actions.readCase(normalized.caseId);
+    const learningResult = await this.saveApprovedReplyLearning(normalized, readBack);
     return {
       ok: true as const,
       mode: 'execute' as const,
@@ -164,7 +167,55 @@ export class AiArmanAdminCaseResolverService {
           ? projectCaseSnapshot(readBack.data)
           : null,
       verificationError: readBack.ok ? null : readBack.error || 'read_back_failed',
+      ...learningResult,
     };
+  }
+
+  private async saveApprovedReplyLearning(
+    input: NormalizedExecuteInput,
+    readBack: AiArmanAdminActionResult,
+  ) {
+    if (
+      input.action !== 'case.customer_message.send' ||
+      !input.learnFromReply ||
+      !input.internalLearningNote
+    ) {
+      return { learningRequested: false, learningSaved: false };
+    }
+
+    const caseType =
+      readBack.ok && isRecord(readBack.data)
+        ? clean(readBack.data.type || readBack.data.caseType, 80).toLowerCase()
+        : '';
+
+    try {
+      const lesson = await this.learning.save({
+        createdBy: 'returns-admin-reviewed-reply',
+        caseType,
+        principle:
+          'Följ samma godkända hanteringsmönster och ton när ett nytt ärende är materiellt likt och aktuella verifierade fakta stödjer samma strategi.',
+        appliesWhen:
+          'Ett liknande kundserviceärende uppstår och aktuell verifierad ärende- och orderkontext stödjer samma typ av bemötande.',
+        avoid:
+          'Avslöja aldrig intern motivering. Återanvänd aldrig gamla faktapåståenden utan ny verifiering. Verifierade backendfakta går alltid före lärdomar.',
+        approvedReplyExample: input.message,
+        internalRationale: input.internalLearningNote,
+      });
+      return {
+        learningRequested: true,
+        learningSaved: true,
+        learningId: lesson.id,
+      };
+    } catch (error) {
+      return {
+        learningRequested: true,
+        learningSaved: false,
+        learningError:
+          error instanceof Error && error.message
+            ? error.message
+            : 'admin_learning_save_failed',
+      };
+    }
   }
 
   private executeAction(
@@ -211,6 +262,8 @@ type NormalizedExecuteInput =
       action: 'case.customer_message.send';
       subject: string;
       message: string;
+      learnFromReply: boolean;
+      internalLearningNote: string;
     }
   | {
       caseId: string;
@@ -258,6 +311,8 @@ function normalizeExecuteInput(value: unknown): NormalizedExecuteInput | null {
       action: 'case.customer_message.send',
       subject,
       message,
+      learnFromReply: value.learnFromReply === true,
+      internalLearningNote: clean(value.internalLearningNote, 800),
     };
   }
 
