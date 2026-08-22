@@ -177,8 +177,7 @@ export class AiArmanAdminCaseResolverService {
   ) {
     if (
       input.action !== 'case.customer_message.send' ||
-      !input.learnFromReply ||
-      !input.internalLearningNote
+      !input.learnFromReply
     ) {
       return { learningRequested: false, learningSaved: false };
     }
