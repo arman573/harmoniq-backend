@@ -8,6 +8,8 @@ export type AiArmanApprovedLearning = {
   principle: string;
   appliesWhen: string;
   avoid: string;
+  approvedReplyExample?: string;
+  internalRationale?: string;
 };
 
 const MAX_LESSONS = 500;
@@ -49,6 +51,8 @@ export class AiArmanAdminLearningStore {
     const config = storageConfig();
     if (!config) throw new Error('admin_learning_storage_not_configured');
 
+    const approvedReplyExample = clean(input.approvedReplyExample, 1200);
+    const internalRationale = clean(input.internalRationale, 800);
     const lesson: AiArmanApprovedLearning = {
       id: 'learn-' + crypto.randomUUID(),
       createdAt: new Date().toISOString(),
@@ -57,6 +61,8 @@ export class AiArmanAdminLearningStore {
       principle: clean(input.principle, 800),
       appliesWhen: clean(input.appliesWhen, 500),
       avoid: clean(input.avoid, 500),
+      ...(approvedReplyExample ? { approvedReplyExample } : {}),
+      ...(internalRationale ? { internalRationale } : {}),
     };
     if (!lesson.createdBy || !lesson.principle) throw new Error('invalid_admin_learning');
 
@@ -189,15 +195,21 @@ function normalizeLessons(value: unknown): AiArmanApprovedLearning[] {
   if (!Array.isArray(value)) return [];
   return value
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
-    .map((item) => ({
-      id: clean(item.id, 120),
-      createdAt: clean(item.createdAt, 64),
-      createdBy: clean(item.createdBy, 120),
-      caseType: clean(item.caseType, 80).toLowerCase(),
-      principle: clean(item.principle, 800),
-      appliesWhen: clean(item.appliesWhen, 500),
-      avoid: clean(item.avoid, 500),
-    }))
+    .map((item) => {
+      const approvedReplyExample = clean(item.approvedReplyExample, 1200);
+      const internalRationale = clean(item.internalRationale, 800);
+      return {
+        id: clean(item.id, 120),
+        createdAt: clean(item.createdAt, 64),
+        createdBy: clean(item.createdBy, 120),
+        caseType: clean(item.caseType, 80).toLowerCase(),
+        principle: clean(item.principle, 800),
+        appliesWhen: clean(item.appliesWhen, 500),
+        avoid: clean(item.avoid, 500),
+        ...(approvedReplyExample ? { approvedReplyExample } : {}),
+        ...(internalRationale ? { internalRationale } : {}),
+      };
+    })
     .filter((item) => item.id && item.createdAt && item.createdBy && item.principle)
     .slice(-MAX_LESSONS);
 }
