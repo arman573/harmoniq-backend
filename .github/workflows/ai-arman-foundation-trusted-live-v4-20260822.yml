@@ -27,6 +27,54 @@ env:
   RESULT_PATH: docs/ai-arman/AI_ARMAN_FOUNDATION_TRUSTED_LIVE_V4_20260822.md
 
 jobs:
+  diagnose-existing-config:
+    if: github.event.head_commit.message == 'Diagnose AI Arman foundation trusted live v4'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Diagnose existing stable versus candidate config
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTOR" = 'arman573'
+          test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
+          CANDIDATE_TAG="resolver-v4-${SOURCE_SHA:0:8}"
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service.json"
+          STABLE_REV="$(jq -r --arg tag "$STABLE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/service.json" | head -n1)"
+          CANDIDATE_REV="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/service.json" | head -n1)"
+          test -n "$STABLE_REV"
+          test -n "$CANDIDATE_REV"
+          CANDIDATE_POSITIVE="$(jq -r --arg r "$CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")"
+          test "$CANDIDATE_POSITIVE" = '0'
+          gcloud run revisions describe "$STABLE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/stable-rev.json"
+          gcloud run revisions describe "$CANDIDATE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate-rev.json"
+          echo "stable_revision=$STABLE_REV"
+          echo "candidate_revision=$CANDIDATE_REV"
+          echo "candidate_positive_traffic=$CANDIDATE_POSITIVE"
+          mismatch=0
+          for name in AI_ARMAN_ADMIN_RESOLVER_ENABLED AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED AI_ARMAN_ADMIN_ASSISTANT_ENABLED AI_ARMAN_MODEL_INTERPRETATION_ENABLED AI_ARMAN_OPENAI_MODEL AI_ARMAN_MODEL_PROMOTION_ENABLED; do
+            OLD="$(jq -r --arg n "$name" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/stable-rev.json" | head -n1)"
+            NEW="$(jq -r --arg n "$name" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/candidate-rev.json" | head -n1)"
+            if [ "$OLD" != "$NEW" ]; then
+              echo "::error title=AI Arman config parity mismatch::$name differs between stable and candidate"
+              mismatch=1
+            else
+              echo "parity_ok=$name"
+            fi
+          done
+          exit "$mismatch"
+
   deploy-verify:
     if: github.event.head_commit.message == 'Deploy AI Arman foundation trusted live v4'
     runs-on: ubuntu-24.04
