@@ -20,7 +20,7 @@ describe('AiArmanAdminReplyDraftService', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('redacts email and returns an allowlisted draft without writes', async () => {
+  it('redacts email and returns an allowlisted body-only draft without writes', async () => {
     enableModel();
     const fetchMock = jest.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body || '{}'));
@@ -51,7 +51,7 @@ describe('AiArmanAdminReplyDraftService', () => {
       messages: [{ direction: 'inbound', text: 'Maila mig på kund@example.se tack.' }],
     })).resolves.toEqual({
       ok: true,
-      draftText: 'Hej! Tack för ditt meddelande. Vi tittar på detta och återkommer.',
+      draftText: 'Tack för ditt meddelande. Vi tittar på detta och återkommer.',
       requiresHumanDecision: false,
       decisionReasons: [],
       confidence: 0.91,
