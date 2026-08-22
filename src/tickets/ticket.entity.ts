@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { Customer } from '../customers/customer.entity';
+import { User } from '../users/user.entity';
 import { Message } from './message.entity';
 
 export enum TicketStatus {
@@ -33,6 +34,13 @@ export class Ticket {
   @Column()
   customerEmail!: string;
 
+  // Nullable for legacy tickets created before ownership existed.
+  // New tickets are still created with owner in TicketsService.
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  owner?: User | null;
+
+  // Nullable for legacy tickets created before Customer identity existed.
+  // New tickets are still created with customer in TicketsService.
   @ManyToOne(() => Customer, (customer) => customer.tickets, {
     nullable: true,
     onDelete: 'SET NULL',

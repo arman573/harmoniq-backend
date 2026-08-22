@@ -12,23 +12,20 @@ export class CustomerFact {
   @PrimaryGeneratedColumn()
   id!: number;
 
+  @ManyToOne(() => Customer, { onDelete: 'CASCADE' })
+  customer!: Customer;
+
   @Column()
   type!: string;
 
   @Column()
   value!: string;
 
-  @Column({ default: 'system' })
+  @Column({ default: 'unknown' })
   source!: string;
 
-  @Column({ type: 'float', default: 1 })
+  @Column({ type: 'float', default: 0.5 })
   confidence!: number;
-
-  @ManyToOne(() => Customer, {
-    nullable: false,
-    onDelete: 'CASCADE',
-  })
-  customer!: Customer;
 
   @CreateDateColumn()
   createdAt!: Date;

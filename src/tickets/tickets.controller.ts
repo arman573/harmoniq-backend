@@ -11,8 +11,8 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { Request } from 'express';
 import { AuthGuard } from '@nestjs/passport';
+import { Request } from 'express';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { User, UserRole } from '../users/user.entity';
@@ -32,19 +32,21 @@ export class TicketsController {
   constructor(private readonly ticketsService: TicketsService) {}
 
   @Post()
-  createTicket(@Body() body: CreateTicketDto) {
-    return this.ticketsService.createTicket(body);
+  createTicket(@Body() body: CreateTicketDto, @Req() req: AuthenticatedRequest) {
+    return this.ticketsService.createTicket(body, req.user);
   }
 
   @Get()
-  @Roles(UserRole.ADMIN)
-  getTickets() {
-    return this.ticketsService.getTickets();
+  getTickets(@Req() req: AuthenticatedRequest) {
+    return this.ticketsService.getTickets(req.user);
   }
 
   @Get(':id')
-  getTicket(@Param('id', ParseIntPipe) id: number) {
-    return this.ticketsService.getTicket(id);
+  getTicket(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.ticketsService.getTicket(id, req.user);
   }
 
   @Put(':id')
@@ -70,8 +72,9 @@ export class TicketsController {
   updateTicketStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateTicketStatusDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.ticketsService.updateTicketStatus(id, body);
+    return this.ticketsService.updateTicketStatus(id, body, req.user);
   }
 
   @Delete(':id')
