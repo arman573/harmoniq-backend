@@ -30,6 +30,7 @@ on:
   push:
     branches:
       - feature/ai-arman-foundation-v1
+      - ops/ai-arman-resolver-candidate-20260820
     paths:
       - '.github/workflows/ai-arman-foundation-ci.yml'
       - '.github/workflows/ai-arman-beta0-gcp-preflight.yml'
