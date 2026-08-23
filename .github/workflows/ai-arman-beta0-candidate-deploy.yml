@@ -1,9 +1,10 @@
 name: AI Arman beta0 candidate deploy
 
 on:
-  push:
+  pull_request:
+    types: [synchronize]
     branches:
-      - feature/ai-arman-foundation-v1
+      - main
   workflow_dispatch:
 
 permissions:
@@ -27,7 +28,12 @@ env:
 
 jobs:
   deploy-candidate:
-    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Deploy AI Arman customer presentation zero traffic candidate'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.number == 18 &&
+       github.actor == 'arman573' &&
+       github.event.pull_request.head.repo.full_name == 'arman573/harmoniq-backend' &&
+       github.event.pull_request.head.ref == 'feature/ai-arman-foundation-v1')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -49,7 +55,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_ACTOR" = 'arman573'
-          test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
+          if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then
+            test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
+          fi
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           grep -Fq "@Controller('ai-arman/internal/customer-presentation')" src/ai-arman/admin/admin-customer-widget-presentation.controller.ts
           grep -Fq 'AiArmanCustomerWidgetPresentationStore' src/ai-arman/widget/customer/ai-arman-customer-widget-presentation.store.ts
