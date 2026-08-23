@@ -15,6 +15,7 @@ import { AiArmanCustomerIdentityService } from './ai-arman-customer-identity.ser
 import { AiArmanCustomerResponseService } from './ai-arman-customer-response.service';
 import { AiArmanCustomerSessionService } from './ai-arman-customer-session.service';
 import { AiArmanCustomerWidgetConfig } from './ai-arman-customer-widget.config';
+import { AiArmanCustomerWidgetPresentationStore } from './ai-arman-customer-widget-presentation.store';
 import { AiArmanCustomerWidgetService } from './ai-arman-customer-widget.service';
 
 @Controller('ai-arman/customer')
@@ -27,15 +28,17 @@ export class AiArmanCustomerController {
     private readonly conversations: SkincareSpecialistChatOrchestrator,
     private readonly responses: AiArmanCustomerResponseService,
     private readonly widget: AiArmanCustomerWidgetService,
+    private readonly presentationStore: AiArmanCustomerWidgetPresentationStore,
   ) {}
 
   @Get('widget.js')
   @Header('Content-Type', 'application/javascript; charset=utf-8')
   @Header('Cache-Control', 'no-store, max-age=0')
   @Header('X-Content-Type-Options', 'nosniff')
-  getWidget(): string {
+  async getWidget(): Promise<string> {
     if (!this.config.isWidgetEnabled()) throw new NotFoundException();
-    return this.widget.renderScript();
+    const presentation = await this.presentationStore.readForWidget();
+    return this.widget.renderScript(presentation);
   }
 
   @Post('identity/start')

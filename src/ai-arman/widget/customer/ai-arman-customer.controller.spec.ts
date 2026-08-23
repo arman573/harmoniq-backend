@@ -7,6 +7,8 @@ import type { AiArmanCustomerIdentityService } from './ai-arman-customer-identit
 import type { AiArmanCustomerResponseService } from './ai-arman-customer-response.service';
 import type { AiArmanCustomerSessionService } from './ai-arman-customer-session.service';
 import type { AiArmanCustomerWidgetConfig } from './ai-arman-customer-widget.config';
+import type { AiArmanCustomerWidgetPresentationStore } from './ai-arman-customer-widget-presentation.store';
+import { AI_ARMAN_CUSTOMER_WIDGET_DEFAULT_PRESENTATION } from './ai-arman-customer-widget.presentation';
 import { AiArmanCustomerWidgetService } from './ai-arman-customer-widget.service';
 
 const requestBody = {
@@ -59,6 +61,9 @@ function setup(options: {
     formulate: jest.fn(async (_request, response) => response),
   } as unknown as AiArmanCustomerResponseService;
   const widget = new AiArmanCustomerWidgetService();
+  const presentationStore = {
+    readForWidget: jest.fn(async () => AI_ARMAN_CUSTOMER_WIDGET_DEFAULT_PRESENTATION),
+  } as unknown as AiArmanCustomerWidgetPresentationStore;
   const controller = new AiArmanCustomerController(
     config,
     identity,
@@ -67,8 +72,16 @@ function setup(options: {
     conversations,
     responses,
     widget,
+    presentationStore,
   );
-  return { controller, sessions, parser, conversations, responses };
+  return {
+    controller,
+    sessions,
+    parser,
+    conversations,
+    responses,
+    presentationStore,
+  };
 }
 
 function req(authorization?: string): Request {
@@ -78,9 +91,16 @@ function req(authorization?: string): Request {
 }
 
 describe('AiArmanCustomerController', () => {
-  it('does not expose the widget while the customer widget flag is off', () => {
+  it('does not expose the widget while the customer widget flag is off', async () => {
     const { controller } = setup({ widgetEnabled: false });
-    expect(() => controller.getWidget()).toThrow(NotFoundException);
+    await expect(controller.getWidget()).rejects.toThrow(NotFoundException);
+  });
+
+  it('renders the widget from the bounded presentation store', async () => {
+    const { controller, presentationStore } = setup();
+    const script = await controller.getWidget();
+    expect(presentationStore.readForWidget).toHaveBeenCalledTimes(1);
+    expect(script).toContain('Din personliga skönhetsassistent');
   });
 
   it('rejects chat before an identity session is presented', async () => {

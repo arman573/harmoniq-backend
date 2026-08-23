@@ -12,6 +12,7 @@ import { AiArmanAdminCaseResolverConfig } from './ai-arman/admin/admin-case-reso
 import { AiArmanAdminCaseResolverController } from './ai-arman/admin/admin-case-resolver.controller';
 import { AiArmanAdminCaseResolverService } from './ai-arman/admin/admin-case-resolver.service';
 import { AiArmanAdminCommandPlannerService } from './ai-arman/admin/admin-command-planner.service';
+import { AiArmanAdminCustomerWidgetPresentationController } from './ai-arman/admin/admin-customer-widget-presentation.controller';
 import { AiArmanAdminLearningStore } from './ai-arman/admin/admin-learning.store';
 import { AiArmanAdminReplyDraftConfig } from './ai-arman/admin/admin-reply-draft.config';
 import { AiArmanAdminReplyDraftController } from './ai-arman/admin/admin-reply-draft.controller';
@@ -36,6 +37,7 @@ import { AiArmanCustomerResponseConfig } from './ai-arman/widget/customer/ai-arm
 import { AiArmanCustomerResponseService } from './ai-arman/widget/customer/ai-arman-customer-response.service';
 import { AiArmanCustomerSessionService } from './ai-arman/widget/customer/ai-arman-customer-session.service';
 import { AiArmanCustomerWidgetConfig } from './ai-arman/widget/customer/ai-arman-customer-widget.config';
+import { AiArmanCustomerWidgetPresentationStore } from './ai-arman/widget/customer/ai-arman-customer-widget-presentation.store';
 import { AiArmanCustomerWidgetService } from './ai-arman/widget/customer/ai-arman-customer-widget.service';
 import { GmailCustomerEmailOtpSender } from './ai-arman/widget/customer/gmail-customer-email-otp.sender';
 import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/customer/vendre-customer-directory-verification.provider';
@@ -45,6 +47,7 @@ import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/c
   controllers: [
     AiArmanAdminCaseAssistantController,
     AiArmanAdminCaseResolverController,
+    AiArmanAdminCustomerWidgetPresentationController,
     AiArmanAdminReplyDraftController,
     AiArmanInternalPreviewDiagnosticsController,
     AiArmanInternalPreviewPageController,
@@ -80,6 +83,7 @@ import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/c
     AiArmanCustomerResponseService,
     AiArmanCustomerSessionService,
     AiArmanCustomerWidgetConfig,
+    AiArmanCustomerWidgetPresentationStore,
     AiArmanCustomerWidgetService,
     GmailCustomerEmailOtpSender,
     VendreCustomerDirectoryVerificationProvider,

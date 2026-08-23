@@ -13,6 +13,7 @@ import { AiArmanCustomerResponseConfig } from './ai-arman/widget/customer/ai-arm
 import { AiArmanCustomerResponseService } from './ai-arman/widget/customer/ai-arman-customer-response.service';
 import { AiArmanCustomerSessionService } from './ai-arman/widget/customer/ai-arman-customer-session.service';
 import { AiArmanCustomerWidgetConfig } from './ai-arman/widget/customer/ai-arman-customer-widget.config';
+import { AiArmanCustomerWidgetPresentationStore } from './ai-arman/widget/customer/ai-arman-customer-widget-presentation.store';
 import { AiArmanCustomerWidgetService } from './ai-arman/widget/customer/ai-arman-customer-widget.service';
 import { GmailCustomerEmailOtpSender } from './ai-arman/widget/customer/gmail-customer-email-otp.sender';
 import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/customer/vendre-customer-directory-verification.provider';
@@ -28,6 +29,7 @@ import { VendreCustomerDirectoryVerificationProvider } from './ai-arman/widget/c
     AiArmanCustomerResponseService,
     AiArmanCustomerSessionService,
     AiArmanCustomerWidgetConfig,
+    AiArmanCustomerWidgetPresentationStore,
     AiArmanCustomerWidgetService,
     GmailCustomerEmailOtpSender,
     VendreCustomerDirectoryVerificationProvider,
