@@ -1,0 +1,11 @@
+overall=success
+inspected_at=2026-08-23T21:20:13Z
+service=harmoniq-ai-arman-beta0
+canonical_url=https://harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
+service_public=false
+returns_runtime_service_account=222024985388-compute@developer.gserviceaccount.com
+returns_runtime_has_run_invoker=false
+candidate_revision=harmoniq-ai-arman-beta0-cpres-2dc5ad55-3
+candidate_tag=customer-admin-2dc5ad55
+candidate_traffic=0
+mutation_performed=false
