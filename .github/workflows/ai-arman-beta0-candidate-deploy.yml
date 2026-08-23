@@ -1,12 +1,10 @@
 name: AI Arman beta0 candidate deploy
 
 on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
   workflow_dispatch:
-    inputs:
-      confirm_candidate_deploy:
-        description: Type DEPLOY_AI_ARMAN_BETA0
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -19,322 +17,210 @@ concurrency:
 env:
   PROJECT_ID: harmoniq-210513
   REGION: europe-north1
-  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
-  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  SERVICE_NAME: harmoniq-ai-arman-beta0
   RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
   ARTIFACT_REPOSITORY: harmoniq-containers
-  SERVICE_NAME: harmoniq-ai-arman-beta0
-  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  SOURCE_SHA: 2dc5ad558d882ddfe1b238ab49694d9fadcc2802
+  STABLE_TAG: resolver-ready-3298af83
 
 jobs:
-  verify-source:
-    name: Verify candidate source
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  deploy-candidate:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Deploy AI Arman customer presentation zero traffic candidate'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
     steps:
-      - name: Enforce explicit deploy gate and exact branch
-        shell: bash
-        env:
-          CONFIRM_DEPLOY: ${{ inputs.confirm_candidate_deploy }}
-        run: |
-          set -euo pipefail
-          test "$CONFIRM_DEPLOY" = "DEPLOY_AI_ARMAN_BETA0"
-          test "$GITHUB_REF" = "$REQUIRED_REF"
-          test "$GITHUB_ACTOR" = "arman573"
-
-      - name: Checkout exact branch head
+      - name: Checkout exact application source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
 
-      - name: Verify source and isolated candidate locally
+      - name: Verify exact source and full candidate gate
         shell: bash
         run: |
           set -euo pipefail
+          test "$GITHUB_ACTOR" = 'arman573'
+          test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          grep -Fq "@Controller('ai-arman/internal/customer-presentation')" src/ai-arman/admin/admin-customer-widget-presentation.controller.ts
+          grep -Fq 'AiArmanCustomerWidgetPresentationStore' src/ai-arman/widget/customer/ai-arman-customer-widget-presentation.store.ts
           npm ci
           npm test -- --runInBand
           npm run build
-          docker build -f Dockerfile.ai-arman-candidate -t ai-arman-candidate:deploy-verify .
+          docker build --pull -f Dockerfile.ai-arman-candidate -t ai-arman-customer-presentation:verify .
 
-          CONTAINER_ID="$(docker run -d \
-            -p 18080:8080 \
-            -e PORT=8080 \
-            -e AI_ARMAN_WIDGET_PREVIEW_ENABLED=false \
-            -e AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false \
-            -e AI_ARMAN_MODEL_SHADOW_ENABLED=false \
-            -e AI_ARMAN_MODEL_PROMOTION_ENABLED=false \
-            ai-arman-candidate:deploy-verify)"
-
-          cleanup() {
-            docker logs "$CONTAINER_ID" || true
-            docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-
-          for attempt in {1..30}; do
-            if curl --silent --fail http://127.0.0.1:18080/ai-arman/foundation \
-              > "$RUNNER_TEMP/foundation.json"; then
-              break
-            fi
-            sleep 1
-          done
-
-          jq -e '
-            .ok == true and
-            .service == "ai-arman" and
-            .phase == "foundation-v1" and
-            .productionActionsEnabled == false
-          ' "$RUNNER_TEMP/foundation.json" >/dev/null
-
-          WIDGET_STATUS="$(curl --silent --output "$RUNNER_TEMP/widget-disabled.txt" \
-            --write-out '%{http_code}' \
-            http://127.0.0.1:18080/ai-arman/widget/beta0-preview)"
-          test "$WIDGET_STATUS" = "404"
-
-          docker logs "$CONTAINER_ID" > "$RUNNER_TEMP/candidate.log" 2>&1
-          if grep -Eqi '(127\.0\.0\.1|localhost).*(5432|postgres)|ECONNREFUSED.*5432|postgres.*(127\.0\.0\.1|localhost)' \
-            "$RUNNER_TEMP/candidate.log"; then
-            echo "Detected localhost/Postgres startup attempt in isolated candidate." >&2
-            cat "$RUNNER_TEMP/candidate.log" >&2
-            exit 1
-          fi
-
-  deploy-private-candidate:
-    name: Deploy private beta0 candidate
-    needs: verify-source
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout exact branch head
-        uses: actions/checkout@v4
-
-      - name: Authenticate with dedicated AI Arman deployer
+      - name: Authenticate dedicated AI Arman deployer
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
-      - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Verify dedicated identity and exact permissions before mutation
+      - name: Snapshot private stable boundary
+        id: before
         shell: bash
         run: |
           set -euo pipefail
-
-          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
-          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
-
-          REPOSITORY_FORMAT="$(gcloud artifacts repositories describe "$ARTIFACT_REPOSITORY" \
-            --location "$REGION" --project "$PROJECT_ID" --format='value(format)')"
-          test "$REPOSITORY_FORMAT" = "DOCKER"
-
-          ACCESS_TOKEN="$(gcloud auth print-access-token)"
-          echo "::add-mask::$ACCESS_TOKEN"
-
-          PROJECT_BODY='{"permissions":["run.services.create","run.services.get","run.services.update","run.operations.get","run.services.getIamPolicy"]}'
-          curl --silent --show-error --fail \
-            --output "$RUNNER_TEMP/project-permissions.json" \
-            --request POST \
-            "https://cloudresourcemanager.googleapis.com/v1/projects/${PROJECT_ID}:testIamPermissions" \
-            --header "Authorization: Bearer $ACCESS_TOKEN" \
-            --header 'Content-Type: application/json' \
-            --data "$PROJECT_BODY"
-
-          for permission in \
-            run.services.create \
-            run.services.get \
-            run.services.update \
-            run.operations.get \
-            run.services.getIamPolicy; do
-            jq -e --arg permission "$permission" '.permissions | index($permission) != null' \
-              "$RUNNER_TEMP/project-permissions.json" >/dev/null
-          done
-
-          RUNTIME_BODY='{"permissions":["iam.serviceAccounts.actAs"]}'
-          curl --silent --show-error --fail \
-            --output "$RUNNER_TEMP/runtime-permissions.json" \
-            --write-out '%{http_code}' \
-            --request POST \
-            "https://iam.googleapis.com/v1/projects/-/serviceAccounts/${RUNTIME_SERVICE_ACCOUNT}:testIamPermissions" \
-            --header "Authorization: Bearer $ACCESS_TOKEN" \
-            --header 'Content-Type: application/json' \
-            --data "$RUNTIME_BODY" > "$RUNNER_TEMP/runtime-permissions-code.txt"
-          test "$(cat "$RUNNER_TEMP/runtime-permissions-code.txt")" = "200"
-          jq -e '.permissions | index("iam.serviceAccounts.actAs") != null' \
-            "$RUNNER_TEMP/runtime-permissions.json" >/dev/null
-
-          REPOSITORY_RESOURCE="projects/${PROJECT_ID}/locations/${REGION}/repositories/${ARTIFACT_REPOSITORY}"
-          REPOSITORY_BODY='{"permissions":["artifactregistry.repositories.downloadArtifacts","artifactregistry.repositories.uploadArtifacts"]}'
-          curl --silent --show-error --fail \
-            --output "$RUNNER_TEMP/repository-permissions.json" \
-            --write-out '%{http_code}' \
-            --request POST \
-            "https://artifactregistry.googleapis.com/v1/${REPOSITORY_RESOURCE}:testIamPermissions" \
-            --header "Authorization: Bearer $ACCESS_TOKEN" \
-            --header 'Content-Type: application/json' \
-            --data "$REPOSITORY_BODY" > "$RUNNER_TEMP/repository-permissions-code.txt"
-          test "$(cat "$RUNNER_TEMP/repository-permissions-code.txt")" = "200"
-
-          for permission in artifactregistry.repositories.downloadArtifacts artifactregistry.repositories.uploadArtifacts; do
-            jq -e --arg permission "$permission" '.permissions | index($permission) != null' \
-              "$RUNNER_TEMP/repository-permissions.json" >/dev/null
-          done
-
-          if gcloud run services describe "$SERVICE_NAME" \
-            --project "$PROJECT_ID" --region "$REGION" --format=json \
-            > "$RUNNER_TEMP/existing-service.json" 2>/dev/null; then
-            EXISTING_RUNTIME="$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/existing-service.json")"
-            test "$EXISTING_RUNTIME" = "$RUNTIME_SERVICE_ACCOUNT"
-
-            gcloud run services get-iam-policy "$SERVICE_NAME" \
-              --project "$PROJECT_ID" --region "$REGION" --format=json \
-              > "$RUNNER_TEMP/existing-service-iam.json"
-
-            if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' \
-              "$RUNNER_TEMP/existing-service-iam.json" >/dev/null; then
-              echo "Existing target service is public; refusing deploy." >&2
-              exit 1
-            fi
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/before.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then
+            echo 'AI Arman service unexpectedly public; refusing candidate deploy.' >&2
+            exit 1
           fi
+          EXISTING_RUNTIME="$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/before.json")"
+          test "$EXISTING_RUNTIME" = "$RUNTIME_SERVICE_ACCOUNT"
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/before.json" > "$RUNNER_TEMP/positive-before.json"
+          STABLE_REV="$(jq -r --arg tag "$STABLE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/before.json" | head -n1)"
+          STABLE_URL="$(jq -r --arg tag "$STABLE_TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/before.json" | head -n1)"
+          CANONICAL_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/before.json")"
+          test -n "$STABLE_REV"; test -n "$STABLE_URL"; test -n "$CANONICAL_URL"
+          gcloud run revisions describe "$STABLE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/stable-rev.json"
+          echo "stable_revision=$STABLE_REV" >> "$GITHUB_OUTPUT"
+          echo "stable_url=$STABLE_URL" >> "$GITHUB_OUTPUT"
+          echo "canonical_url=$CANONICAL_URL" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push immutable candidate image
+      - name: Build and push immutable application image
         id: image
         shell: bash
         run: |
           set -euo pipefail
-          SHORT_SHA="${GITHUB_SHA:0:12}"
-          TAG="beta0-${SHORT_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
-          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:$TAG"
-
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:customer-presentation-${SOURCE_SHA:0:12}-$GITHUB_RUN_ID"
           gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
-          docker build --pull -f Dockerfile.ai-arman-candidate --tag "$IMAGE" .
+          docker build --pull -f Dockerfile.ai-arman-candidate -t "$IMAGE" .
           docker push "$IMAGE"
-
-          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" \
-            --project "$PROJECT_ID" --format='value(image_summary.digest)')"
-          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Could not verify immutable image digest." >&2
-            exit 1
-          fi
-
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image=$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME@$DIGEST" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy candidate with cost-safe foundation settings
-        id: deploy
-        shell: bash
+      - name: Deploy private zero-traffic customer presentation candidate
+        id: candidate
         env:
           IMAGE: ${{ steps.image.outputs.image }}
+        shell: bash
         run: |
           set -euo pipefail
-          SHORT_SHA="${GITHUB_SHA:0:8}"
-          REVISION_SUFFIX="beta0-${SHORT_SHA}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-
+          CUSTOMER_ADMIN_TOKEN="$(openssl rand -hex 32)"
+          test "${#CUSTOMER_ADMIN_TOKEN}" -ge 32
+          echo "::add-mask::$CUSTOMER_ADMIN_TOKEN"
+          echo "CUSTOMER_ADMIN_TOKEN=$CUSTOMER_ADMIN_TOKEN" >> "$GITHUB_ENV"
+          SHORT="${SOURCE_SHA:0:8}"
+          TAG="customer-admin-$SHORT"
           gcloud run deploy "$SERVICE_NAME" \
-            --project "$PROJECT_ID" \
-            --region "$REGION" \
-            --platform managed \
-            --image "$IMAGE" \
-            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
-            --revision-suffix "$REVISION_SUFFIX" \
-            --ingress all \
-            --port 8080 \
-            --startup-probe "httpGet.path=/ai-arman/foundation,httpGet.port=8080,initialDelaySeconds=0,failureThreshold=12,timeoutSeconds=2,periodSeconds=5" \
-            --cpu 1 \
-            --memory 512Mi \
-            --cpu-throttling \
-            --no-cpu-boost \
-            --min 0 \
-            --max 1 \
-            --concurrency 20 \
-            --timeout 30 \
-            --set-env-vars "NODE_ENV=production,AI_ARMAN_WIDGET_PREVIEW_ENABLED=false,AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false,AI_ARMAN_MODEL_SHADOW_ENABLED=false,AI_ARMAN_MODEL_PROMOTION_ENABLED=false" \
-            --labels "release=beta0-candidate,source-sha=$SHORT_SHA,cost-profile=beta0-minimal" \
+            --project "$PROJECT_ID" --region "$REGION" --platform managed \
+            --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --revision-suffix "cpres-$SHORT-${GITHUB_RUN_NUMBER}" \
+            --tag "$TAG" --no-traffic \
+            --update-env-vars "AI_ARMAN_CUSTOMER_ADMIN_ENABLED=true,AI_ARMAN_CUSTOMER_ADMIN_ACCESS_TOKEN=$CUSTOMER_ADMIN_TOKEN" \
             --quiet
-
-          gcloud run services describe "$SERVICE_NAME" \
-            --project "$PROJECT_ID" --region "$REGION" --format=json \
-            > "$RUNNER_TEMP/service.json"
-
-          REVISION="$(jq -r '.status.latestReadyRevisionName // empty' "$RUNNER_TEMP/service.json")"
-          DEPLOYED_RUNTIME="$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/service.json")"
-          STARTUP_PATH="$(jq -r '.spec.template.spec.containers[0].startupProbe.httpGet.path // empty' "$RUNNER_TEMP/service.json")"
-          STARTUP_PORT="$(jq -r '.spec.template.spec.containers[0].startupProbe.httpGet.port // empty' "$RUNNER_TEMP/service.json")"
-          CPU_THROTTLING="$(jq -r '.spec.template.metadata.annotations["run.googleapis.com/cpu-throttling"] // empty' "$RUNNER_TEMP/service.json")"
-          CPU_BOOST="$(jq -r '.spec.template.metadata.annotations["run.googleapis.com/startup-cpu-boost"] // empty' "$RUNNER_TEMP/service.json")"
-          SERVICE_MIN="$(jq -r '.metadata.annotations["run.googleapis.com/minScale"] // "0"' "$RUNNER_TEMP/service.json")"
-          SERVICE_MAX="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service.json")"
-
-          test -n "$REVISION"
-          test "$DEPLOYED_RUNTIME" = "$RUNTIME_SERVICE_ACCOUNT"
-          test "$STARTUP_PATH" = "/ai-arman/foundation"
-          test "$STARTUP_PORT" = "8080"
-          test "$CPU_THROTTLING" = "true"
-          test "$CPU_BOOST" = "false"
-          test "$SERVICE_MIN" = "0"
-          test "$SERVICE_MAX" = "1"
-
-          for flag in \
-            AI_ARMAN_WIDGET_PREVIEW_ENABLED \
-            AI_ARMAN_MODEL_INTERPRETATION_ENABLED \
-            AI_ARMAN_MODEL_SHADOW_ENABLED \
-            AI_ARMAN_MODEL_PROMOTION_ENABLED; do
-            VALUE="$(jq -r --arg flag "$flag" '.spec.template.spec.containers[0].env[]? | select(.name == $flag) | .value' "$RUNNER_TEMP/service.json")"
-            test "$VALUE" = "false"
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate-service.json"
+          REV="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/candidate-service.json" | head -n1)"
+          URL="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/candidate-service.json" | head -n1)"
+          test -n "$REV"; test -n "$URL"
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/candidate-service.json")" = '0'
+          gcloud run revisions describe "$REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate-rev.json"
+          test "$(jq -r '.spec.serviceAccountName // empty' "$RUNNER_TEMP/candidate-rev.json")" = "$RUNTIME_SERVICE_ACCOUNT"
+          cenv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/candidate-rev.json" | head -n1; }
+          test "$(cenv AI_ARMAN_CUSTOMER_ADMIN_ENABLED)" = 'true'
+          test "$(cenv AI_ARMAN_CUSTOMER_ADMIN_ACCESS_TOKEN)" = "$CUSTOMER_ADMIN_TOKEN"
+          test -z "$(cenv AI_ARMAN_CUSTOMER_PRESENTATION_GCS_BUCKET)"
+          test -z "$(cenv AI_ARMAN_CUSTOMER_PRESENTATION_GCS_OBJECT)"
+          for name in AI_ARMAN_ADMIN_RESOLVER_ENABLED AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED AI_ARMAN_ADMIN_ASSISTANT_ENABLED AI_ARMAN_MODEL_INTERPRETATION_ENABLED AI_ARMAN_OPENAI_MODEL AI_ARMAN_MODEL_PROMOTION_ENABLED AI_ARMAN_LEARNING_GCS_BUCKET AI_ARMAN_LEARNING_GCS_OBJECT; do
+            OLD="$(jq -r --arg n "$name" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/stable-rev.json" | head -n1)"
+            NEW="$(cenv "$name")"
+            test "$OLD" = "$NEW"
           done
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
 
-          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+      - name: Mint private identity token
+        id: idtoken
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ steps.before.outputs.canonical_url }}
+          id_token_include_email: true
+          create_credentials_file: false
 
-      - name: Verify private IAM boundary after deploy
+      - name: Verify bounded customer presentation endpoint without writes
+        env:
+          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+          URL: ${{ steps.candidate.outputs.url }}
         shell: bash
         run: |
           set -euo pipefail
-          gcloud run services get-iam-policy "$SERVICE_NAME" \
-            --project "$PROJECT_ID" --region "$REGION" --format=json \
-            > "$RUNNER_TEMP/service-iam.json"
+          echo "::add-mask::$ID_TOKEN"
+          UNAUTH="$(curl --max-time 20 -sS -o "$RUNNER_TEMP/unauth.json" -w '%{http_code}' \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            "$URL/ai-arman/internal/customer-presentation" || true)"
+          test "$UNAUTH" = '401'
+          GET_CODE="$(curl --max-time 20 -sS -o "$RUNNER_TEMP/read.json" -w '%{http_code}' \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            --header "X-AI-Arman-Customer-Admin-Token: $CUSTOMER_ADMIN_TOKEN" \
+            "$URL/ai-arman/internal/customer-presentation")"
+          test "$GET_CODE" = '200'
+          jq -e '.ok==true and .configured==false and .source=="default" and .generation=="0" and .writeExecuted==false and .presentation.contractVersion=="ai-arman-customer-ui-v1"' "$RUNNER_TEMP/read.json" >/dev/null
+          PUT_CODE="$(curl --max-time 20 -sS -o "$RUNNER_TEMP/deny.json" -w '%{http_code}' \
+            --request PUT \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            --header "X-AI-Arman-Customer-Admin-Token: $CUSTOMER_ADMIN_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data '{"approved":false,"expectedGeneration":"0","presentation":{}}' \
+            "$URL/ai-arman/internal/customer-presentation" || true)"
+          test "$PUT_CODE" = '400'
+          jq -e '.response.writeExecuted==false or .writeExecuted==false' "$RUNNER_TEMP/deny.json" >/dev/null
 
-          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' \
-            "$RUNNER_TEMP/service-iam.json" >/dev/null; then
-            echo "Public Cloud Run IAM detected after deploy." >&2
-            exit 1
-          fi
-
-      - name: Publish candidate deployment summary
-        shell: bash
+      - name: Prove stable tag and positive production traffic unchanged
         env:
-          IMAGE: ${{ steps.image.outputs.image }}
+          CANDIDATE_REV: ${{ steps.candidate.outputs.revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/final.json"
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/final.json" > "$RUNNER_TEMP/positive-after.json"
+          cmp "$RUNNER_TEMP/positive-before.json" "$RUNNER_TEMP/positive-after.json"
+          test "$(jq -r --arg tag "$STABLE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/final.json" | head -n1)" = '${{ steps.before.outputs.stable_revision }}'
+          test "$(jq -r --arg r "$CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/final.json")" = '0'
+
+      - name: Publish zero-traffic candidate summary
+        env:
+          REV: ${{ steps.candidate.outputs.revision }}
+          URL: ${{ steps.candidate.outputs.url }}
           DIGEST: ${{ steps.image.outputs.digest }}
-          REVISION: ${{ steps.deploy.outputs.revision }}
+        shell: bash
         run: |
           set -euo pipefail
           {
-            echo "## AI Arman beta0 candidate"
+            echo '## AI Arman customer presentation candidate'
             echo
-            echo "- Service: \`$SERVICE_NAME\`"
-            echo "- Revision: \`$REVISION\`"
-            echo "- Image: \`$IMAGE\`"
-            echo "- Digest: \`$DIGEST\`"
-            echo "- Private IAM boundary: PASS"
-            echo "- Foundation startup probe: PASS"
-            echo "- Billing: request-based (CPU throttling enabled)"
-            echo "- Startup CPU boost: disabled"
-            echo "- Service scaling: min 0 / max 1"
-            echo "- Memory: 512 MiB"
-            echo "- CPU: 1 vCPU"
-            echo "- productionActionsEnabled: false verified in local candidate smoke"
-            echo "- Widget preview: disabled verified in local candidate smoke"
-            echo "- Model interpretation: disabled"
-            echo "- Model shadow: disabled"
-            echo "- Model promotion: disabled"
-            echo "- Localhost/Postgres startup attempt: not detected in isolated candidate smoke"
-            echo
-            echo "No model activation, public exposure, production action, or PR merge is performed by this workflow."
+            echo "- Application source: \`$SOURCE_SHA\`"
+            echo "- Candidate revision: \`$REV\`"
+            echo "- Candidate URL: \`$URL\`"
+            echo "- Image digest: \`$DIGEST\`"
+            echo "- Runtime service account: \`$RUNTIME_SERVICE_ACCOUNT\`"
+            echo '- Candidate traffic: `0%`'
+            echo "- Stable tag \`$STABLE_TAG\`: unchanged"
+            echo '- Positive production traffic: unchanged'
+            echo '- Customer Admin endpoint authenticated GET: PASS'
+            echo '- Presentation source: default / storage unconfigured'
+            echo '- PUT without explicit approval: blocked'
+            echo '- Presentation storage write: false'
+            echo '- Customer message sent: false'
+            echo '- Resolver execute/write: false'
           } >> "$GITHUB_STEP_SUMMARY"
