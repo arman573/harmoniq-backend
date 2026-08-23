@@ -1,0 +1,15 @@
+overall=success
+run_id=32666579970
+application_source=2dc5ad558d882ddfe1b238ab49694d9fadcc2802
+workflow_head=c5f8f9e427cc8d03fff64333e89eec1ef8d1c555
+stage=complete
+candidate_revision=harmoniq-ai-arman-beta0-cpres-2dc5ad55-3
+candidate_url=https://customer-admin-2dc5ad55---harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
+image_digest=sha256:38272a2f534cafb1af86c36bd7a5e75373581b89e77e1fcf6228b8cda364c325
+runtime_service_account=ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+stable_tag=resolver-ready-3298af83
+stable_revision_before=harmoniq-ai-arman-beta0-resv4-07aacf15-15
+candidate_traffic_expected=0
+presentation_storage_configured=false
+approved_write_executed=false
+customer_message_sent=false
