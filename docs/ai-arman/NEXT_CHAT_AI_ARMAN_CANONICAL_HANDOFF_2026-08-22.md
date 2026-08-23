@@ -1,136 +1,121 @@
 # NEXT CHAT HANDOFF — AI ARMAN RESOLVER / REVIEWED-REPLY LEARNING
 
-**Datum:** 2026-08-22
+**Updated:** 2026-08-23
 
-**Primärt repo:** `arman573/harmoniq-backend`
+**Primary repo:** `arman573/harmoniq-backend`
 
-**Resolver implementation source branch:** `ops/ai-arman-resolver-candidate-20260820`
+**Canonical source + deploy branch:** `feature/ai-arman-foundation-v1`
 
-**Canonical AI deploy branch:** `feature/ai-arman-foundation-v1`
+**PR #18:** `AI Arman foundation v1` — open, draft, do not merge to `main` merely because individual capabilities are live.
+
+**Former resolver source PR #21:** merged by squash into `feature/ai-arman-foundation-v1` at `2d45f5c15fa507e528a6f2a0b17ac5f95c1809bc`.
 
 **Returns repo:** `arman573/harmoniq-returns-module`
 
 **Returns resolver branch:** `feature/ai-arman-case-resolver-ui`
 
-**Risknivå:** LEVEL 3 — KRITISK / AVANCERAD
+**Risk:** LEVEL 3 — customer data / AI actions / writes.
 
-**Stående arbetsregel:** `HARMONIQ ADVANCED MODULE BUILD CONTRACT v2` + Harmoniq Development Operating System.
-
-Detta dokument beskriver NUVARANDE verifierade läge. Skapa inte v5/v6, en ny resolver eller en parallell deployväg för att komma runt problem.
+Standing rule: `HARMONIQ ADVANCED MODULE BUILD CONTRACT v2` + Harmoniq Development Operating System.
 
 ---
 
-# MÅL
+# GOAL
 
-AI Arman ska i Returns-admin arbeta enligt:
+AI Arman in Returns admin follows:
 
-`verifierat ärende -> förstå aktuellt kundbehov -> föreslå lösning + kundsvar -> admin granskar -> admin godkänner -> exakt allowlistad action får verkställas -> godkänt svar kan bli privat lär-exempel`
+`verified case -> understand current customer need -> propose solution + reply -> admin reviews -> admin approves -> one allowlisted action may execute -> approved reply may become a private learning example`
 
-AI Arman får lära sig **hanteringsmönster, ton och ett faktiskt admin-godkänt kundsvar**. Gamla lär-exempel är aldrig source of truth för fakta. Backend/systemintegrationer äger alltid aktuellt pris, lager, orderstatus, tracking, returutfall, policy, behörighet och writes.
+Stage 1 remains **approval required**. Autonomous customer sending is not enabled.
 
-Stage 1 är fortfarande **approval required**. Autonomt kundutskick är inte aktiverat.
-
----
-
-# CURRENT GATE
-
-**Reviewed-reply learning + AI resolver + Returns resolver är IMPLEMENTERAT, TESTAT och DEPLOYAT till verifierade 0%-stable-tagged resolverrevisioner.**
-
-Frontendfältet är också bevisat i Cloudflare production bundle.
-
-Det enda som medvetet ännu inte kallas LIVE VERIFIERAT är en **första verklig persistent lesson-write från ett riktigt admin-godkänt kundsvar**. Vi skapade inte en syntetisk diagnostic write-route och förorenade inte learning-store bara för att ticka en ruta.
-
-Nästa verkliga learning-write ska därför ske genom den normala adminprocessen när ett riktigt kundsvar granskas och skickas. Efter den första riktiga händelsen kan objektets uppdatering verifieras read-only utan att exponera intern text.
+AI may learn handling patterns, tone and approved reply examples. Prior lessons are never source of truth for price, stock, order, tracking, return status or other current facts; verified backend/system facts always win.
 
 ---
 
-# REVIEWED-REPLY LEARNING — CANONICAL DESIGN
+# CURRENT STATE
 
-UI har ett separat fält:
+Reviewed-reply learning, AI resolver and Returns resolver are **IMPLEMENTED + TESTED + DEPLOYED** to verified tagged 0%-resolver revisions.
+
+Frontend learning UI is verified in the production Cloudflare bundle.
+
+The only learning item not yet called fully **LIVE OBSERVED** is the first real persistent lesson written by a naturally reviewed and sent customer reply. Do not create a synthetic customer message or fake lesson merely to tick this box.
+
+---
+
+# CANONICAL SOURCE OF TRUTH
+
+Resolver/learning source is now consolidated into:
+
+`feature/ai-arman-foundation-v1`
+
+Source consolidation commit:
+
+`2d45f5c15fa507e528a6f2a0b17ac5f95c1809bc`
+
+Canonical CI run on that exact merged head:
+
+`32657431486` — **PASS**
+
+Passed on merged head:
+
+- unit tests
+- TypeScript build
+- isolated AI candidate container build
+- isolated AI candidate smoke
+- customer gateway container build
+- customer gateway boundary smoke
+
+PR #21 is merged/closed and no longer owns deploy responsibility.
+
+---
+
+# REVIEWED-REPLY LEARNING DESIGN
+
+Separate admin field:
 
 `Intern lärnotering till AI Arman`
 
-Det är **inte** samma fält som produktbeslutets `Adminnotering`.
+This is not the product-decision `Adminnotering`.
 
-Säkerhetsregler:
+Safety invariants:
 
-1. Intern lärnotering är endast intern och får aldrig skickas till kunden.
-2. Kundtransporten får endast kundens godkända subject/message, aldrig `internalRationale`.
-3. Efter lyckat, explicit godkänt kundutskick kan godkänt svar + intern motivering sparas i privat learning-store.
-4. Om learning-save faller efter att kunden redan fått svaret får meddelandet aldrig skickas igen.
-5. `internalRationale` lagras privat men strippas ur `listRelevant()` innan framtida kundsvarsmodell får kontext. Kundsvarsmodellen kan alltså inte läsa den råa hemliga motiveringen.
-6. `approvedReplyExample` får användas som stil-/hanteringsprecedent, aldrig som faktakälla.
-7. Aktuella verifierade case-/order-/produkt-/lagerfakta vinner alltid över tidigare lärdomar.
-8. Ett admin-godkänt svar kan bli lär-exempel även om den extra interna lärnoteringen lämnas tom.
-
-Detta stödjer t.ex. att admin internt beskriver den verkliga orsaken till en kundvänlig formulering utan att den interna orsaken läcker till kunden eller återanvänds som verifierad fakta i ett annat ärende.
+1. Internal learning rationale is private and never part of customer transport.
+2. Customer transport receives only the approved customer subject/message.
+3. After a successful explicitly approved customer send, the approved reply may be saved as a learning example.
+4. If learning-save fails after the send, the customer message must never be sent again.
+5. Raw `internalRationale` may be stored privately but is stripped before future customer-reply model context.
+6. `approvedReplyExample` is handling/style precedent, never factual precedent.
+7. Fresh verified case/order/product/stock facts always override lessons.
+8. An approved reply may become a lesson even when the extra internal learning note is empty.
 
 ---
 
-# AI BACKEND — IMPLEMENTATION SOURCE
+# AI BACKEND — VERIFIED RUNTIME
 
-Verifierad resolver/learning source:
+Canonical workflow:
+
+`.github/workflows/ai-arman-foundation-trusted-live-v4-20260822.yml`
+
+Frozen deployed resolver/learning source used by the current stable resolver runtime:
 
 `07aacf157281c205aa3898b7c073cfe2444e1936`
 
-Viktiga filer/ansvar inkluderar:
-
-- `src/ai-arman/admin/admin-learning.store.ts`
-- resolver execute-boundaryn som skiljer kundtransport från privat learning-save
-- admin assistant/reply path som läser godkända supportlärdomar utan rå `internalRationale`
-
-Regressioner bevisar bland annat:
-
-- intern motivering når inte kundtransport,
-- learning-fel efter send orsakar inte dubbel-send,
-- reviewed-reply learning-fält är bounded,
-- learning-data går endast mot privata resolvervägen,
-- denied/unsupported actions förblir fail-closed.
-
----
-
-# AI BACKEND — TESTAT
-
-Canonical AI-v4 run:
+Canonical v4 run:
 
 `32580717752`
 
-På source:
+Verified in that run:
 
-`07aacf157281c205aa3898b7c073cfe2444e1936`
-
-Verifierat:
-
-- **107/107 test suites PASS**
-- **648/648 tests PASS**
+- 107/107 test suites PASS
+- 648/648 tests PASS
 - build PASS
 - Docker PASS
 - WIF PASS
 - immutable image push PASS
 - HQR-2494077 read-only prepare PASS
 - `approved:false` execute blocked
-- real write under verification = false
-- customer message under verification = false
-
----
-
-# AI BACKEND — ARTIFACT / RUNTIME PROVENANCE
-
-Canonical workflow:
-
-`.github/workflows/ai-arman-foundation-trusted-live-v4-20260822.yml`
-
-Service:
-
-`harmoniq-ai-arman-beta0`
-
-Region:
-
-`europe-north1`
-
-Source:
-
-`07aacf157281c205aa3898b7c073cfe2444e1936`
+- real write during verification = false
+- customer message during verification = false
 
 Image digest:
 
@@ -140,62 +125,56 @@ Stable resolver revision:
 
 `harmoniq-ai-arman-beta0-resv4-07aacf15-15`
 
-Stable resolver tag:
+Stable tag:
 
 `resolver-ready-3298af83`
 
-Stable URL:
+Stable resolver URL:
 
 `https://resolver-ready-3298af83---harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app`
 
-Resolverrevisionen är avsiktligt en **taggad 0%-revision**. Normal positiv service-trafik ändrades inte.
+Resolver revision intentionally has 0% normal traffic. Positive production traffic was unchanged by the stable-tag move.
 
-Known previous AI stable revision för rollback:
+Known previous good AI resolver revision:
 
 `harmoniq-ai-arman-beta0-resv4-07aacf15-9`
 
 ---
 
-# PRIVATE LEARNING STORAGE — VERIFIERAT
+# PRIVATE LEARNING STORAGE
 
 Bucket:
 
 `gs://harmoniq-210513-ai-arman-learning`
 
-Object path:
+Object:
 
 `ai-arman/support-learning-v1.json`
 
-Verifierat state:
+Verified:
 
-- location `EUROPE-NORTH1`
+- region `EUROPE-NORTH1`
 - storage class `STANDARD`
-- uniform bucket-level access = true
-- public access prevention = enforced
-- public principal = false
-- runtime identity = `ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com`
-- runtime role = `roles/storage.objectUser` på **bucket scope**
+- uniform bucket-level access enabled
+- public access prevention enforced
+- no public principal
+- runtime identity `ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com`
+- runtime has `roles/storage.objectUser` at bucket scope
 - runtime project roles = `[]`
 
-Sanerad permanent infra-evidens ligger i `arman573/harmoniq-account-identity-bridge`:
+Permanent sanitized evidence:
 
-`docs/automation-status/ai-arman-learning-bucket-provision-20260822.json`
+`arman573/harmoniq-account-identity-bridge/docs/automation-status/ai-arman-learning-bucket-provision-20260822.json`
 
-Tre temporära discovery/provision-verifieringsworkflows är borttagna efter verifiering. Två obsolete discovery-resultat är också bortstädade. Den slutliga verifierade bucket-evidensen behålls.
-
-AI-deployern fick INTE någon bred Storage-roll. Learning-infra och AI-deploy är medvetet separerade ansvar.
+AI deployer was not granted a broad Storage role.
 
 ---
 
-# RETURNS RESOLVER — IMPLEMENTERAT / TESTAT / DEPLOYAT
+# RETURNS RESOLVER — VERIFIED RUNTIME
 
 Repo:
 
 `arman573/harmoniq-returns-module`
-
-Branch:
-
-`feature/ai-arman-case-resolver-ui`
 
 Canonical workflow:
 
@@ -205,7 +184,7 @@ Final canonical run:
 
 `32581393936`
 
-Final source SHA:
+Source:
 
 `7c915d6f12711e60fd920ba3a5ecc09c5cc4bb2f`
 
@@ -217,166 +196,80 @@ Stable resolver revision:
 
 `harmoniq-returns-api-airesolver-7c915d6f-26`
 
-Stable resolver tag / URL:
+Stable tag:
 
 `resolver-ready-431fc50f`
 
+Stable URL:
+
 `https://resolver-ready-431fc50f---harmoniq-returns-api-cw6q5ekseq-lz.a.run.app`
 
-Verifierat:
+Verified:
 
-- frontend build PASS
-- resolver-focused server tests PASS
-- Docker PASS
-- immutable Artifact Registry push PASS
-- exact registry digest captured från successful push response
-- AI stable learning config PASS
-- 0%-candidate PASS
-- config parity PASS
-- positive production traffic unchanged
+- focused resolver tests/build/Docker PASS
+- immutable image provenance PASS
+- AI learning config PASS
 - real prepare PASS
 - `approved:false` blocked
 - unsupported approved action blocked
-- stable resolver URL probe PASS
-- supported real write during verification = false
+- real supported write during verification = false
 - customer message during verification = false
-
-Returns resolver stable revision är också avsiktligt **0% normal traffic**.
-
----
-
-# ROOT CAUSES LÖSTA UNDER DENNA FAS
-
-Följande divergence hittades och löstes i samma canonical spår:
-
-1. AI stable/candidate token parity: `AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN`.
-2. Learning bucket saknades helt; privat bucket provisionerades med least privilege.
-3. AI deploy-identiteten saknade bucket-read och fick INTE onödigt bredare storage-IAM; infra-proof separerades från deployansvar.
-4. Returns Artifact Registry push fungerade men extra `gcloud artifacts docker images describe` krävde onödig `containeranalysis.occurrences.list`; workflow använder nu digest från registry push response i stället för att bredda IAM.
-5. Returns candidate traffic tag var för lång tillsammans med service name; endast taggen kortades till Cloud Run-säker längd.
-
-Ingen v5/v6 eller parallell production path skapades för att lösa dessa problem.
+- positive production Returns traffic unchanged
 
 ---
 
-# FRONTEND — LIVE VERIFIERAT
+# FRONTEND
 
-Production branch för Returns admin frontend:
+Production branch:
 
 `refactor-admin-return-flow-cleanup`
 
-Learning-UI production commit:
+Learning UI production commit:
 
 `31e84781d8381d20951e55ac246451df48c58bc3`
 
-Verifierad production bundle:
+Verified bundle:
 
 `assets/index-CuJT6P6R.js`
 
-Runtime proof visade:
-
-- modern markers: **5/5**
-- `prod_learning_marker=yes`
-- modern 240-cap beteende kvar
-
-Frontend visar separat intern learning-notering och gör inte produktbeslutets adminnotering till learning-fält.
+Runtime marker proof: 5/5, including `Intern lärnotering till AI Arman`.
 
 ---
 
-# SKILLNADEN MELLAN IMPLEMENTERAT / TESTAT / DEPLOYAT / LIVE VERIFIERAT
+# CLEANUP COMPLETED
 
-**IMPLEMENTERAT**
+- old v3 resolver deploy path removed
+- temporary v4 parity diagnostic removed
+- temporary GCS/IAM discovery/provision workflows removed
+- obsolete discovery JSON removed; final bucket evidence retained
+- superseded resolver deploy workflows removed from former ops source branch
+- obsolete resolver trigger documents removed
+- temporary ops-branch CI trigger removed
+- PR #21 source package squash-merged into foundation
+- PR #21 closed by merge
+- no v5/v6 resolver deploy path created
 
-- reviewed reply learning
-- privat internal rationale
-- bounded forwarding
-- post-send learning-save
-- no-resend-on-learning-failure
-- future approved reply examples
-- hard stripping of raw internal rationale before customer-model context
-
-**TESTAT**
-
-- AI backend 107/107 suites, 648/648 tests
-- Returns focused resolver contract tests
-- builds/Docker
-- denied/unsupported write gates
-
-**DEPLOYAT**
-
-- AI stable-tagged 0%-revision `harmoniq-ai-arman-beta0-resv4-07aacf15-15`
-- Returns stable-tagged 0%-revision `harmoniq-returns-api-airesolver-7c915d6f-26`
-- Cloudflare production frontend med learning-UI
-- privat GCS learning storage + runtime IAM
-
-**LIVE VERIFIERAT**
-
-- UI finns i production bundle
-- AI read-only prepare via stable URL
-- Returns read-only prepare via stable URL
-- learning env/config finns på AI revision
-- bucket/IAM/säkerhetsstate verifierad
-- write boundaries blockerar denied/unsupported actions
-
-**ÄNNU INTE LIVE-OBSERVERAT**
-
-- första riktiga persistent lesson-write efter ett faktiskt admin-granskat och skickat kundsvar.
-
-Det är medvetet. Skapa inte syntetisk kundmessage eller artificiell learning-post bara för att verifiera detta.
+A stray inert branch named `noop` was accidentally created during tooling. It contains no unique changes and has no deploy/runtime role. Remove it when a safe delete-ref capability is available; do not build anything on it.
 
 ---
 
-# ROLLBACK / RECOVERY
+# CURRENT GATE / NEXT ACTION
 
-AI resolver:
+Current gate: **post-consolidation architecture cleanup + first natural learning observation**.
 
-- current: `harmoniq-ai-arman-beta0-resv4-07aacf15-15`
-- previous known good: `harmoniq-ai-arman-beta0-resv4-07aacf15-9`
-- rollback ska ske genom samma stable-tag-mekanism och positive traffic ska verifieras oförändrad.
+Next safe sequence:
 
-Returns resolver:
-
-- current: `harmoniq-returns-api-airesolver-7c915d6f-26`
-- stable tag: `resolver-ready-431fc50f`
-- normal positive Returns traffic ändrades inte av releasegaten.
-- vid verkligt fel: identifiera föregående stable resolver revision från Cloud Run/tag provenance före retag; gissa inte.
-
-Learning storage:
-
-- radera eller ändra inte bucket/IAM som rollback för en vanlig resolverbugg.
-- learning-save kan faila utan att ett redan skickat kundsvar får skickas igen.
+1. Keep `feature/ai-arman-foundation-v1` as the single canonical AI Arman source/deploy branch for this phase.
+2. Do not reactivate old resolver deploy workflows.
+3. When the next real admin-reviewed customer reply is sent with learning enabled, verify read-only that the learning object generation/timestamp changed without exposing lesson text.
+4. On a later naturally similar case, verify that approved reply style/handling can influence the draft while old factual details are not reused.
+5. Continue read-only workflow/branch cleanup by responsibility, not filename. Do not mass-delete model-shadow, telemetry, audit or customer-gateway workflows without proving they are obsolete.
+6. PR #18 remains draft until a separate main/source-of-truth release decision is made.
 
 ---
 
-# CLEANUP STATUS
+# DEFINITION OF DONE FOR LEARNING PHASE
 
-Klart:
+Technical learning infrastructure is implemented, tested and deployed with a verified privacy boundary and least-privilege storage. Frontend and both resolver chains are live-verified at read-only/blocked-write level.
 
-- gamla v3 resolver deployspåret borttaget tidigare,
-- temporary AI v4 parity diagnostic borttaget tidigare,
-- temporary GCS admin discovery workflow borttaget,
-- temporary bucket-IAM discovery workflow borttaget,
-- temporary bucket provision/verification workflow borttaget,
-- obsolete discovery JSON-filer borttagna,
-- permanent slutlig bucket verification evidence behållen,
-- inga nya v5/v6-spår skapade.
-
-Rör inte fler gamla workflows enbart på namn. Resterande cleanup kräver read-only ansvarsklassning först.
-
----
-
-# NÄSTA — EXAKT
-
-1. Vänta på första riktiga admin-användningen av learning-funktionen.
-2. När ett faktiskt granskat kundsvar med learning aktiverat har skickats: verifiera read-only att learning-objektets generation/timestamp ändrades utan att läsa eller logga intern kund-/admintext.
-3. Verifiera därefter på ett naturligt liknande framtida case att ett godkänt svarsexempel kan påverka hanteringsstil utan att gamla fakta återanvänds.
-4. Fortsätt därefter architecture cleanup read-only: klassificera resterande gamla AI Arman workflows/branches/PR:er efter verkligt ansvar innan något raderas eller mergas.
-5. Om något faller: EXPECTED vs ACTUAL -> första divergence -> root cause. Ingen v5/v6.
-
----
-
-# DEFINITION OF DONE — DENNA LEARNING-FAS
-
-Den tekniska learning-infrastrukturen är nu implementerad, testad och deployad med verifierad privacy boundary och least-privilege storage. Frontend och båda resolverkedjorna är live-verifierade på read-only/blocked-write nivå.
-
-Fasen blir **fullt live-observerad** först när första riktiga admin-godkända kundsvaret naturligt producerar en persistent lesson-write och den kan verifieras read-only. Fram till dess ska status uttryckas exakt så — inte som att en faktisk production lesson redan har skrivits.
+The learning phase becomes fully **LIVE OBSERVED** only when the first natural admin-approved customer reply produces a persistent lesson and that write is verified read-only.
