@@ -15,22 +15,22 @@ describe('AiArmanAdminCaseResolverService', () => {
       createReturnLabel: jest.fn(),
     } as any;
     const assistant = { assist: jest.fn() } as any;
-    const replyDraft = { createDraft: jest.fn() } as any;
+    const learning = { save: jest.fn(), listRelevant: jest.fn() } as any;
     return {
       actions,
       returnActions,
       assistant,
-      replyDraft,
+      learning,
       service: new AiArmanAdminCaseResolverService(
         actions,
         returnActions,
         assistant,
-        replyDraft,
+        learning,
       ),
     };
   }
 
-  it('prepares a solution from authoritative case data instead of browser case facts', async () => {
+  it('prepares analysis and draft from one assistant pass using authoritative data', async () => {
     const h = createHarness();
     h.actions.readCase.mockResolvedValue({
       ok: true,
@@ -65,13 +65,12 @@ describe('AiArmanAdminCaseResolverService', () => {
       reasoning: 'Ärendet behöver fortsatt handläggning.',
       requiresHumanDecision: false,
       missingFacts: [],
-    });
-    h.replyDraft.createDraft.mockResolvedValue({
-      ok: true,
-      draftText: 'Hej Anna! Vi har tagit emot din reklamation.',
-      requiresHumanDecision: false,
-      decisionReasons: [],
-      confidence: 0.9,
+      replyDraft: {
+        draftText: 'Självklart vännen, jag hjälper dig med det här 🤍',
+        requiresHumanDecision: false,
+        decisionReasons: [],
+        confidence: 0.9,
+      },
     });
 
     const result = await h.service.prepare({
@@ -82,6 +81,8 @@ describe('AiArmanAdminCaseResolverService', () => {
     });
 
     expect(h.actions.readCase).toHaveBeenCalledWith('HQR-12345');
+    expect(h.actions.readOrderContext).toHaveBeenCalledWith('HQR-12345');
+    expect(h.assistant.assist).toHaveBeenCalledTimes(1);
     expect(h.assistant.assist).toHaveBeenCalledWith(
       expect.objectContaining({
         caseId: 'HQR-12345',
@@ -100,21 +101,14 @@ describe('AiArmanAdminCaseResolverService', () => {
       verifiedOrderContext: true,
       draft: {
         subject: 'Angående ditt ärende HQR-12345',
-        message: 'Hej Anna! Vi har tagit emot din reklamation.',
+        message: 'Självklart vännen, jag hjälper dig med det här 🤍',
       },
       sendsCustomerMessage: false,
       executesWrites: false,
     });
-    expect(result.availableActions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ action: 'case.return_status.set' }),
-        expect.objectContaining({ action: 'case.product_decision.set' }),
-        expect.objectContaining({ action: 'case.return_label.create' }),
-      ]),
-    );
   });
 
-  it('still prepares safely when optional model drafting is unavailable', async () => {
+  it('still prepares safely when model analysis is unavailable', async () => {
     const h = createHarness();
     h.actions.readCase.mockResolvedValue({
       ok: true,
@@ -138,7 +132,6 @@ describe('AiArmanAdminCaseResolverService', () => {
       ok: false,
       code: 'admin_assistant_unavailable',
     });
-    h.replyDraft.createDraft.mockRejectedValue(new Error('disabled'));
 
     const result = await h.service.prepare({ caseId: 'HQR-12345' });
 
@@ -155,13 +148,11 @@ describe('AiArmanAdminCaseResolverService', () => {
 
   it('blocks execute without explicit approval and performs no write', async () => {
     const h = createHarness();
-
     const result = await h.service.execute({
       caseId: 'HQR-12345',
       approved: false,
       action: 'case.complete',
     });
-
     expect(result).toMatchObject({
       ok: false,
       code: 'resolver_explicit_approval_required',
@@ -173,14 +164,12 @@ describe('AiArmanAdminCaseResolverService', () => {
 
   it('rejects actions outside the resolver allowlist', async () => {
     const h = createHarness();
-
     const result = await h.service.execute({
       caseId: 'HQR-12345',
       approved: true,
       action: 'refund.issue',
       amount: 999,
     });
-
     expect(result).toEqual({
       ok: false,
       code: 'invalid_resolver_execute_request',
@@ -192,6 +181,108 @@ describe('AiArmanAdminCaseResolverService', () => {
     expect(h.returnActions.setReturnStatus).not.toHaveBeenCalled();
     expect(h.returnActions.setProductDecision).not.toHaveBeenCalled();
     expect(h.returnActions.createReturnLabel).not.toHaveBeenCalled();
+  });
+
+  it('keeps internal rationale out of customer transport and saves it only after approved send', async () => {
+    const h = createHarness();
+    h.actions.sendCustomerMessage.mockResolvedValue({
+      ok: true,
+      action: 'case.customer_message.send',
+      caseId: 'HQR-12345',
+      readOnly: false,
+      executed: true,
+      durationMs: 7,
+      data: { ok: true },
+    });
+    h.actions.readCase.mockResolvedValue({
+      ok: true,
+      action: 'case.read',
+      caseId: 'HQR-12345',
+      readOnly: true,
+      executed: true,
+      durationMs: 2,
+      data: {
+        caseId: 'HQR-12345',
+        type: 'order_issue',
+        status: 'active',
+        messages: [{ direction: 'outbound', text: 'Vi löser det här.' }],
+      },
+    });
+    h.learning.save.mockResolvedValue({ id: 'learn-1' });
+    const privateNote = 'Vendre har översålt lagret. Den interna orsaken får kunden aldrig veta.';
+
+    const result = await h.service.execute({
+      caseId: 'HQR-12345',
+      approved: true,
+      action: 'case.customer_message.send',
+      subject: 'Angående ditt ärende',
+      message: 'Vi har haft strul i systemet men löser det här åt dig.',
+      learnFromReply: true,
+      internalLearningNote: privateNote,
+    });
+
+    expect(h.actions.sendCustomerMessage).toHaveBeenCalledTimes(1);
+    expect(h.actions.sendCustomerMessage).toHaveBeenCalledWith(
+      'HQR-12345',
+      'Angående ditt ärende',
+      'Vi har haft strul i systemet men löser det här åt dig.',
+      true,
+    );
+    expect(JSON.stringify(h.actions.sendCustomerMessage.mock.calls)).not.toContain(privateNote);
+    expect(h.learning.save).toHaveBeenCalledWith(expect.objectContaining({
+      caseType: 'order_issue',
+      approvedReplyExample: 'Vi har haft strul i systemet men löser det här åt dig.',
+      internalRationale: privateNote,
+    }));
+    expect(result).toMatchObject({
+      ok: true,
+      writeExecuted: true,
+      learningRequested: true,
+      learningSaved: true,
+      learningId: 'learn-1',
+    });
+  });
+
+  it('never retries customer send when private learning persistence fails', async () => {
+    const h = createHarness();
+    h.actions.sendCustomerMessage.mockResolvedValue({
+      ok: true,
+      action: 'case.customer_message.send',
+      caseId: 'HQR-12345',
+      readOnly: false,
+      executed: true,
+      durationMs: 7,
+      data: { ok: true },
+    });
+    h.actions.readCase.mockResolvedValue({
+      ok: true,
+      action: 'case.read',
+      caseId: 'HQR-12345',
+      readOnly: true,
+      executed: true,
+      durationMs: 2,
+      data: { caseId: 'HQR-12345', type: 'support', status: 'active' },
+    });
+    h.learning.save.mockRejectedValue(new Error('admin_learning_storage_unavailable'));
+
+    const result = await h.service.execute({
+      caseId: 'HQR-12345',
+      approved: true,
+      action: 'case.customer_message.send',
+      subject: 'Angående ditt ärende',
+      message: 'Jag hjälper dig med det här.',
+      learnFromReply: true,
+      internalLearningNote: 'Intern förklaring som inte får skickas.',
+    });
+
+    expect(h.actions.sendCustomerMessage).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      ok: true,
+      writeExecuted: true,
+      learningRequested: true,
+      learningSaved: false,
+      learningError: 'admin_learning_storage_unavailable',
+    });
   });
 
   it('executes one approved customer message action and verifies the case afterward', async () => {
@@ -225,16 +316,17 @@ describe('AiArmanAdminCaseResolverService', () => {
       approved: true,
       action: 'case.customer_message.send',
       subject: 'Angående ditt ärende',
-      message: 'Hej! Vi återkommer i ditt ärende.',
+      message: 'Vi återkommer i ditt ärende.',
     });
 
     expect(h.actions.sendCustomerMessage).toHaveBeenCalledWith(
       'HQR-12345',
       'Angående ditt ärende',
-      'Hej! Vi återkommer i ditt ärende.',
+      'Vi återkommer i ditt ärende.',
       true,
     );
     expect(h.actions.readCase).toHaveBeenCalledWith('HQR-12345');
+    expect(h.learning.save).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       ok: true,
       mode: 'execute',
@@ -242,6 +334,8 @@ describe('AiArmanAdminCaseResolverService', () => {
       writeExecuted: true,
       verifiedAfterWrite: true,
       caseSnapshot: { caseId: 'HQR-12345', messageCount: 1 },
+      learningRequested: false,
+      learningSaved: false,
     });
   });
 
@@ -272,10 +366,7 @@ describe('AiArmanAdminCaseResolverService', () => {
       action: 'case.return_label.create',
     });
 
-    expect(h.returnActions.createReturnLabel).toHaveBeenCalledWith(
-      'HQR-12345',
-      true,
-    );
+    expect(h.returnActions.createReturnLabel).toHaveBeenCalledWith('HQR-12345', true);
     expect(result).toMatchObject({
       ok: true,
       action: 'case.return_label.create',

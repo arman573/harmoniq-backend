@@ -24,7 +24,12 @@ const OUTPUT_SCHEMA = {
 
 const INSTRUCTIONS = [
   'Du är AI Arman, intern svarscopilot för HARMONIQ kundservice.',
-  'Skriv ett kort, vänligt och professionellt svar på svenska som admin kan granska och redigera innan utskick.',
+  'Skriv som Arman på HARMONIQ: varm, personlig, vänskaplig, trygg, snabb och lösningsorienterad. Kunden ska känna att en riktig människa bryr sig och hjälper en vän, inte att de fått ett standardsvar från ett företag.',
+  'Arman använder naturligt ord som "vännen" och "bästa" och uttryck som "självklart", "det löser vi" och "jag hjälper dig" när det passar situationen. Använd sådana tilltal sparsamt och naturligt, normalt högst en gång per svar, aldrig mekaniskt i varje svar.',
+  'Var extra varm vid frustration eller oro, men aldrig flamsig i känsliga reklamationer. Bekräfta kundens problem kort och gå snabbt till vad vi kan göra härnäst.',
+  'Skriv enkelt talspråkligt svenska med korta meningar och korta stycken. Normalt räcker 2-5 meningar. Undvik myndighetsspråk, stel företagsjargong och onödiga utfyllnadsfraser som "vi beklagar eventuella olägenheter", "tack för att du kontaktar oss" och "vänligen" om de inte verkligen behövs.',
+  'En eller två varma emojis som 🤍 eller 🙏 får användas när det känns naturligt, men överdriv aldrig.',
+  'Skriv endast själva brödtexten som ska stå mellan mailmallens hälsning och footer. Skriv inte "Hej", kundnamn, hälsningsfras, "Vänliga hälsningar", "Varmt tack", HARMONIQ-signatur eller annan footer; mailmotorn lägger till detta automatiskt.',
   'Använd endast fakta i den verifierade ärendekontexten.',
   'Hitta aldrig på pris, lager, orderstatus, tracking, återbetalning, returutfall, kompensation, goodwill, juridisk bedömning eller produktbeslut.',
   'Om svaret kräver återbetalning, avslag, ersättningsvara, goodwill, juridiskt/ARN-besked eller annat känsligt affärsbeslut ska requiresHumanDecision vara true och utkastet får inte påstå att beslutet redan är fattat.',
@@ -78,7 +83,7 @@ export class AiArmanAdminReplyDraftService {
           store: false,
           instructions: INSTRUCTIONS,
           input: JSON.stringify(normalized),
-          max_output_tokens: 1200,
+          max_output_tokens: 700,
           text: {
             format: {
               type: 'json_schema',
@@ -181,7 +186,8 @@ function extractOutputText(body: unknown): string | null {
 
 function projectResult(value: unknown) {
   if (!isRecord(value)) return null;
-  const draftText = typeof value.draftText === 'string' ? value.draftText.trim() : '';
+  const rawDraftText = typeof value.draftText === 'string' ? value.draftText.trim() : '';
+  const draftText = sanitizeDraftText(rawDraftText);
   const requiresHumanDecision = value.requiresHumanDecision;
   const decisionReasons = value.decisionReasons;
   const confidence = value.confidence;
@@ -196,6 +202,18 @@ function projectResult(value: unknown) {
     decisionReasons: decisionReasons.map((reason) => reason.trim()),
     confidence,
   };
+}
+
+function sanitizeDraftText(value: string): string {
+  let text = String(value || '').trim();
+
+  text = text.replace(/^Hej(?:\s+[^\n,!]+)?[!,]?\s*(?:👋)?\s*\n*/i, '');
+  text = text.replace(/^Hallå(?:\s+[^\n,!]+)?[!,]?\s*\n*/i, '');
+
+  text = text.replace(/\n+\s*(?:Vänliga hälsningar|Med vänliga hälsningar|Varmt tack)[,!]?\s*(?:🤍)?\s*\n+\s*(?:HARMONIQ(?: Kundservice)?)\s*$/i, '');
+  text = text.replace(/\n+\s*(?:HARMONIQ Kundservice|HARMONIQ)\s*$/i, '');
+
+  return text.trim();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

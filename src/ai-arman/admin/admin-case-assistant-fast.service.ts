@@ -8,24 +8,41 @@ const MAX_MESSAGE_TEXT = 3000;
 const MAX_DISCUSSION_TURNS = 12;
 const MAX_DISCUSSION_TEXT = 1200;
 
+const REPLY_DRAFT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    draftText: { type: 'string', minLength: 1, maxLength: 1800 },
+    requiresHumanDecision: { type: 'boolean' },
+    decisionReasons: {
+      type: 'array',
+      maxItems: 4,
+      items: { type: 'string', minLength: 1, maxLength: 160 },
+    },
+    confidence: { type: 'number', minimum: 0, maximum: 1 },
+  },
+  required: ['draftText', 'requiresHumanDecision', 'decisionReasons', 'confidence'],
+} as const;
+
 const ANALYSIS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    caseSummary: { type: 'string', minLength: 1, maxLength: 600 },
-    customerNeed: { type: 'string', minLength: 1, maxLength: 300 },
+    caseSummary: { type: 'string', minLength: 1, maxLength: 420 },
+    customerNeed: { type: 'string', minLength: 1, maxLength: 240 },
     recommendedActions: {
       type: 'array',
-      maxItems: 4,
-      items: { type: 'string', minLength: 1, maxLength: 220 },
+      maxItems: 3,
+      items: { type: 'string', minLength: 1, maxLength: 180 },
     },
-    reasoning: { type: 'string', minLength: 1, maxLength: 600 },
+    reasoning: { type: 'string', minLength: 1, maxLength: 420 },
     requiresHumanDecision: { type: 'boolean' },
     missingFacts: {
       type: 'array',
-      maxItems: 5,
-      items: { type: 'string', minLength: 1, maxLength: 160 },
+      maxItems: 4,
+      items: { type: 'string', minLength: 1, maxLength: 140 },
     },
+    replyDraft: REPLY_DRAFT_SCHEMA,
   },
   required: [
     'caseSummary',
@@ -34,6 +51,7 @@ const ANALYSIS_SCHEMA = {
     'reasoning',
     'requiresHumanDecision',
     'missingFacts',
+    'replyDraft',
   ],
 } as const;
 
@@ -88,24 +106,38 @@ export class AiArmanAdminCaseAssistantFastService {
       config,
       schemaName: 'ai_arman_admin_case_analysis',
       schema: ANALYSIS_SCHEMA,
-      maxOutputTokens: 700,
+      maxOutputTokens: 650,
       instructions: [
         'Du är AI Arman, intern ärendeassistent för HARMONIQ.',
-        'Analysera ärendet kort och konkret för en smal adminpanel.',
-        'Identifiera kundens faktiska behov, säkra nästa steg och vilka verifierade fakta som saknas.',
+        'Gör en enda snabb analys som både hjälper admin förstå ärendet och ger ett färdigt kundsvar. Undvik dubbelarbete.',
+        'Senaste kundmeddelandet finns separat i latestCustomerMessage och är den viktigaste källan för vad kunden behöver NU. Äldre frågor och problem får aldrig automatiskt behandlas som fortfarande öppna om ett senare kundmeddelande ersätter eller avslutar dem.',
+        'Om latestCustomerMessageClosesPreviousNeed är true har kunden själv bekräftat att det tidigare behovet är löst och har inte ställt en ny fråga. Då ska customerNeed beskriva att ingen ny åtgärd efterfrågas, recommendedActions ska endast föreslå en varm bekräftelse/avslutning och replyDraft får inte återöppna tracking, sändnings-ID, öppettider eller andra äldre behov.',
+        'Analysera kort och konkret för en smal adminpanel: kundens faktiska behov just nu, säkra nästa steg och verifierade fakta som saknas.',
+        'ReplyDraft ska låta som Arman själv skriver till kunden: varm, go, mänsklig, rak, personlig och lite talspråklig. Det ska kännas som att en riktig person hjälper någon man bryr sig om, inte som ett kundservice-manus.',
+        'Använd gärna jag-form när det känns naturligt: "jag hjälper dig", "jag kollar det", "det löser vi". Undvik opersonligt myndighets- eller företagspråk.',
+        'Arman kan kalla kunden "vännen" eller "bästa", men naturligt och sparsamt, normalt högst en gång per svar och inte mekaniskt i varje svar.',
+        'Skriv kort: normalt 2-4 korta meningar. En varm emoji som 🤍, 🙏 eller 🫶 får användas när det passar, normalt högst en eller två.',
+        'Om kunden berättar att problemet redan löst sig ska du inte skapa en ny onödig fråga. Bekräfta varmt och avsluta naturligt.',
+        'Stilnivå, inte faktamallar: "Åh vad skönt vännen att det löste sig 🤍 Då behöver vi inte göra något mer. Ha en superfin resa!" eller "Självklart bästa, jag kollar det åt dig 🤍".',
+        'Skriv endast själva brödtexten i replyDraft. Mailmotorn äger hälsning och signatur.',
+        'Skriv därför ALDRIG Hej, Hallå, Tjena eller kundnamn som inledande hälsning. Skriv ALDRIG Mvh, MVH, Vänliga hälsningar, Med vänlig hälsning, Med vänliga hälsningar, Varma hälsningar, Bästa hälsningar, Varmt tack, HARMONIQ, HARMONIQ Kundservice eller annan signatur/footer.',
+        'Undvik generiska kundservicefraser som "tack för att du kontaktar oss", "vi beklagar eventuella olägenheter", "vänligen", "hör av dig så hjälper vi dig vidare" och "återkom gärna om du har fler frågor" när du kan säga samma sak mer mänskligt och direkt.',
+        'Lägg inte till generiska avslutningsfraser som Trevlig helg, Ha en fin dag eller Trevlig resa om kundens meddelande inte ger en naturlig anledning till just den frasen.',
         'Fatta aldrig beslut om återbetalning, avslag, goodwill, ersättningsvara, juridik eller annan känslig affärsåtgärd.',
-        'Använd endast fakta i ärendekontexten och godkända supportlärdomar. Hitta aldrig på fakta.',
+        'Om ett sådant beslut krävs ska både analysens requiresHumanDecision och replyDraft.requiresHumanDecision vara true, och replyDraft får inte påstå att beslutet redan är fattat.',
+        'Använd endast fakta i ärendekontexten och godkända supportlärdomar. Hitta aldrig på pris, lager, orderstatus, tracking, returutfall eller andra fakta.',
       ].join(' '),
       payload: { case: normalized, approvedLearnings: lessons },
     });
     if (!modelResult.ok) return modelResult;
 
     const projected = projectAnalysis(modelResult.value);
-    return projected
+    const guarded = projected ? applyLatestCustomerStateGuard(normalized, projected) : null;
+    return guarded
       ? {
           ok: true as const,
           mode: 'analysis' as const,
-          ...projected,
+          ...guarded,
           approvedLearningsUsed: lessons.length,
           sendsCustomerMessage: false,
           executesWrites: false,
@@ -126,6 +158,7 @@ export class AiArmanAdminCaseAssistantFastService {
       instructions: [
         'Du är AI Arman, intern diskussionspartner för HARMONIQ admin.',
         'Besvara administratörens fråga direkt, kort och konkret med hänsyn till tidigare diskussion.',
+        'Senaste kundmeddelandet finns i latestCustomerMessage och väger tyngst för kundens nuvarande behov. Återöppna inte ett äldre behov som kunden senare har sagt är löst.',
         'Använd endast fakta i ärendet, tidigare diskussion och godkända supportlärdomar.',
         'Om ett förslag kräver återbetalning, avslag, goodwill, ersättningsvara, juridik eller annat känsligt affärsbeslut ska requiresHumanDecision vara true och du får inte påstå att beslutet är fattat.',
         'learningCandidate får endast föreslås om admin uttryckt en generaliserbar arbetsregel som kan vara värd att spara efter separat godkännande.',
@@ -217,13 +250,22 @@ type NormalizedInput = ReturnType<typeof normalizeInput> extends infer T
   ? Exclude<T, null>
   : never;
 
+type ProjectedAnalysis = NonNullable<ReturnType<typeof projectAnalysis>>;
+type NormalizedMessage = {
+  direction: string;
+  sender: string;
+  subject: string;
+  text: string;
+  date: string;
+};
+
 function normalizeInput(value: unknown) {
   if (!isRecord(value)) return null;
   const caseId = clean(value.caseId, 100);
   const caseType = clean(value.caseType, 80).toLowerCase();
   if (!caseId || !caseType) return null;
 
-  const messages = Array.isArray(value.messages)
+  const messages: NormalizedMessage[] = Array.isArray(value.messages)
     ? value.messages
         .slice(-MAX_MESSAGES)
         .filter(isRecord)
@@ -235,7 +277,13 @@ function normalizeInput(value: unknown) {
           date: clean(message.date, 64),
         }))
         .filter((message) => message.text || message.subject)
+        .sort(compareMessageChronology)
     : [];
+
+  const latestCustomerMessage = findLatestCustomerMessage(messages);
+  const latestCustomerMessageClosesPreviousNeed = Boolean(
+    latestCustomerMessage && customerMessageClosesPreviousNeed(latestCustomerMessage),
+  );
 
   const discussion = Array.isArray(value.discussion)
     ? value.discussion
@@ -257,24 +305,127 @@ function normalizeInput(value: unknown) {
     status: clean(value.status, 120),
     customerName: clean(value.customerName, 100),
     adminQuestion: clean(value.adminQuestion, MAX_DISCUSSION_TEXT),
+    latestCustomerMessage,
+    latestCustomerMessageClosesPreviousNeed,
     messages,
     discussion,
   };
 }
 
+function compareMessageChronology(a: NormalizedMessage, b: NormalizedMessage) {
+  const aTime = Date.parse(a.date);
+  const bTime = Date.parse(b.date);
+  if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+    return aTime - bTime;
+  }
+  return 0;
+}
+
+function findLatestCustomerMessage(messages: NormalizedMessage[]): NormalizedMessage | null {
+  const customerMessages = messages.filter(isCustomerMessage);
+  if (!customerMessages.length) return null;
+  return customerMessages.reduce((latest, candidate) => {
+    const latestTime = Date.parse(latest.date);
+    const candidateTime = Date.parse(candidate.date);
+    if (Number.isFinite(candidateTime) && (!Number.isFinite(latestTime) || candidateTime > latestTime)) {
+      return candidate;
+    }
+    return latest;
+  });
+}
+
+function isCustomerMessage(message: NormalizedMessage) {
+  const direction = message.direction.toLowerCase();
+  const sender = message.sender.toLowerCase();
+  return (
+    direction === 'inbound' ||
+    direction === 'customer' ||
+    direction === 'incoming' ||
+    sender === 'kund' ||
+    sender === 'customer'
+  );
+}
+
+function customerMessageClosesPreviousNeed(message: NormalizedMessage) {
+  const text = `${message.subject} ${message.text}`.toLowerCase();
+  if (hasNewCustomerRequest(text)) return false;
+  if (/\b(?:inte|ej)\b.{0,50}\b(?:hämta|hämtas|kommit|levererats|löst|löste|ordnat|funkar|fungerar)\b/i.test(text)) {
+    return false;
+  }
+  return (
+    /\b(?:det|allt|nu)\s+(?:har\s+)?(?:löst\s+sig|ordnat\s+sig|funkar|fungerar)\b/i.test(text) ||
+    /\b(?:paketet|försändelsen|leveransen)\s+(?:finns|är)\s+(?:nu\s+)?(?:att|redo\s+att)\s+hämta\b/i.test(text) ||
+    /\b(?:fick|har\s+fått)\b.{0,90}\b(?:meddelande|avisering)\b.{0,90}\b(?:kan|går\s+att)\s+hämta\b/i.test(text) ||
+    /\b(?:paketet|försändelsen|leveransen)\s+(?:har\s+)?(?:kommit\s+fram|levererats|är\s+framme)\b/i.test(text)
+  );
+}
+
+function hasNewCustomerRequest(text: string) {
+  return (
+    text.includes('?') ||
+    /\b(?:kan|skulle)\s+(?:ni|du)\b/i.test(text) ||
+    /\b(?:hjälp\s+mig|kan\s+jag\s+få|går\s+det\s+att|hur\s+gör|vad\s+gör|när\s+kan|var\s+kan)\b/i.test(text)
+  );
+}
+
+function applyLatestCustomerStateGuard(
+  normalized: NormalizedInput,
+  analysis: ProjectedAnalysis,
+): ProjectedAnalysis {
+  if (!normalized.latestCustomerMessageClosesPreviousNeed || !normalized.latestCustomerMessage) {
+    return analysis;
+  }
+
+  const latestText = normalized.latestCustomerMessage.text;
+  const requiresHumanDecision = analysis.requiresHumanDecision || analysis.replyDraft.requiresHumanDecision;
+  return {
+    ...analysis,
+    customerNeed: 'Kunden bekräftar att det tidigare problemet är löst och efterfrågar ingen ny åtgärd.',
+    recommendedActions: ['Bekräfta varmt att det löste sig och återöppna inte tidigare frågor.'],
+    reasoning: 'Senaste kundmeddelandet bekräftar att det tidigare behovet är löst och ersätter äldre frågor i tråden.',
+    missingFacts: [],
+    requiresHumanDecision,
+    replyDraft: {
+      ...analysis.replyDraft,
+      draftText: buildResolvedCustomerReply(latestText),
+      requiresHumanDecision,
+    },
+  };
+}
+
+function buildResolvedCustomerReply(latestText: string) {
+  const text = latestText.toLowerCase();
+  const mentionsApology = /\b(?:ursäkt|ursäkta|förlåt)\b/i.test(text);
+  const mentionsStress = /\b(?:stress|stressigt|bråttom|brått)\b/i.test(text);
+  const mentionsTravel = /\b(?:resa|reser|resan|åker|åka)\b/i.test(text);
+
+  const sentences = ['Åh vad skönt vännen att det löste sig 🤍'];
+  if (mentionsApology && (mentionsStress || mentionsTravel)) {
+    sentences.push('Du behöver verkligen inte be om ursäkt, jag fattar att det blev stressigt.');
+  } else if (mentionsApology) {
+    sentences.push('Du behöver verkligen inte be om ursäkt.');
+  }
+  if (mentionsTravel) {
+    sentences.push('Ha en superfin resa! 🫶');
+  }
+  return sentences.join(' ');
+}
+
 function projectAnalysis(value: unknown) {
   if (!isRecord(value)) return null;
-  const caseSummary = clean(value.caseSummary, 600);
-  const customerNeed = clean(value.customerNeed, 300);
-  const recommendedActions = readStringArray(value.recommendedActions, 4, 220);
-  const reasoning = clean(value.reasoning, 600);
-  const missingFacts = readStringArray(value.missingFacts, 5, 160);
+  const caseSummary = clean(value.caseSummary, 420);
+  const customerNeed = clean(value.customerNeed, 240);
+  const recommendedActions = readStringArray(value.recommendedActions, 3, 180);
+  const reasoning = clean(value.reasoning, 420);
+  const missingFacts = readStringArray(value.missingFacts, 4, 140);
+  const replyDraft = projectReplyDraft(value.replyDraft);
   if (
     !caseSummary ||
     !customerNeed ||
     !recommendedActions ||
     !reasoning ||
     !missingFacts ||
+    !replyDraft ||
     typeof value.requiresHumanDecision !== 'boolean'
   ) {
     return null;
@@ -286,7 +437,47 @@ function projectAnalysis(value: unknown) {
     reasoning,
     requiresHumanDecision: value.requiresHumanDecision,
     missingFacts,
+    replyDraft,
   };
+}
+
+function projectReplyDraft(value: unknown) {
+  if (!isRecord(value)) return null;
+  const draftText = stripMailWrapper(cleanDraftText(value.draftText, 1800));
+  const decisionReasons = readStringArray(value.decisionReasons, 4, 160);
+  const confidence = value.confidence;
+  if (
+    !draftText ||
+    !decisionReasons ||
+    typeof value.requiresHumanDecision !== 'boolean' ||
+    typeof confidence !== 'number' ||
+    !Number.isFinite(confidence) ||
+    confidence < 0 ||
+    confidence > 1
+  ) {
+    return null;
+  }
+  return {
+    draftText,
+    requiresHumanDecision: value.requiresHumanDecision,
+    decisionReasons,
+    confidence,
+  };
+}
+
+function stripMailWrapper(value: string): string {
+  let text = String(value || '').trim();
+
+  text = text.replace(
+    /^(?:Hej|Hallå|Tjena)(?:\s+[^\n,!?.]{1,80})?[!,]?\s*(?:👋|🤍|🫶)?\s*/i,
+    '',
+  );
+
+  const trailingSignoff = /\s+(?:Mvh|MVH|Vänliga hälsningar|Med vänlig hälsning|Med vänliga hälsningar|Varma hälsningar|Bästa hälsningar|Varmt tack)[,!]?\s*(?:🤍|🫶)?\s*(?:(?:HARMONIQ(?: Kundservice)?)|(?:Arman(?:\s*[-–—]\s*HARMONIQ)?))?\s*$/i;
+  text = text.replace(trailingSignoff, '');
+  text = text.replace(/\s+(?:HARMONIQ Kundservice|HARMONIQ)\s*$/i, '');
+
+  return text.trim();
 }
 
 function projectDiscussion(value: unknown) {
@@ -346,6 +537,19 @@ function extractOutputText(body: unknown): string | null {
     }
   }
   return parts.join('').trim() || null;
+}
+
+function cleanDraftText(value: unknown, max: number): string {
+  return String(value || '')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email_redacted]')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u0000-\u0009\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, max);
 }
 
 function clean(value: unknown, max: number): string {
