@@ -1,14 +1,13 @@
 name: AI Arman beta0 candidate deploy
 
 on:
-  pull_request:
-    types: [synchronize]
+  push:
     branches:
-      - main
+      - feature/ai-arman-foundation-v1
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 concurrency:
@@ -25,15 +24,12 @@ env:
   DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
   SOURCE_SHA: 2dc5ad558d882ddfe1b238ab49694d9fadcc2802
   STABLE_TAG: resolver-ready-3298af83
+  RESULT_PATH: .github/deploy-status/ai-arman-customer-presentation-candidate-latest.txt
+  FAILED_STAGE: source-gate
 
 jobs:
   deploy-candidate:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.number == 18 &&
-       github.actor == 'arman573' &&
-       github.event.pull_request.head.repo.full_name == 'arman573/harmoniq-backend' &&
-       github.event.pull_request.head.ref == 'feature/ai-arman-foundation-v1')
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Deploy AI Arman customer presentation zero traffic candidate'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -54,10 +50,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=source-gate' >> "$GITHUB_ENV"
           test "$GITHUB_ACTOR" = 'arman573'
-          if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then
-            test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
-          fi
+          test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           grep -Fq "@Controller('ai-arman/internal/customer-presentation')" src/ai-arman/admin/admin-customer-widget-presentation.controller.ts
           grep -Fq 'AiArmanCustomerWidgetPresentationStore' src/ai-arman/widget/customer/ai-arman-customer-widget-presentation.store.ts
@@ -65,6 +60,9 @@ jobs:
           npm test -- --runInBand
           npm run build
           docker build --pull -f Dockerfile.ai-arman-candidate -t ai-arman-customer-presentation:verify .
+
+      - name: Mark Google Cloud auth stage
+        run: echo 'FAILED_STAGE=gcp-auth' >> "$GITHUB_ENV"
 
       - name: Authenticate dedicated AI Arman deployer
         uses: google-github-actions/auth@v3
@@ -82,6 +80,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=stable-snapshot' >> "$GITHUB_ENV"
           gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/before.json"
           gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam.json"
           if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then
@@ -105,6 +104,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=image-build-push' >> "$GITHUB_ENV"
           IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:customer-presentation-${SOURCE_SHA:0:12}-$GITHUB_RUN_ID"
           gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
           docker build --pull -f Dockerfile.ai-arman-candidate -t "$IMAGE" .
@@ -121,6 +121,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=candidate-deploy' >> "$GITHUB_ENV"
           CUSTOMER_ADMIN_TOKEN="$(openssl rand -hex 32)"
           test "${#CUSTOMER_ADMIN_TOKEN}" -ge 32
           echo "::add-mask::$CUSTOMER_ADMIN_TOKEN"
@@ -173,6 +174,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=read-only-probe' >> "$GITHUB_ENV"
           echo "::add-mask::$ID_TOKEN"
           UNAUTH="$(curl --max-time 20 -sS -o "$RUNNER_TEMP/unauth.json" -w '%{http_code}' \
             --header "Authorization: Bearer $ID_TOKEN" \
@@ -200,11 +202,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'FAILED_STAGE=traffic-proof' >> "$GITHUB_ENV"
           gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/final.json"
           jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/final.json" > "$RUNNER_TEMP/positive-after.json"
           cmp "$RUNNER_TEMP/positive-before.json" "$RUNNER_TEMP/positive-after.json"
           test "$(jq -r --arg tag "$STABLE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/final.json" | head -n1)" = '${{ steps.before.outputs.stable_revision }}'
           test "$(jq -r --arg r "$CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/final.json")" = '0'
+
+      - name: Mark candidate complete
+        run: echo 'FAILED_STAGE=complete' >> "$GITHUB_ENV"
 
       - name: Publish zero-traffic candidate summary
         env:
@@ -232,3 +238,45 @@ jobs:
             echo '- Customer message sent: false'
             echo '- Resolver execute/write: false'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout source branch for status record
+        if: always()
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+          fetch-depth: 1
+
+      - name: Record candidate status in GitHub
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          REV: ${{ steps.candidate.outputs.revision }}
+          URL: ${{ steps.candidate.outputs.url }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+          STABLE_REV: ${{ steps.before.outputs.stable_revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$RESULT_PATH")"
+          cat > "$RESULT_PATH" <<EOF
+          overall=$JOB_STATUS
+          run_id=$GITHUB_RUN_ID
+          application_source=$SOURCE_SHA
+          workflow_head=$GITHUB_SHA
+          stage=$FAILED_STAGE
+          candidate_revision=$REV
+          candidate_url=$URL
+          image_digest=$DIGEST
+          runtime_service_account=$RUNTIME_SERVICE_ACCOUNT
+          stable_tag=$STABLE_TAG
+          stable_revision_before=$STABLE_REV
+          candidate_traffic_expected=0
+          presentation_storage_configured=false
+          approved_write_executed=false
+          customer_message_sent=false
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record AI Arman customer presentation candidate status [skip ci]'
+          git push origin HEAD:feature/ai-arman-foundation-v1
