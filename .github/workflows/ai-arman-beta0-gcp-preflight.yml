@@ -17,17 +17,18 @@ concurrency:
 env:
   PROJECT_ID: harmoniq-210513
   REGION: europe-north1
+  AI_SERVICE_NAME: harmoniq-ai-arman-beta0
+  RETURNS_RUNTIME_SA: 222024985388-compute@developer.gserviceaccount.com
+  AI_CANDIDATE_REV: harmoniq-ai-arman-beta0-cpres-2dc5ad55-3
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
   WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
   DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
-  AI_SERVICE_NAME: harmoniq-ai-arman-beta0
-  RETURNS_SERVICE_NAME: harmoniq-returns-api
-  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
-  RESULT_PATH: .github/deploy-status/returns-backend-provenance-readonly-latest.txt
+  RESULT_PATH: .github/deploy-status/ai-arman-returns-invoker-readonly-latest.txt
 
 jobs:
   preflight:
-    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Inspect Returns backend provenance read only'
-    name: Read-only Returns backend provenance
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Inspect AI Arman invoker read only'
+    name: Read-only AI Arman invoker provenance
     runs-on: ubuntu-24.04
     timeout-minutes: 12
 
@@ -39,94 +40,49 @@ jobs:
           test "$GITHUB_REF" = "$REQUIRED_REF"
           test "$GITHUB_ACTOR" = 'arman573'
 
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Authenticate with dedicated AI Arman deployer
+      - name: Authenticate dedicated AI Arman deployer
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
-      - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Read exact Returns Cloud Run service and revision state
+      - name: Read private service IAM and candidate state
         id: inspect
         shell: bash
         run: |
           set -euo pipefail
-          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n1)"
-          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
-
-          gcloud run services describe "$RETURNS_SERVICE_NAME" \
-            --project "$PROJECT_ID" --region "$REGION" --format=json \
-            > "$RUNNER_TEMP/returns-service.json"
-
-          RUNTIME_SA="$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/returns-service.json")"
-          LATEST_READY="$(jq -r '.status.latestReadyRevisionName // empty' "$RUNNER_TEMP/returns-service.json")"
-          LATEST_CREATED="$(jq -r '.status.latestCreatedRevisionName // empty' "$RUNNER_TEMP/returns-service.json")"
-          CANONICAL_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/returns-service.json")"
-          test -n "$RUNTIME_SA"; test -n "$LATEST_READY"; test -n "$LATEST_CREATED"; test -n "$CANONICAL_URL"
-
-          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag,url}] | sort_by(.revisionName,.tag)' \
-            "$RUNNER_TEMP/returns-service.json" > "$RUNNER_TEMP/positive.json"
-          POSITIVE_COUNT="$(jq 'length' "$RUNNER_TEMP/positive.json")"
-          test "$POSITIVE_COUNT" -ge 1
-
-          PRIMARY_REV="$(jq -r 'sort_by(.percent) | reverse | .[0].revisionName // empty' "$RUNNER_TEMP/positive.json")"
-          test -n "$PRIMARY_REV"
-          gcloud run revisions describe "$PRIMARY_REV" \
-            --project "$PROJECT_ID" --region "$REGION" --format=json \
-            > "$RUNNER_TEMP/primary-revision.json"
-          PRIMARY_IMAGE="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/primary-revision.json")"
-          REV_RUNTIME_SA="$(jq -r '.spec.serviceAccountName // empty' "$RUNNER_TEMP/primary-revision.json")"
-          SOURCE_SHA_LABEL="$(jq -r '.metadata.labels["source-sha"] // .metadata.labels["commit-sha"] // .metadata.labels["commit_sha"] // empty' "$RUNNER_TEMP/primary-revision.json")"
-          CLIENT_NAME="$(jq -r '.metadata.annotations["run.googleapis.com/client-name"] // empty' "$RUNNER_TEMP/primary-revision.json")"
-          CLIENT_VERSION="$(jq -r '.metadata.annotations["run.googleapis.com/client-version"] // empty' "$RUNNER_TEMP/primary-revision.json")"
-          test -n "$PRIMARY_IMAGE"; test -n "$REV_RUNTIME_SA"
-          test "$REV_RUNTIME_SA" = "$RUNTIME_SA"
-
-          gcloud run services get-iam-policy "$RETURNS_SERVICE_NAME" \
-            --project "$PROJECT_ID" --region "$REGION" --format=json \
-            > "$RUNNER_TEMP/returns-iam.json"
-          PUBLIC_IAM=false
-          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/returns-iam.json" >/dev/null; then
-            PUBLIC_IAM=true
+          test "$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n1)" = "$DEPLOY_SERVICE_ACCOUNT"
+          gcloud run services describe "$AI_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service.json"
+          gcloud run services get-iam-policy "$AI_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam.json"
+          if jq -e '[.bindings[]?.members[]?] | any(.=="allUsers" or .=="allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then
+            echo 'AI service unexpectedly public.' >&2
+            exit 1
           fi
+          MEMBER="serviceAccount:$RETURNS_RUNTIME_SA"
+          INVOKER=false
+          if jq -e --arg member "$MEMBER" '[.bindings[]? | select(.role=="roles/run.invoker") | .members[]?] | any(.==$member)' "$RUNNER_TEMP/iam.json" >/dev/null; then INVOKER=true; fi
+          CANDIDATE_PERCENT="$(jq -r --arg r "$AI_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")"
+          CANDIDATE_TAG="$(jq -r --arg r "$AI_CANDIDATE_REV" '.status.traffic[]? | select(.revisionName==$r) | .tag // empty' "$RUNNER_TEMP/service.json" | head -n1)"
+          CANONICAL_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/service.json")"
+          test "$CANDIDATE_PERCENT" = '0'
+          test "$CANDIDATE_TAG" = 'customer-admin-2dc5ad55'
+          test -n "$CANONICAL_URL"
+          echo "invoker=$INVOKER" >> "$GITHUB_OUTPUT"
+          echo "canonical_url=$CANONICAL_URL" >> "$GITHUB_OUTPUT"
+          echo "candidate_tag=$CANDIDATE_TAG" >> "$GITHUB_OUTPUT"
 
-          {
-            echo "runtime_sa=$RUNTIME_SA"
-            echo "latest_ready=$LATEST_READY"
-            echo "latest_created=$LATEST_CREATED"
-            echo "canonical_url=$CANONICAL_URL"
-            echo "positive_count=$POSITIVE_COUNT"
-            echo "primary_revision=$PRIMARY_REV"
-            echo "primary_image=$PRIMARY_IMAGE"
-            echo "source_sha_label=$SOURCE_SHA_LABEL"
-            echo "client_name=$CLIENT_NAME"
-            echo "client_version=$CLIENT_VERSION"
-            echo "public_iam=$PUBLIC_IAM"
-            echo "positive_traffic=$(cat "$RUNNER_TEMP/positive.json")"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Write sanitized provenance status
+      - name: Record sanitized read-only result
         env:
-          RUNTIME_SA: ${{ steps.inspect.outputs.runtime_sa }}
-          LATEST_READY: ${{ steps.inspect.outputs.latest_ready }}
-          LATEST_CREATED: ${{ steps.inspect.outputs.latest_created }}
+          INVOKER: ${{ steps.inspect.outputs.invoker }}
           CANONICAL_URL: ${{ steps.inspect.outputs.canonical_url }}
-          POSITIVE_COUNT: ${{ steps.inspect.outputs.positive_count }}
-          PRIMARY_REV: ${{ steps.inspect.outputs.primary_revision }}
-          PRIMARY_IMAGE: ${{ steps.inspect.outputs.primary_image }}
-          SOURCE_SHA_LABEL: ${{ steps.inspect.outputs.source_sha_label }}
-          CLIENT_NAME: ${{ steps.inspect.outputs.client_name }}
-          CLIENT_VERSION: ${{ steps.inspect.outputs.client_version }}
-          PUBLIC_IAM: ${{ steps.inspect.outputs.public_iam }}
-          POSITIVE_TRAFFIC: ${{ steps.inspect.outputs.positive_traffic }}
+          CANDIDATE_TAG: ${{ steps.inspect.outputs.candidate_tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -134,30 +90,18 @@ jobs:
           cat > "$RESULT_PATH" <<EOF
           overall=success
           inspected_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          project=$PROJECT_ID
-          region=$REGION
-          service=$RETURNS_SERVICE_NAME
-          runtime_service_account=$RUNTIME_SA
-          latest_ready_revision=$LATEST_READY
-          latest_created_revision=$LATEST_CREATED
+          service=$AI_SERVICE_NAME
           canonical_url=$CANONICAL_URL
-          positive_traffic_count=$POSITIVE_COUNT
-          primary_positive_revision=$PRIMARY_REV
-          primary_positive_image=$PRIMARY_IMAGE
-          source_sha_label=$SOURCE_SHA_LABEL
-          cloud_run_client_name=$CLIENT_NAME
-          cloud_run_client_version=$CLIENT_VERSION
-          public_iam=$PUBLIC_IAM
-          positive_traffic=$POSITIVE_TRAFFIC
+          service_public=false
+          returns_runtime_service_account=$RETURNS_RUNTIME_SA
+          returns_runtime_has_run_invoker=$INVOKER
+          candidate_revision=$AI_CANDIDATE_REV
+          candidate_tag=$CANDIDATE_TAG
+          candidate_traffic=0
           mutation_performed=false
           EOF
-
-      - name: Commit sanitized read-only provenance
-        shell: bash
-        run: |
-          set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add "$RESULT_PATH"
-          git commit -m 'Record Returns backend provenance read only [skip ci]'
+          git commit -m 'Record AI Arman Returns invoker read only [skip ci]'
           git push origin HEAD:feature/ai-arman-foundation-v1
