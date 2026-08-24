@@ -28,13 +28,14 @@ env:
   EXPECTED_RETURNS_LIVE_REV: harmoniq-returns-api-trk2494077-1
   RETURNS_CANDIDATE_REV: harmoniq-returns-api-aistock-52
   RETURNS_CANDIDATE_TAG: ai-arman-stock-bridge
-  CASE_ID: HQR-2493528
+  PRESENTATION_BUCKET: harmoniq-210513-ai-arman-customer-presentation
+  PRESENTATION_OBJECT: ai-arman/customer-presentation-v1.json
   RESULT_PATH: .github/deploy-status/ai-arman-customer-presentation-candidate-latest.txt
   FAILED_STAGE: source-gate
 
 jobs:
   deploy-candidate:
-    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Deploy AI Arman stock end to end zero traffic candidate'
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Configure AI Arman presentation GCS zero traffic candidate'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -64,10 +65,12 @@ jobs:
           grep -Fq 'stockVerified=true' src/ai-arman/admin/admin-case-assistant-fast.service.ts
           test -f src/ai-arman/admin/admin-case-resolver-stock-learning.spec.ts
           test -f src/ai-arman/admin/admin-learning-relevance.spec.ts
+          test -f src/ai-arman/widget/customer/ai-arman-customer-widget-presentation.store.ts
+          grep -Fq 'AI_ARMAN_CUSTOMER_PRESENTATION_GCS_BUCKET' src/ai-arman/widget/customer/ai-arman-customer-widget-presentation.store.ts
           npm ci
           npm test -- --runInBand
           npm run build
-          docker build --pull -f Dockerfile.ai-arman-candidate -t ai-arman-stock-e2e:verify .
+          docker build --pull -f Dockerfile.ai-arman-candidate -t ai-arman-customer-presentation-gcs:verify .
           echo 'TEST_BUILD_PASS=true' >> "$GITHUB_ENV"
 
       - name: Authenticate dedicated AI Arman deployer
@@ -113,15 +116,10 @@ jobs:
           test -n "$RETURNS_CANONICAL_URL"
           test "$(jq -r --arg r "$RETURNS_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/returns.json")" = '0'
 
-          RESOLVER_TOKEN="$(jq -r '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN") | .value // empty' "$RUNNER_TEMP/stable-rev.json" | head -n1)"
-          test ${#RESOLVER_TOKEN} -ge 32
-          echo "::add-mask::$RESOLVER_TOKEN"
-
           echo "stable_revision=$STABLE_REV" >> "$GITHUB_OUTPUT"
           echo "ai_canonical_url=$AI_CANONICAL_URL" >> "$GITHUB_OUTPUT"
           echo "returns_candidate_url=$RETURNS_CANDIDATE_URL" >> "$GITHUB_OUTPUT"
           echo "returns_canonical_url=$RETURNS_CANONICAL_URL" >> "$GITHUB_OUTPUT"
-          echo "RESOLVER_TOKEN=$RESOLVER_TOKEN" >> "$GITHUB_ENV"
           echo 'SNAPSHOT_PASS=true' >> "$GITHUB_ENV"
 
       - name: Build and push immutable application image
@@ -130,7 +128,7 @@ jobs:
         run: |
           set -euo pipefail
           echo 'FAILED_STAGE=image-build-push' >> "$GITHUB_ENV"
-          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:stock-e2e-${SOURCE_SHA:0:12}-$GITHUB_RUN_ID"
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:customer-presentation-gcs-${SOURCE_SHA:0:12}-$GITHUB_RUN_ID"
           gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
           docker build --pull -f Dockerfile.ai-arman-candidate -t "$IMAGE" .
           docker push "$IMAGE"
@@ -139,7 +137,7 @@ jobs:
           echo "image=$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME@$DIGEST" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy private zero traffic stock end to end candidate
+      - name: Deploy private zero traffic presentation GCS candidate
         id: candidate
         env:
           IMAGE: ${{ steps.image.outputs.image }}
@@ -150,15 +148,17 @@ jobs:
           echo 'FAILED_STAGE=candidate-deploy' >> "$GITHUB_ENV"
           APP_TOKEN="$(openssl rand -hex 32)"
           echo "::add-mask::$APP_TOKEN"
+          echo "APP_TOKEN=$APP_TOKEN" >> "$GITHUB_ENV"
           SHORT="${SOURCE_SHA:0:8}"
-          TAG="stock-e2e-$SHORT"
+          TAG="customer-presentation-gcs-$SHORT"
           gcloud run deploy "$SERVICE_NAME" \
             --project "$PROJECT_ID" --region "$REGION" --platform managed \
             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
-            --revision-suffix "stke2e-$SHORT-${GITHUB_RUN_NUMBER}" \
+            --revision-suffix "cpgcs-$SHORT-${GITHUB_RUN_NUMBER}" \
             --tag "$TAG" --no-traffic \
-            --update-env-vars "AI_ARMAN_CUSTOMER_ADMIN_ENABLED=true,AI_ARMAN_CUSTOMER_ADMIN_ACCESS_TOKEN=$APP_TOKEN,AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL=$RETURNS_CANDIDATE_URL" \
+            --update-env-vars "AI_ARMAN_CUSTOMER_ADMIN_ENABLED=true,AI_ARMAN_CUSTOMER_ADMIN_ACCESS_TOKEN=$APP_TOKEN,AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL=$RETURNS_CANDIDATE_URL,AI_ARMAN_CUSTOMER_PRESENTATION_GCS_BUCKET=$PRESENTATION_BUCKET,AI_ARMAN_CUSTOMER_PRESENTATION_GCS_OBJECT=$PRESENTATION_OBJECT" \
             --quiet
+
           gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-after.json"
           REV="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/ai-after.json" | head -n1)"
           URL="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/ai-after.json" | head -n1)"
@@ -175,9 +175,15 @@ jobs:
           done
           test "$(cenv AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL)" = "$RETURNS_CANDIDATE_URL"
           test "$(cenv AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE)" = '${{ steps.before.outputs.returns_canonical_url }}'
+          test "$(cenv AI_ARMAN_CUSTOMER_ADMIN_ENABLED)" = 'true'
+          test ${#APP_TOKEN} -ge 32
+          test "$(cenv AI_ARMAN_CUSTOMER_ADMIN_ACCESS_TOKEN)" = "$APP_TOKEN"
+          test "$(cenv AI_ARMAN_CUSTOMER_PRESENTATION_GCS_BUCKET)" = "$PRESENTATION_BUCKET"
+          test "$(cenv AI_ARMAN_CUSTOMER_PRESENTATION_GCS_OBJECT)" = "$PRESENTATION_OBJECT"
           echo "revision=$REV" >> "$GITHUB_OUTPUT"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo 'CANDIDATE_DEPLOYED=true' >> "$GITHUB_ENV"
+          echo 'GCS_CONFIG_PASS=true' >> "$GITHUB_ENV"
 
       - name: Mint private AI identity token
         id: idtoken
@@ -191,37 +197,26 @@ jobs:
           id_token_include_email: true
           create_credentials_file: false
 
-      - name: Verify real stock-aware prepare read only
+      - name: Verify configured presentation GET only
         env:
           ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
           URL: ${{ steps.candidate.outputs.url }}
         shell: bash
         run: |
           set -euo pipefail
-          echo 'FAILED_STAGE=real-prepare' >> "$GITHUB_ENV"
+          echo 'FAILED_STAGE=presentation-get' >> "$GITHUB_ENV"
           echo "::add-mask::$ID_TOKEN"
-          CODE="$(curl --max-time 45 -sS -o "$RUNNER_TEMP/prepare.json" -w '%{http_code}' \
-            --request POST \
+          CODE="$(curl --max-time 30 -sS -o "$RUNNER_TEMP/presentation.json" -w '%{http_code}' \
             --header "Authorization: Bearer $ID_TOKEN" \
-            --header "X-AI-Arman-Admin-Token: $RESOLVER_TOKEN" \
-            --header 'Content-Type: application/json' \
-            --data "{\"caseId\":\"$CASE_ID\"}" \
-            "$URL/ai-arman/internal/admin-resolver/prepare")"
-          test "$CODE" = '201'
-          jq -e --arg id "$CASE_ID" '.ok==true and .caseId==$id and .verifiedCase==true and .verifiedOrderContext==true and .analysisStatus=="available" and .draftStatus=="available" and .executesWrites==false and .sendsCustomerMessage==false' "$RUNNER_TEMP/prepare.json" >/dev/null
-
-          SAFE_TEXT="$(jq -r '[.analysis.caseSummary,.analysis.customerNeed,.analysis.reasoning,(.analysis.recommendedActions[]?),(.analysis.missingFacts[]?),.draft.message] | map(select(type=="string")) | join(" ") | ascii_downcase' "$RUNNER_TEMP/prepare.json")"
-          if ! printf '%s' "$SAFE_TEXT" | grep -Eiq 'lager|slut|saknas|kan inte skickas|inte kan skickas|hela beställningen|hela mängden'; then
-            echo 'Stock-shortage reasoning not detected' >&2
-            exit 1
-          fi
-          if printf '%s' "$SAFE_TEXT" | grep -Eiq '(kommer|skickas|levereras|anländer)[^.!?]{0,50}(idag|imorgon|i morgon|denna vecka|under veckan|nästa vecka|på [a-zåäö]+dag)'; then
-            echo 'Unverified ETA-like claim detected' >&2
-            exit 1
-          fi
-          echo 'PREPARE_PASS=true' >> "$GITHUB_ENV"
-          echo 'STOCK_REASONING_PASS=true' >> "$GITHUB_ENV"
-          echo 'ETA_GUARD_PASS=true' >> "$GITHUB_ENV"
+            --header "X-AI-Arman-Customer-Admin-Token: $APP_TOKEN" \
+            "$URL/ai-arman/internal/customer-presentation")"
+          echo "PRESENTATION_GET_HTTP=$CODE" >> "$GITHUB_ENV"
+          test "$CODE" = '200'
+          jq -e '.ok==true and .writeExecuted==false and .configured==true and .source=="default" and .generation=="0" and (.presentation|type)=="object"' "$RUNNER_TEMP/presentation.json" >/dev/null
+          echo 'PRESENTATION_GET_PASS=true' >> "$GITHUB_ENV"
+          echo 'PRESENTATION_CONFIGURED=true' >> "$GITHUB_ENV"
+          echo 'PRESENTATION_SOURCE=default' >> "$GITHUB_ENV"
+          echo 'PRESENTATION_GENERATION=0' >> "$GITHUB_ENV"
 
       - name: Prove AI and Returns positive traffic unchanged
         env:
@@ -277,16 +272,23 @@ jobs:
           stable_revision_before=$STABLE_REV
           returns_candidate_revision=$RETURNS_CANDIDATE_REV
           returns_candidate_tag=$RETURNS_CANDIDATE_TAG
-          prepare_pass=${PREPARE_PASS:-false}
-          stock_reasoning_pass=${STOCK_REASONING_PASS:-false}
-          eta_guard_pass=${ETA_GUARD_PASS:-false}
+          presentation_gcs_bucket=$PRESENTATION_BUCKET
+          presentation_gcs_object=$PRESENTATION_OBJECT
+          gcs_config_pass=${GCS_CONFIG_PASS:-false}
+          presentation_get_pass=${PRESENTATION_GET_PASS:-false}
+          presentation_get_http=${PRESENTATION_GET_HTTP:-unknown}
+          presentation_configured=${PRESENTATION_CONFIGURED:-false}
+          presentation_source=${PRESENTATION_SOURCE:-unknown}
+          presentation_generation=${PRESENTATION_GENERATION:-unknown}
           candidate_traffic_expected=0
           positive_traffic_unchanged=${TRAFFIC_PASS:-false}
+          presentation_write_executed=false
           approved_write_executed=false
           customer_message_sent=false
+          production_traffic_cutover=false
           EOF
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add "$RESULT_PATH"
-          git commit -m 'Record AI Arman stock end to end candidate status [skip ci]' || true
+          git commit -m 'Record AI Arman presentation GCS candidate status [skip ci]' || true
           git push origin HEAD:feature/ai-arman-foundation-v1
