@@ -1,5 +1,5 @@
 overall=
-inspected_at=2026-08-24T17:32:15Z
+inspected_at=2026-08-24T17:36:40Z
 service=harmoniq-ai-arman-beta0
 service_public=false
 returns_runtime_service_account=222024985388-compute@developer.gserviceaccount.com
@@ -10,6 +10,7 @@ returns_candidate_revision=harmoniq-returns-api-aistock-52
 returns_candidate_traffic=0
 snapshot_pass=true
 iam_write_executed=false
+iam_write_error_class=permission_denied
 iam_verify_pass=false
 full_chain_get_pass=false
 full_chain_get_http=unknown
