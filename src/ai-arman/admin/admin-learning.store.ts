@@ -26,6 +26,7 @@ const MAX_RELEVANT_LESSONS = 8;
 const MAX_BYTES = 512_000;
 const LEARNING_CACHE_TTL_MS = 5 * 60 * 1000;
 const TOKEN_REFRESH_SKEW_MS = 60 * 1000;
+const MAX_TRUSTED_FACTS_TEXT = 20_000;
 
 type LearningEnvelope = {
   lessons: AiArmanApprovedLearning[];
@@ -138,6 +139,11 @@ export class AiArmanAdminLearningStore {
 export function detectLearningScenario(value: unknown): AiArmanLearningScenario {
   if (hasVerifiedStockShortage(value)) return 'stock_shortage';
 
+  const trustedOrderFacts = readTrustedVerifiedOrderFacts(value);
+  if (trustedOrderFacts && hasVerifiedStockShortage(trustedOrderFacts)) {
+    return 'stock_shortage';
+  }
+
   const text = normalizeForMatching(JSON.stringify(value ?? ''));
   if (/\b(tracking|sparning|sparningslank|sandningsid|sandnings-id|paketid|paket-id)\b/.test(text)) {
     return 'tracking';
@@ -146,6 +152,25 @@ export function detectLearningScenario(value: unknown): AiArmanLearningScenario 
     return 'supplier_delay';
   }
   return 'general';
+}
+
+function readTrustedVerifiedOrderFacts(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value) || !Array.isArray(value.messages)) return null;
+
+  for (let index = value.messages.length - 1; index >= 0; index -= 1) {
+    const message = value.messages[index];
+    if (!isRecord(message)) continue;
+    if (String(message.sender || '') !== 'VERIFIERADE ORDERFAKTA') continue;
+    const text = String(message.text || '').trim();
+    if (!text || text.length > MAX_TRUSTED_FACTS_TEXT) continue;
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (isRecord(parsed)) return parsed;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 function relevanceScore(
