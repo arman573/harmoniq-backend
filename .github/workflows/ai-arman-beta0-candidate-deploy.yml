@@ -150,7 +150,7 @@ jobs:
           echo "::add-mask::$APP_TOKEN"
           echo "APP_TOKEN=$APP_TOKEN" >> "$GITHUB_ENV"
           SHORT="${SOURCE_SHA:0:8}"
-          TAG="customer-presentation-gcs-$SHORT"
+          TAG="cpgcs-$SHORT"
           gcloud run deploy "$SERVICE_NAME" \
             --project "$PROJECT_ID" --region "$REGION" --platform managed \
             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
