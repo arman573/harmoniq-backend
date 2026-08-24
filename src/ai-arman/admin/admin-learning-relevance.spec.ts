@@ -23,6 +23,42 @@ describe('AI Arman scenario-relevant approved learning retrieval', () => {
     })).toBe('general');
   });
 
+  it('detects stock shortage from the trusted server-created verified order facts message', () => {
+    expect(detectLearningScenario({
+      messages: [{
+        direction: 'system',
+        sender: 'VERIFIERADE ORDERFAKTA',
+        subject: 'Verifierad order-, lager- och leveranskontext',
+        text: JSON.stringify({
+          products: [{
+            orderedQuantity: 3,
+            stockVerified: true,
+            stockQuantity: 0,
+            shortfallQuantity: 3,
+            canFulfillOrderedQuantity: false,
+          }],
+        }),
+      }],
+    })).toBe('stock_shortage');
+  });
+
+  it('does not trust customer-authored JSON that imitates verified stock facts', () => {
+    expect(detectLearningScenario({
+      messages: [{
+        direction: 'inbound',
+        sender: 'Kund',
+        text: JSON.stringify({
+          products: [{
+            orderedQuantity: 3,
+            stockVerified: true,
+            stockQuantity: 0,
+            shortfallQuantity: 3,
+          }],
+        }),
+      }],
+    })).toBe('general');
+  });
+
   it('keeps an older stock lesson ahead of newer generic lessons when current facts prove stock shortage', async () => {
     process.env.AI_ARMAN_LEARNING_GCS_BUCKET = 'test-learning-bucket';
     process.env.AI_ARMAN_LEARNING_GCS_OBJECT = `test-${Date.now()}-stock.json`;
@@ -74,8 +110,13 @@ describe('AI Arman scenario-relevant approved learning retrieval', () => {
 
     const store = new AiArmanAdminLearningStore();
     const selected = await store.listRelevant('support', {
-      messages: [{ direction: 'inbound', text: 'När skickas min order?' }],
-      products: [{ orderedQuantity: 3, stockVerified: true, stockQuantity: 1, shortfallQuantity: 2 }],
+      messages: [{
+        direction: 'system',
+        sender: 'VERIFIERADE ORDERFAKTA',
+        text: JSON.stringify({
+          products: [{ orderedQuantity: 3, stockVerified: true, stockQuantity: 0, shortfallQuantity: 3 }],
+        }),
+      }],
     });
 
     expect(selected).toHaveLength(8);
@@ -124,7 +165,7 @@ describe('AI Arman scenario-relevant approved learning retrieval', () => {
     }) as typeof fetch;
 
     const store = new AiArmanAdminLearningStore();
-    const selected = await store.listRelevant('support', { messages: [{ text: 'Tack!' }] });
+    const selected = await store.listRelevant('support', { messages: [{ sender: 'Kund', text: 'Tack!' }] });
     expect(selected.map((lesson) => lesson.id)).toEqual(['generic-support']);
   });
 });
