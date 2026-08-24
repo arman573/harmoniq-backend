@@ -30,7 +30,7 @@ env:
 
 jobs:
   preflight:
-    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Grant AI Arman Returns invoker and verify GET once'
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Retry AI Arman Returns invoker with captured result'
     name: Grant Returns invoker and verify GET only
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -92,16 +92,29 @@ jobs:
           echo "ADMIN_TOKEN=$ADMIN_TOKEN" >> "$GITHUB_ENV"
           echo 'SNAPSHOT_PASS=true' >> "$GITHUB_ENV"
 
-      - name: Grant only Cloud Run Invoker to Returns runtime
+      - name: Grant only Cloud Run Invoker to Returns runtime with captured outcome
         shell: bash
         run: |
-          set -euo pipefail
-          gcloud run services add-iam-policy-binding "$AI_SERVICE_NAME" \
+          set -uo pipefail
+          set +e
+          GRANT_OUTPUT="$(gcloud run services add-iam-policy-binding "$AI_SERVICE_NAME" \
             --project "$PROJECT_ID" --region "$REGION" \
             --member="serviceAccount:$RETURNS_RUNTIME_SA" \
             --role='roles/run.invoker' \
-            --quiet
+            --quiet 2>&1)"
+          GRANT_RC=$?
+          set -e
+          if [ "$GRANT_RC" -ne 0 ]; then
+            ERROR_CLASS=other
+            if printf '%s' "$GRANT_OUTPUT" | grep -Eqi 'PERMISSION_DENIED|does not have .*permission|setIamPolicy'; then
+              ERROR_CLASS=permission_denied
+            fi
+            echo "IAM_WRITE_ERROR_CLASS=$ERROR_CLASS" >> "$GITHUB_ENV"
+            printf '%s\n' "$GRANT_OUTPUT" | tail -n 8
+            exit "$GRANT_RC"
+          fi
           echo 'IAM_WRITE_EXECUTED=true' >> "$GITHUB_ENV"
+          echo 'IAM_WRITE_ERROR_CLASS=none' >> "$GITHUB_ENV"
 
       - name: Verify least privilege IAM and unchanged traffic
         shell: bash
@@ -158,6 +171,7 @@ jobs:
           returns_candidate_traffic=0
           snapshot_pass=${SNAPSHOT_PASS:-false}
           iam_write_executed=${IAM_WRITE_EXECUTED:-false}
+          iam_write_error_class=${IAM_WRITE_ERROR_CLASS:-unknown}
           iam_verify_pass=${IAM_VERIFY_PASS:-false}
           full_chain_get_pass=${FULL_CHAIN_GET_PASS:-false}
           full_chain_get_http=${GET_HTTP:-unknown}
