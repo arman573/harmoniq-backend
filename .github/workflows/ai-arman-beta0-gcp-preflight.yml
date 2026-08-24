@@ -30,10 +30,10 @@ env:
 
 jobs:
   preflight:
-    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Retry AI Arman Returns invoker with captured result'
-    name: Grant Returns invoker and verify GET only
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Verify AI Arman customer admin GET only'
+    name: Verify Customer Admin GET only
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 12
 
     steps:
       - name: Enforce exact branch and actor
@@ -56,7 +56,7 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Snapshot exact private boundaries before IAM write
+      - name: Snapshot exact boundaries and verify invoker already present
         id: before
         shell: bash
         run: |
@@ -65,75 +65,43 @@ jobs:
 
           gcloud run services describe "$AI_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-before.json"
           gcloud run services get-iam-policy "$AI_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-iam-before.json"
-          if jq -e '[.bindings[]?.members[]?] | any(.=="allUsers" or .=="allAuthenticatedUsers")' "$RUNNER_TEMP/ai-iam-before.json" >/dev/null; then exit 1; fi
-          test "$(jq -r --arg r "$AI_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai-before.json")" = '0'
-          AI_CANONICAL_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/ai-before.json")"
-          test -n "$AI_CANONICAL_URL"
-          MEMBER="serviceAccount:$RETURNS_RUNTIME_SA"
-          if jq -e --arg member "$MEMBER" '[.bindings[]? | select(.role=="roles/run.invoker") | .members[]?] | any(.==$member)' "$RUNNER_TEMP/ai-iam-before.json" >/dev/null; then
-            echo 'Invoker already present; refusing duplicate mutation.' >&2
+          if jq -e '[.bindings[]?.members[]?] | any(.=="allUsers" or .=="allAuthenticatedUsers")' "$RUNNER_TEMP/ai-iam-before.json" >/dev/null; then
+            echo 'AI service unexpectedly public.' >&2
             exit 1
           fi
+          MEMBER="serviceAccount:$RETURNS_RUNTIME_SA"
+          jq -e --arg member "$MEMBER" '[.bindings[]? | select(.role=="roles/run.invoker") | .members[]?] | any(.==$member)' "$RUNNER_TEMP/ai-iam-before.json" >/dev/null
+          test "$(jq -r --arg r "$AI_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai-before.json")" = '0'
 
           gcloud run services describe "$RETURNS_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-before.json"
           test "$(jq -r --arg r "$RETURNS_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/returns-before.json")" = '0'
-          RETURNS_CANDIDATE_URL="$(jq -r --arg tag "$RETURNS_CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/returns-before.json" | head -n1)"
+          RETURNS_CANDIDATE_URL="$(jq -r --arg tag "$RETURNS_CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag and .revisionName==env.RETURNS_CANDIDATE_REV) | .url // empty' "$RUNNER_TEMP/returns-before.json" | head -n1)"
           test -n "$RETURNS_CANDIDATE_URL"
+
           gcloud run revisions describe "$RETURNS_CANDIDATE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-candidate.json"
           test "$(jq -r '.spec.serviceAccountName // empty' "$RUNNER_TEMP/returns-candidate.json")" = "$RETURNS_RUNTIME_SA"
           ADMIN_TOKEN="$(jq -r '.spec.containers[0].env[]? | select(.name=="ADMIN_ACCESS_TOKEN") | .value // empty' "$RUNNER_TEMP/returns-candidate.json" | head -n1)"
           test ${#ADMIN_TOKEN} -ge 32
           echo "::add-mask::$ADMIN_TOKEN"
 
-          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/ai-before.json" > "$RUNNER_TEMP/ai-positive-before.json"
-          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/returns-before.json" > "$RUNNER_TEMP/returns-positive-before.json"
-          echo "ai_url=$AI_CANONICAL_URL" >> "$GITHUB_OUTPUT"
+          BRIDGE_ENABLED="$(jq -r '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_CUSTOMER_ADMIN_BRIDGE_ENABLED") | .value // empty' "$RUNNER_TEMP/returns-candidate.json" | head -n1)"
+          BRIDGE_BASE="$(jq -r '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_CUSTOMER_ADMIN_BASE_URL") | .value // empty' "$RUNNER_TEMP/returns-candidate.json" | head -n1)"
+          BRIDGE_AUDIENCE="$(jq -r '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_CUSTOMER_ADMIN_AUDIENCE") | .value // empty' "$RUNNER_TEMP/returns-candidate.json" | head -n1)"
+          BRIDGE_TOKEN="$(jq -r '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_CUSTOMER_ADMIN_ACCESS_TOKEN") | .value // empty' "$RUNNER_TEMP/returns-candidate.json" | head -n1)"
+          test "$BRIDGE_ENABLED" = 'true'
+          test -n "$BRIDGE_BASE"
+          test -n "$BRIDGE_AUDIENCE"
+          test ${#BRIDGE_TOKEN} -ge 32
+          echo "::add-mask::$BRIDGE_TOKEN"
+
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent:(.percent // 0),tag:(.tag // "")}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/ai-before.json" > "$RUNNER_TEMP/ai-positive-before.json"
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent:(.percent // 0),tag:(.tag // "")}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/returns-before.json" > "$RUNNER_TEMP/returns-positive-before.json"
+
           echo "returns_url=$RETURNS_CANDIDATE_URL" >> "$GITHUB_OUTPUT"
           echo "ADMIN_TOKEN=$ADMIN_TOKEN" >> "$GITHUB_ENV"
           echo 'SNAPSHOT_PASS=true' >> "$GITHUB_ENV"
-
-      - name: Grant only Cloud Run Invoker to Returns runtime with captured outcome
-        shell: bash
-        run: |
-          set -uo pipefail
-          set +e
-          GRANT_OUTPUT="$(gcloud run services add-iam-policy-binding "$AI_SERVICE_NAME" \
-            --project "$PROJECT_ID" --region "$REGION" \
-            --member="serviceAccount:$RETURNS_RUNTIME_SA" \
-            --role='roles/run.invoker' \
-            --quiet 2>&1)"
-          GRANT_RC=$?
-          set -e
-          if [ "$GRANT_RC" -ne 0 ]; then
-            ERROR_CLASS=other
-            if printf '%s' "$GRANT_OUTPUT" | grep -Eqi 'PERMISSION_DENIED|does not have .*permission|setIamPolicy'; then
-              ERROR_CLASS=permission_denied
-            fi
-            echo "IAM_WRITE_ERROR_CLASS=$ERROR_CLASS" >> "$GITHUB_ENV"
-            printf '%s\n' "$GRANT_OUTPUT" | tail -n 8
-            exit "$GRANT_RC"
-          fi
-          echo 'IAM_WRITE_EXECUTED=true' >> "$GITHUB_ENV"
-          echo 'IAM_WRITE_ERROR_CLASS=none' >> "$GITHUB_ENV"
-
-      - name: Verify least privilege IAM and unchanged traffic
-        shell: bash
-        run: |
-          set -euo pipefail
-          gcloud run services get-iam-policy "$AI_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-iam-after.json"
-          MEMBER="serviceAccount:$RETURNS_RUNTIME_SA"
-          jq -e --arg member "$MEMBER" '[.bindings[]? | select(.role=="roles/run.invoker") | .members[]?] | any(.==$member)' "$RUNNER_TEMP/ai-iam-after.json" >/dev/null
-          if jq -e '[.bindings[]?.members[]?] | any(.=="allUsers" or .=="allAuthenticatedUsers")' "$RUNNER_TEMP/ai-iam-after.json" >/dev/null; then exit 1; fi
-
-          gcloud run services describe "$AI_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-after.json"
-          gcloud run services describe "$RETURNS_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-after.json"
-          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/ai-after.json" > "$RUNNER_TEMP/ai-positive-after.json"
-          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/returns-after.json" > "$RUNNER_TEMP/returns-positive-after.json"
-          cmp "$RUNNER_TEMP/ai-positive-before.json" "$RUNNER_TEMP/ai-positive-after.json"
-          cmp "$RUNNER_TEMP/returns-positive-before.json" "$RUNNER_TEMP/returns-positive-after.json"
-          test "$(jq -r --arg r "$AI_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai-after.json")" = '0'
-          test "$(jq -r --arg r "$RETURNS_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/returns-after.json")" = '0'
           echo 'IAM_VERIFY_PASS=true' >> "$GITHUB_ENV"
+          echo 'BRIDGE_CONFIG_PASS=true' >> "$GITHUB_ENV"
 
       - name: Verify full chain customer presentation GET only
         env:
@@ -144,22 +112,41 @@ jobs:
           CODE="$(curl --max-time 30 -sS -o "$RUNNER_TEMP/get.json" -w '%{http_code}' \
             -H "Authorization: Bearer $ADMIN_TOKEN" \
             "$RETURNS_URL/api/admin/ai-arman/customer-presentation")"
-          test "$CODE" = '200'
-          jq -e '.ok==true and .writeExecuted==false and (.presentation|type)=="object" and (.generation|type)=="string"' "$RUNNER_TEMP/get.json" >/dev/null
           echo "GET_HTTP=$CODE" >> "$GITHUB_ENV"
+          if [ "$CODE" != '200' ]; then
+            jq -c '{ok:(.ok // false),code:(.code // "unknown"),writeExecuted:(.writeExecuted // false)}' "$RUNNER_TEMP/get.json" 2>/dev/null || true
+            exit 1
+          fi
+          jq -e '.ok==true and .writeExecuted==false and (.presentation|type)=="object" and (.generation|type)=="string"' "$RUNNER_TEMP/get.json" >/dev/null
           echo "GET_SOURCE=$(jq -r '.source // empty' "$RUNNER_TEMP/get.json")" >> "$GITHUB_ENV"
-          echo "GET_CONFIGURED=$(jq -r '.configured // false' "$RUNNER_TEMP/get.json")" >> "$GITHUB_ENV"
+          echo "GET_CONFIGURED=$(jq -r 'if has("configured") then .configured else "unknown" end' "$RUNNER_TEMP/get.json")" >> "$GITHUB_ENV"
           echo 'FULL_CHAIN_GET_PASS=true' >> "$GITHUB_ENV"
 
-      - name: Record sanitized IAM and GET result
+      - name: Verify traffic unchanged after GET
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$AI_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-after.json"
+          gcloud run services describe "$RETURNS_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-after.json"
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent:(.percent // 0),tag:(.tag // "")}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/ai-after.json" > "$RUNNER_TEMP/ai-positive-after.json"
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent:(.percent // 0),tag:(.tag // "")}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/returns-after.json" > "$RUNNER_TEMP/returns-positive-after.json"
+          cmp "$RUNNER_TEMP/ai-positive-before.json" "$RUNNER_TEMP/ai-positive-after.json"
+          cmp "$RUNNER_TEMP/returns-positive-before.json" "$RUNNER_TEMP/returns-positive-after.json"
+          test "$(jq -r --arg r "$AI_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai-after.json")" = '0'
+          test "$(jq -r --arg r "$RETURNS_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/returns-after.json")" = '0'
+          echo 'TRAFFIC_UNCHANGED=true' >> "$GITHUB_ENV"
+
+      - name: Record sanitized GET result
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin feature/ai-arman-foundation-v1
           git checkout -B result origin/feature/ai-arman-foundation-v1
+          OVERALL=''
+          if [ "${FULL_CHAIN_GET_PASS:-false}" = 'true' ] && [ "${TRAFFIC_UNCHANGED:-false}" = 'true' ]; then OVERALL=success; fi
           cat > "$RESULT_PATH" <<EOF
-          overall=${FULL_CHAIN_GET_PASS:+success}
+          overall=$OVERALL
           inspected_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           service=$AI_SERVICE_NAME
           service_public=false
@@ -170,13 +157,14 @@ jobs:
           returns_candidate_revision=$RETURNS_CANDIDATE_REV
           returns_candidate_traffic=0
           snapshot_pass=${SNAPSHOT_PASS:-false}
-          iam_write_executed=${IAM_WRITE_EXECUTED:-false}
-          iam_write_error_class=${IAM_WRITE_ERROR_CLASS:-unknown}
+          bridge_config_pass=${BRIDGE_CONFIG_PASS:-false}
+          iam_write_executed=false
           iam_verify_pass=${IAM_VERIFY_PASS:-false}
           full_chain_get_pass=${FULL_CHAIN_GET_PASS:-false}
           full_chain_get_http=${GET_HTTP:-unknown}
           presentation_source=${GET_SOURCE:-unknown}
           presentation_configured=${GET_CONFIGURED:-unknown}
+          traffic_unchanged=${TRAFFIC_UNCHANGED:-false}
           presentation_write_executed=false
           customer_message_sent=false
           production_traffic_cutover=false
@@ -184,5 +172,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add "$RESULT_PATH"
-          git commit -m 'Record AI Arman Returns invoker and GET result [skip ci]' || true
+          git commit -m 'Record AI Arman customer admin GET result [skip ci]' || true
           git push origin HEAD:feature/ai-arman-foundation-v1
