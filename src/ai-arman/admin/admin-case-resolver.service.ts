@@ -186,17 +186,15 @@ export class AiArmanAdminCaseResolverService {
       readBack.ok && isRecord(readBack.data)
         ? clean(readBack.data.type || readBack.data.caseType, 80).toLowerCase()
         : '';
+    const rule = buildApprovedReplyLearningRule(input.internalLearningNote);
 
     try {
       const lesson = await this.learning.save({
         createdBy: 'returns-admin-reviewed-reply',
         caseType,
-        principle:
-          'Följ samma godkända hanteringsmönster och ton när ett nytt ärende är materiellt likt och aktuella verifierade fakta stödjer samma strategi.',
-        appliesWhen:
-          'Ett liknande kundserviceärende uppstår och aktuell verifierad ärende- och orderkontext stödjer samma typ av bemötande.',
-        avoid:
-          'Avslöja aldrig intern motivering. Återanvänd aldrig gamla faktapåståenden utan ny verifiering. Verifierade backendfakta går alltid före lärdomar.',
+        principle: rule.principle,
+        appliesWhen: rule.appliesWhen,
+        avoid: rule.avoid,
         approvedReplyExample: input.message,
         internalRationale: input.internalLearningNote,
       });
@@ -364,7 +362,7 @@ function buildAssistantInput(
     messages.push({
       direction: 'system',
       sender: 'VERIFIERADE ORDERFAKTA',
-      subject: 'Verifierad order- och leveranskontext',
+      subject: 'Verifierad order-, lager- och leveranskontext',
       text: JSON.stringify(orderFacts),
       date: new Date().toISOString(),
     });
@@ -397,34 +395,78 @@ function readMessages(value: unknown) {
 
 function projectOrderContext(value: unknown): Record<string, unknown> | null {
   if (!isRecord(value)) return null;
+  const order = isRecord(value.order) ? value.order : value;
   const projected: Record<string, unknown> = {};
   const keys = [
     'orderId',
     'orderNumber',
+    'id',
     'status',
     'statusLabel',
     'dispatchState',
     'shippingMethod',
+    'shipmentStatus',
     'trackingNumber',
     'carrier',
     'delivered',
   ];
   for (const key of keys) {
-    const raw = value[key];
+    const raw = order[key] ?? value[key];
     if (typeof raw === 'string') {
       const text = clean(raw, 500);
-      if (text) projected[key] = text;
+      if (text) projected[key === 'id' ? 'orderId' : key] = text;
     } else if (typeof raw === 'number' || typeof raw === 'boolean') {
-      projected[key] = raw;
+      projected[key === 'id' ? 'orderId' : key] = raw;
     }
   }
+  const products = projectVerifiedOrderProducts(order.products);
+  if (products.length) projected.products = products;
   if (isRecord(value.tracking)) {
     projected.tracking = projectSimpleRecord(value.tracking, 12);
+  } else if (isRecord(order.tracking)) {
+    projected.tracking = projectSimpleRecord(order.tracking, 12);
   }
   if (isRecord(value.shipping)) {
     projected.shipping = projectSimpleRecord(value.shipping, 12);
+  } else if (isRecord(order.shipping)) {
+    projected.shipping = projectSimpleRecord(order.shipping, 12);
   }
   return Object.keys(projected).length ? projected : null;
+}
+
+function projectVerifiedOrderProducts(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(isRecord)
+    .slice(0, 40)
+    .map((product) => {
+      const row: Record<string, unknown> = {};
+      for (const [source, target, max] of [
+        ['id', 'id', 120],
+        ['model', 'model', 160],
+        ['name', 'name', 240],
+      ] as const) {
+        const text = clean(product[source], max);
+        if (text) row[target] = text;
+      }
+      const orderedQuantity = finiteNonNegative(product.quantity);
+      if (orderedQuantity !== null) row.orderedQuantity = orderedQuantity;
+      const stockVerified = product.stockVerified === true;
+      row.stockVerified = stockVerified;
+      if (stockVerified) {
+        const stockQuantity = finiteNonNegative(product.stockQuantity);
+        if (stockQuantity !== null) {
+          row.stockQuantity = stockQuantity;
+          if (orderedQuantity !== null) {
+            row.fulfillableQuantity = Math.min(orderedQuantity, stockQuantity);
+            row.shortfallQuantity = Math.max(orderedQuantity - stockQuantity, 0);
+            row.canFulfillOrderedQuantity = stockQuantity >= orderedQuantity;
+          }
+        }
+      }
+      return row;
+    })
+    .filter((row) => Object.keys(row).length > 1);
 }
 
 function projectSimpleRecord(value: Record<string, unknown>, maxKeys: number) {
@@ -437,6 +479,72 @@ function projectSimpleRecord(value: Record<string, unknown>, maxKeys: number) {
     }
   }
   return result;
+}
+
+function buildApprovedReplyLearningRule(internalNote: string) {
+  const normalized = normalizeForMatching(internalNote);
+  const stockShortage = /\b(lager|lagersaldo|stock|oversalt|oversald|slut i lager)\b/.test(normalized)
+    || /\b(bara|endast)\s+\d+(?:[.,]\d+)?\b/.test(normalized)
+    || /\bkan inte skicka\b/.test(normalized);
+  if (stockShortage) {
+    return {
+      principle:
+        'När aktuell verifierad lagerdata visar att lagersaldot är lägre än kundens beställda antal ska svaret utgå från att hela mängden inte kan skickas ännu och förklara läget kort, varmt och tydligt.',
+      appliesWhen:
+        'Endast när aktuell verifierad orderkontext innehåller stockVerified=true och stockQuantity är lägre än orderedQuantity för den berörda orderraden.',
+      avoid:
+        'Återanvänd aldrig gamla lagersiffror, produktantal eller leveransdatum. Lova inte en leveranstid utan aktuell verifierad ETA. Avslöja aldrig intern motivering.',
+    };
+  }
+
+  const supplierDelay = /\b(leverantor|leverantorsforsening|inleverans|restnot|fran lev|fr lev)\b/.test(normalized);
+  if (supplierDelay) {
+    return {
+      principle:
+        'När aktuell verifierad leverantörs- eller inleveransdata visar en försening ska svaret förklara förseningen kort och tryggt och bara ange en leveransperiod om den är verifierad för det aktuella ärendet.',
+      appliesWhen:
+        'Endast när aktuell verifierad backendkontext för den nya ordern bekräftar samma typ av leverantörs- eller inleveransförsening.',
+      avoid:
+        'Återanvänd aldrig en gammal leveransvecka eller ETA som fakta. Avslöja aldrig intern motivering.',
+    };
+  }
+
+  const tracking = /\b(tracking|sparning|sandnings.?id|paket.?id)\b/.test(normalized);
+  if (tracking) {
+    return {
+      principle:
+        'När kunden frågar efter leverans eller tracking ska svaret följa samma godkända ton, men trackingstatus och sändningsuppgifter måste alltid hämtas på nytt från verifierad orderkontext.',
+      appliesWhen:
+        'Liknande leverans- eller trackingärenden där aktuell verifierad orderkontext stödjer samma hanteringsmönster.',
+      avoid:
+        'Hitta aldrig på trackingnummer, transportör eller paketstatus och återanvänd aldrig gamla sådana fakta.',
+    };
+  }
+
+  return {
+    principle:
+      'Följ samma godkända hanteringsmönster och ton när ett nytt ärende är materiellt likt och aktuella verifierade fakta stödjer samma strategi.',
+    appliesWhen:
+      'Ett liknande kundserviceärende uppstår och aktuell verifierad ärende- och orderkontext stödjer samma typ av bemötande.',
+    avoid:
+      'Avslöja aldrig intern motivering. Återanvänd aldrig gamla faktapåståenden utan ny verifiering. Verifierade backendfakta går alltid före lärdomar.',
+  };
+}
+
+function normalizeForMatching(value: unknown): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9.,\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function finiteNonNegative(value: unknown): number | null {
+  if (value === '' || value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 function projectCaseSnapshot(item: Record<string, unknown>) {
