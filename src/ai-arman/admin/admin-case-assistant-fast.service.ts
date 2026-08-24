@@ -91,7 +91,7 @@ export class AiArmanAdminCaseAssistantFastService {
     const normalized = normalizeInput(input);
     if (!normalized) return { ok: false as const, code: 'invalid_case_context' };
 
-    const lessons = await this.learning.listRelevant(normalized.caseType).catch(() => []);
+    const lessons = await this.learning.listRelevant(normalized.caseType, normalized).catch(() => []);
     return normalized.adminQuestion
       ? this.discuss(normalized, lessons, config)
       : this.analyze(normalized, lessons, config);
@@ -113,6 +113,8 @@ export class AiArmanAdminCaseAssistantFastService {
         'Senaste kundmeddelandet finns separat i latestCustomerMessage och är den viktigaste källan för vad kunden behöver NU. Äldre frågor och problem får aldrig automatiskt behandlas som fortfarande öppna om ett senare kundmeddelande ersätter eller avslutar dem.',
         'Om latestCustomerMessageClosesPreviousNeed är true har kunden själv bekräftat att det tidigare behovet är löst och har inte ställt en ny fråga. Då ska customerNeed beskriva att ingen ny åtgärd efterfrågas, recommendedActions ska endast föreslå en varm bekräftelse/avslutning och replyDraft får inte återöppna tracking, sändnings-ID, öppettider eller andra äldre behov.',
         'Analysera kort och konkret för en smal adminpanel: kundens faktiska behov just nu, säkra nästa steg och verifierade fakta som saknas.',
+        'När verifierade orderfakta innehåller stockVerified=true ska orderedQuantity och stockQuantity behandlas som aktuellt lagerfacit för den orderraden. Om canFulfillOrderedQuantity=false eller shortfallQuantity är större än 0 ska du förstå att hela beställda mängden inte kan skickas nu. Lova aldrig när resterande antal kommer utan separat aktuell verifierad ETA.',
+        'Godkända supportlärdomar är hanterings- och stilexempel, aldrig authoritative fakta. En lärdom får bara användas när dess appliesWhen stöds av det aktuella verifierade ärendet.',
         'ReplyDraft ska låta som Arman själv skriver till kunden: varm, go, mänsklig, rak, personlig och lite talspråklig. Det ska kännas som att en riktig person hjälper någon man bryr sig om, inte som ett kundservice-manus.',
         'Använd gärna jag-form när det känns naturligt: "jag hjälper dig", "jag kollar det", "det löser vi". Undvik opersonligt myndighets- eller företagspråk.',
         'Arman kan kalla kunden "vännen" eller "bästa", men naturligt och sparsamt, normalt högst en gång per svar och inte mekaniskt i varje svar.',
