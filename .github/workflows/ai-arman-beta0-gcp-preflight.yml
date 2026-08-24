@@ -19,7 +19,7 @@ env:
   REGION: europe-north1
   AI_SERVICE_NAME: harmoniq-ai-arman-beta0
   RETURNS_RUNTIME_SA: 222024985388-compute@developer.gserviceaccount.com
-  AI_CANDIDATE_REV: harmoniq-ai-arman-beta0-cpres-2dc5ad55-3
+  AI_CANDIDATE_REV: harmoniq-ai-arman-beta0-stklearn-cae86ef8-8
   REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
   WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
   DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
@@ -72,7 +72,7 @@ jobs:
           CANDIDATE_TAG="$(jq -r --arg r "$AI_CANDIDATE_REV" '.status.traffic[]? | select(.revisionName==$r) | .tag // empty' "$RUNNER_TEMP/service.json" | head -n1)"
           CANONICAL_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/service.json")"
           test "$CANDIDATE_PERCENT" = '0'
-          test "$CANDIDATE_TAG" = 'customer-admin-2dc5ad55'
+          test "$CANDIDATE_TAG" = 'stock-learning-cae86ef8'
           test -n "$CANONICAL_URL"
           echo "invoker=$INVOKER" >> "$GITHUB_OUTPUT"
           echo "canonical_url=$CANONICAL_URL" >> "$GITHUB_OUTPUT"
