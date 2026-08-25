@@ -20,29 +20,63 @@ env:
   SERVICE_NAME: harmoniq-ai-arman-beta0
   RETURNS_SERVICE: harmoniq-returns-api
   RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  ARTIFACT_REPOSITORY: harmoniq-containers
   WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
   DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  SOURCE_SHA: 352e37b7be158cccb889e556fc7e02760939b00e
   STABLE_TAG: resolver-ready-3298af83
+  EXPECTED_STABLE_REV: harmoniq-ai-arman-beta0-resv4-07aacf15-15
+  SOURCE_CANDIDATE_TAG: cpgcs-352e37b7
+  SOURCE_CANDIDATE_REV: harmoniq-ai-arman-beta0-cpgcs-352e37b7-20
   EXPECTED_RETURNS_LIVE_REV: harmoniq-returns-api-trk2494077-1
-  RETURNS_CANDIDATE_REV: harmoniq-returns-api-aistock-52
-  PRESENTATION_CANDIDATE_TAG: cpgcs-352e37b7
-  PRESENTATION_CANDIDATE_REV: harmoniq-ai-arman-beta0-cpgcs-352e37b7-20
+  RETURNS_CANDIDATE_TAG: ai-arman-stock-bridge
+  RETURNS_CANDIDATE_REV: harmoniq-returns-api-aistock-53
   PRESENTATION_BUCKET: harmoniq-210513-ai-arman-customer-presentation
   PRESENTATION_OBJECT: ai-arman/customer-presentation-v1.json
-  RESULT_PATH: .github/deploy-status/ai-arman-customer-presentation-candidate-latest.txt
-  FAILED_STAGE: snapshot
+  RESULT_PATH: .github/deploy-status/ai-arman-reply-credential-candidate-latest.txt
+  FAILED_STAGE: source-gate
 
 jobs:
-  verify-approved-write:
-    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Verify AI Arman presentation approved write candidate'
+  deploy-candidate:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Establish AI Arman reply credential zero traffic candidate'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 45
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact frozen application source
+        uses: actions/checkout@v4
         with:
-          ref: feature/ai-arman-foundation-v1
+          ref: ${{ env.SOURCE_SHA }}
           fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Verify exact source and full build gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'FAILED_STAGE=source-gate' >> "$GITHUB_ENV"
+          test "$GITHUB_ACTOR" = 'arman573'
+          test "$GITHUB_REPOSITORY" = 'arman573/harmoniq-backend'
+          test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -f src/ai-arman/admin/admin-reply-draft.controller.ts
+          test -f src/ai-arman/admin/admin-reply-draft.service.ts
+          grep -Fq "AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN" src/ai-arman/admin/admin-reply-draft.controller.ts
+          grep -Fq "sendsCustomerMessage: false" src/ai-arman/admin/admin-reply-draft.service.ts
+          grep -Fq "executesWrites: false" src/ai-arman/admin/admin-reply-draft.service.ts
+          grep -Fq 'buildApprovedReplyLearningRule' src/ai-arman/admin/admin-case-resolver.service.ts
+          grep -Fq 'stockVerified=true' src/ai-arman/admin/admin-case-assistant-fast.service.ts
+          test -f src/ai-arman/widget/customer/ai-arman-customer-widget-presentation.store.ts
+          npm ci
+          npm test -- --runInBand
+          npm run build
+          docker build --pull -f Dockerfile.ai-arman-candidate -t ai-arman-reply-credential:verify .
+          echo 'TEST_BUILD_PASS=true' >> "$GITHUB_ENV"
 
       - name: Authenticate dedicated AI Arman deployer
         uses: google-github-actions/auth@v3
@@ -55,50 +89,125 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Snapshot exact zero traffic candidate and production boundaries
+      - name: Read-only snapshot and provenance gate
         id: before
         shell: bash
         run: |
           set -euo pipefail
-          echo 'FAILED_STAGE=snapshot' >> "$GITHUB_ENV"
-          test "$GITHUB_REPOSITORY" = 'arman573/harmoniq-backend'
-          test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
+          echo 'FAILED_STAGE=boundary-snapshot' >> "$GITHUB_ENV"
 
-          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai.json"
-          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-iam.json"
-          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/ai-iam.json" >/dev/null; then
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-before.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-iam-before.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/ai-iam-before.json" >/dev/null; then
             echo 'AI service unexpectedly public' >&2
             exit 1
           fi
-          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/ai.json" > "$RUNNER_TEMP/ai-positive-before.json"
-          STABLE_REV="$(jq -r --arg tag "$STABLE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/ai.json" | head -n1)"
-          CANDIDATE_REV="$(jq -r --arg tag "$PRESENTATION_CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/ai.json" | head -n1)"
-          CANDIDATE_URL="$(jq -r --arg tag "$PRESENTATION_CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/ai.json" | head -n1)"
-          AI_CANONICAL_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/ai.json")"
-          test "$STABLE_REV" = 'harmoniq-ai-arman-beta0-resv4-07aacf15-15'
-          test "$CANDIDATE_REV" = "$PRESENTATION_CANDIDATE_REV"
-          test -n "$CANDIDATE_URL"
-          test -n "$AI_CANONICAL_URL"
-          test "$(jq -r --arg r "$CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai.json")" = '0'
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/ai-before.json" > "$RUNNER_TEMP/ai-positive-before.json"
 
-          gcloud run revisions describe "$CANDIDATE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate.json"
-          test "$(jq -r '.spec.serviceAccountName // empty' "$RUNNER_TEMP/candidate.json")" = "$RUNTIME_SERVICE_ACCOUNT"
-          cenv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/candidate.json" | head -n1; }
+          STABLE_REV="$(jq -r --arg tag "$STABLE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/ai-before.json" | head -n1)"
+          SOURCE_REV="$(jq -r --arg tag "$SOURCE_CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/ai-before.json" | head -n1)"
+          AI_CANONICAL_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/ai-before.json")"
+          test "$STABLE_REV" = "$EXPECTED_STABLE_REV"
+          test "$SOURCE_REV" = "$SOURCE_CANDIDATE_REV"
+          test -n "$AI_CANONICAL_URL"
+          test "$(jq -r --arg r "$SOURCE_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai-before.json")" = '0'
+
+          gcloud run revisions describe "$STABLE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/stable-rev.json"
+          gcloud run revisions describe "$SOURCE_CANDIDATE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/source-candidate-rev.json"
+          test "$(jq -r '.spec.serviceAccountName // empty' "$RUNNER_TEMP/stable-rev.json")" = "$RUNTIME_SERVICE_ACCOUNT"
+          test "$(jq -r '.spec.serviceAccountName // empty' "$RUNNER_TEMP/source-candidate-rev.json")" = "$RUNTIME_SERVICE_ACCOUNT"
+
+          cenv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/source-candidate-rev.json" | head -n1; }
+          test "$(cenv AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED)" = 'true'
+          test "$(jq -r '[.spec.containers[0].env[]? | select(.name=="AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN")] | length' "$RUNNER_TEMP/source-candidate-rev.json")" = '0'
           test "$(cenv AI_ARMAN_CUSTOMER_ADMIN_ENABLED)" = 'true'
           test "$(cenv AI_ARMAN_CUSTOMER_PRESENTATION_GCS_BUCKET)" = "$PRESENTATION_BUCKET"
           test "$(cenv AI_ARMAN_CUSTOMER_PRESENTATION_GCS_OBJECT)" = "$PRESENTATION_OBJECT"
-          APP_TOKEN="$(cenv AI_ARMAN_CUSTOMER_ADMIN_ACCESS_TOKEN)"
-          test ${#APP_TOKEN} -ge 32
-          echo "::add-mask::$APP_TOKEN"
-          echo "APP_TOKEN=$APP_TOKEN" >> "$GITHUB_ENV"
 
-          gcloud run services describe "$RETURNS_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns.json"
-          test "$(jq -r '[.status.traffic[]? | select((.percent // 0)>0)] | if length==1 and .[0].percent==100 then .[0].revisionName else empty end' "$RUNNER_TEMP/returns.json")" = "$EXPECTED_RETURNS_LIVE_REV"
-          test "$(jq -r --arg r "$RETURNS_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/returns.json")" = '0'
+          jq -S '(.spec.containers[0].env // []) | map(select(.name != "AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED" and .name != "AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN")) | sort_by(.name)' "$RUNNER_TEMP/source-candidate-rev.json" > "$RUNNER_TEMP/source-env-baseline.json"
+          jq -S '(.spec.template.spec.containers[0].env // []) | map(select(.name != "AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED" and .name != "AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN")) | sort_by(.name)' "$RUNNER_TEMP/ai-before.json" > "$RUNNER_TEMP/service-env-baseline.json"
+          cmp "$RUNNER_TEMP/source-env-baseline.json" "$RUNNER_TEMP/service-env-baseline.json"
+          test "$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/ai-before.json")" = "$RUNTIME_SERVICE_ACCOUNT"
 
-          echo "candidate_url=$CANDIDATE_URL" >> "$GITHUB_OUTPUT"
+          gcloud run services describe "$RETURNS_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-before.json"
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/returns-before.json" > "$RUNNER_TEMP/returns-positive-before.json"
+          RETURNS_LIVE_NOW="$(jq -r '[.status.traffic[]? | select((.percent // 0)>0)] | if length==1 and .[0].percent==100 then .[0].revisionName else empty end' "$RUNNER_TEMP/returns-before.json")"
+          RETURNS_TAG_REV="$(jq -r --arg tag "$RETURNS_CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/returns-before.json" | head -n1)"
+          test "$RETURNS_LIVE_NOW" = "$EXPECTED_RETURNS_LIVE_REV"
+          test "$RETURNS_TAG_REV" = "$RETURNS_CANDIDATE_REV"
+          test "$(jq -r --arg r "$RETURNS_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/returns-before.json")" = '0'
+
           echo "ai_canonical_url=$AI_CANONICAL_URL" >> "$GITHUB_OUTPUT"
+          echo "stable_revision=$STABLE_REV" >> "$GITHUB_OUTPUT"
           echo 'SNAPSHOT_PASS=true' >> "$GITHUB_ENV"
+          echo 'SOURCE_CONFIG_PRESERVABLE=true' >> "$GITHUB_ENV"
+
+      - name: Build and push immutable application image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'FAILED_STAGE=image-build-push' >> "$GITHUB_ENV"
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:reply-credential-${SOURCE_SHA:0:12}-$GITHUB_RUN_ID"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build --pull -f Dockerfile.ai-arman-candidate -t "$IMAGE" .
+          docker push "$IMAGE"
+          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image=$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME@$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo 'IMAGE_PASS=true' >> "$GITHUB_ENV"
+
+      - name: Deploy private zero traffic reply credential candidate
+        id: candidate
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'FAILED_STAGE=candidate-deploy' >> "$GITHUB_ENV"
+          REPLY_TOKEN="$(openssl rand -hex 32)"
+          test ${#REPLY_TOKEN} -ge 32
+          echo "::add-mask::$REPLY_TOKEN"
+          echo "REPLY_TOKEN=$REPLY_TOKEN" >> "$GITHUB_ENV"
+
+          SHORT="${SOURCE_SHA:0:8}"
+          TAG="rply-$SHORT-$GITHUB_RUN_NUMBER"
+          gcloud run deploy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --platform managed \
+            --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --revision-suffix "rply-$SHORT-${GITHUB_RUN_NUMBER}" \
+            --tag "$TAG" --no-traffic \
+            --update-env-vars "AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED=true,AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN=$REPLY_TOKEN" \
+            --quiet
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-after-deploy.json"
+          REV="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/ai-after-deploy.json" | head -n1)"
+          URL="$(jq -r --arg tag "$TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/ai-after-deploy.json" | head -n1)"
+          test -n "$REV"
+          test -n "$URL"
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai-after-deploy.json")" = '0'
+
+          gcloud run revisions describe "$REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/new-candidate-rev.json"
+          test "$(jq -r '.spec.serviceAccountName // empty' "$RUNNER_TEMP/new-candidate-rev.json")" = "$RUNTIME_SERVICE_ACCOUNT"
+          nenv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/new-candidate-rev.json" | head -n1; }
+          test "$(nenv AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED)" = 'true'
+          test "$(nenv AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN)" = "$REPLY_TOKEN"
+          test ${#REPLY_TOKEN} -ge 32
+          test "$(nenv AI_ARMAN_CUSTOMER_PRESENTATION_GCS_BUCKET)" = "$PRESENTATION_BUCKET"
+          test "$(nenv AI_ARMAN_CUSTOMER_PRESENTATION_GCS_OBJECT)" = "$PRESENTATION_OBJECT"
+
+          jq -S '(.spec.containers[0].env // []) | map(select(.name != "AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED" and .name != "AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN")) | sort_by(.name)' "$RUNNER_TEMP/new-candidate-rev.json" > "$RUNNER_TEMP/new-env-baseline.json"
+          cmp "$RUNNER_TEMP/source-env-baseline.json" "$RUNNER_TEMP/new-env-baseline.json"
+
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo 'CANDIDATE_DEPLOYED=true' >> "$GITHUB_ENV"
+          echo 'REPLY_ENABLED_PASS=true' >> "$GITHUB_ENV"
+          echo 'REPLY_TOKEN_PRESENT=true' >> "$GITHUB_ENV"
+          echo 'REPLY_TOKEN_MIN_LENGTH_PASS=true' >> "$GITHUB_ENV"
+          echo 'SOURCE_CONFIG_PRESERVED=true' >> "$GITHUB_ENV"
 
       - name: Mint private AI identity token
         id: idtoken
@@ -112,112 +221,122 @@ jobs:
           id_token_include_email: true
           create_credentials_file: false
 
-      - name: Approved candidate-only presentation write and authoritative reread
+      - name: Verify synthetic private reply draft without writes
         env:
           ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
-          URL: ${{ steps.before.outputs.candidate_url }}
+          URL: ${{ steps.candidate.outputs.url }}
         shell: bash
         run: |
           set -euo pipefail
-          echo 'FAILED_STAGE=approved-write' >> "$GITHUB_ENV"
+          echo 'FAILED_STAGE=synthetic-reply-draft' >> "$GITHUB_ENV"
           echo "::add-mask::$ID_TOKEN"
-
-          GET1="$(curl --max-time 30 -sS -o "$RUNNER_TEMP/before.json" -w '%{http_code}' \
+          cat > "$RUNNER_TEMP/request.json" <<'JSON'
+          {"caseId":"HQR-SYNTHETIC-REPLY-CREDENTIAL","caseType":"support","status":"open","statusLabel":"Open","customerName":"","messages":[{"direction":"inbound","sender":"Kund","subject":"Meddelande mottaget","text":"Kan ni bekräfta att ni har tagit emot mitt meddelande?","date":"2026-08-25T00:00:00Z"}]}
+          JSON
+          CODE="$(curl --max-time 30 -sS -o "$RUNNER_TEMP/reply.json" -w '%{http_code}' \
+            --request POST \
             --header "Authorization: Bearer $ID_TOKEN" \
-            --header "X-AI-Arman-Customer-Admin-Token: $APP_TOKEN" \
-            "$URL/ai-arman/internal/customer-presentation")"
-          test "$GET1" = '200'
-          jq -e '.ok==true and .configured==true and .source=="default" and .generation=="0" and .writeExecuted==false and (.presentation|type)=="object"' "$RUNNER_TEMP/before.json" >/dev/null
-
-          jq '{approved:true,expectedGeneration:.generation,presentation:.presentation}' "$RUNNER_TEMP/before.json" > "$RUNNER_TEMP/put.json"
-          PUT_CODE="$(curl --max-time 30 -sS -o "$RUNNER_TEMP/put-response.json" -w '%{http_code}' \
-            --request PUT \
-            --header "Authorization: Bearer $ID_TOKEN" \
-            --header "X-AI-Arman-Customer-Admin-Token: $APP_TOKEN" \
+            --header "X-AI-Arman-Admin-Token: $REPLY_TOKEN" \
             --header 'Content-Type: application/json' \
-            --data-binary @"$RUNNER_TEMP/put.json" \
-            "$URL/ai-arman/internal/customer-presentation")"
-          echo "APPROVED_PUT_HTTP=$PUT_CODE" >> "$GITHUB_ENV"
-          test "$PUT_CODE" = '200'
-          jq -e '.ok==true and .configured==true and .source=="gcs" and .writeExecuted==true and (.generation|test("^[0-9]+$")) and .generation!="0" and .updatedBy=="returns-admin"' "$RUNNER_TEMP/put-response.json" >/dev/null
-          NEW_GENERATION="$(jq -r '.generation' "$RUNNER_TEMP/put-response.json")"
-          echo "NEW_GENERATION=$NEW_GENERATION" >> "$GITHUB_ENV"
+            --data-binary @"$RUNNER_TEMP/request.json" \
+            "$URL/ai-arman/internal/admin/reply-draft")"
+          echo "SYNTHETIC_REPLY_HTTP=$CODE" >> "$GITHUB_ENV"
+          case "$CODE" in 200|201|202) ;; *) cat "$RUNNER_TEMP/reply.json" >&2; exit 1 ;; esac
+          jq -e '.ok==true and (.draftText|type=="string" and length>0) and .sendsCustomerMessage==false and .executesWrites==false' "$RUNNER_TEMP/reply.json" >/dev/null
+          echo 'SYNTHETIC_REPLY_PASS=true' >> "$GITHUB_ENV"
+          echo 'SENDS_CUSTOMER_MESSAGE=false' >> "$GITHUB_ENV"
+          echo 'EXECUTES_WRITES=false' >> "$GITHUB_ENV"
 
-          GET2="$(curl --max-time 30 -sS -o "$RUNNER_TEMP/after.json" -w '%{http_code}' \
-            --header "Authorization: Bearer $ID_TOKEN" \
-            --header "X-AI-Arman-Customer-Admin-Token: $APP_TOKEN" \
-            "$URL/ai-arman/internal/customer-presentation")"
-          test "$GET2" = '200'
-          jq -e --arg generation "$NEW_GENERATION" '.ok==true and .configured==true and .source=="gcs" and .generation==$generation and .writeExecuted==false and .updatedBy=="returns-admin"' "$RUNNER_TEMP/after.json" >/dev/null
-          jq -e --slurp '.[0].presentation == .[1].presentation' "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/after.json" >/dev/null
-
-          jq '{approved:true,expectedGeneration:"0",presentation:.presentation}' "$RUNNER_TEMP/before.json" > "$RUNNER_TEMP/stale.json"
-          STALE_CODE="$(curl --max-time 30 -sS -o "$RUNNER_TEMP/stale-response.json" -w '%{http_code}' \
-            --request PUT \
-            --header "Authorization: Bearer $ID_TOKEN" \
-            --header "X-AI-Arman-Customer-Admin-Token: $APP_TOKEN" \
-            --header 'Content-Type: application/json' \
-            --data-binary @"$RUNNER_TEMP/stale.json" \
-            "$URL/ai-arman/internal/customer-presentation")"
-          echo "STALE_PUT_HTTP=$STALE_CODE" >> "$GITHUB_ENV"
-          test "$STALE_CODE" = '409'
-          jq -e '.code=="customer_presentation_conflict" and .writeExecuted==false' "$RUNNER_TEMP/stale-response.json" >/dev/null
-
-          echo 'APPROVED_WRITE_PASS=true' >> "$GITHUB_ENV"
-          echo 'AUTHORITATIVE_REREAD_PASS=true' >> "$GITHUB_ENV"
-          echo 'STALE_GENERATION_REJECTED=true' >> "$GITHUB_ENV"
-
-      - name: Prove traffic and production boundaries unchanged
+      - name: Prove privacy and all positive traffic unchanged
+        env:
+          CANDIDATE_REV: ${{ steps.candidate.outputs.revision }}
         shell: bash
         run: |
           set -euo pipefail
           echo 'FAILED_STAGE=traffic-proof' >> "$GITHUB_ENV"
           gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-final.json"
-          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/ai-final.json" > "$RUNNER_TEMP/ai-positive-after.json"
-          cmp "$RUNNER_TEMP/ai-positive-before.json" "$RUNNER_TEMP/ai-positive-after.json"
-          test "$(jq -r --arg r "$PRESENTATION_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai-final.json")" = '0'
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-iam-final.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/ai-iam-final.json" >/dev/null; then
+            echo 'AI service became public' >&2
+            exit 1
+          fi
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/ai-final.json" > "$RUNNER_TEMP/ai-positive-final.json"
+          cmp "$RUNNER_TEMP/ai-positive-before.json" "$RUNNER_TEMP/ai-positive-final.json"
+          test "$(jq -r --arg tag "$STABLE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/ai-final.json" | head -n1)" = "$EXPECTED_STABLE_REV"
+          test "$(jq -r --arg r "$CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai-final.json")" = '0'
+          test "$(jq -r --arg r "$SOURCE_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai-final.json")" = '0'
 
           gcloud run services describe "$RETURNS_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-final.json"
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/returns-final.json" > "$RUNNER_TEMP/returns-positive-final.json"
+          cmp "$RUNNER_TEMP/returns-positive-before.json" "$RUNNER_TEMP/returns-positive-final.json"
           test "$(jq -r '[.status.traffic[]? | select((.percent // 0)>0)] | if length==1 and .[0].percent==100 then .[0].revisionName else empty end' "$RUNNER_TEMP/returns-final.json")" = "$EXPECTED_RETURNS_LIVE_REV"
           test "$(jq -r --arg r "$RETURNS_CANDIDATE_REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/returns-final.json")" = '0'
+
+          echo 'PRIVATE_SERVICE_PASS=true' >> "$GITHUB_ENV"
           echo 'TRAFFIC_PASS=true' >> "$GITHUB_ENV"
           echo 'FAILED_STAGE=complete' >> "$GITHUB_ENV"
 
-      - name: Record sanitized approved-write gate result
+      - name: Checkout source branch for sanitized status
+        if: always()
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+          fetch-depth: 1
+
+      - name: Record sanitized reply credential gate status
         if: always()
         env:
           JOB_STATUS: ${{ job.status }}
+          REV: ${{ steps.candidate.outputs.revision }}
+          URL: ${{ steps.candidate.outputs.url }}
+          TAG: ${{ steps.candidate.outputs.tag }}
+          DIGEST: ${{ steps.image.outputs.digest }}
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$(dirname "$RESULT_PATH")"
           cat > "$RESULT_PATH" <<EOF
           overall=$JOB_STATUS
           run_id=$GITHUB_RUN_ID
+          application_source=$SOURCE_SHA
           workflow_head=$GITHUB_SHA
           stage=$FAILED_STAGE
-          candidate_revision=$PRESENTATION_CANDIDATE_REV
-          candidate_tag=$PRESENTATION_CANDIDATE_TAG
+          snapshot_pass=${SNAPSHOT_PASS:-false}
+          test_build_pass=${TEST_BUILD_PASS:-false}
+          image_pass=${IMAGE_PASS:-false}
+          source_candidate_revision=$SOURCE_CANDIDATE_REV
+          source_candidate_tag=$SOURCE_CANDIDATE_TAG
+          source_config_preservable=${SOURCE_CONFIG_PRESERVABLE:-false}
+          candidate_revision=$REV
+          candidate_tag=$TAG
+          candidate_url=$URL
+          image_digest=$DIGEST
+          runtime_service_account=$RUNTIME_SERVICE_ACCOUNT
           candidate_traffic_expected=0
+          reply_enabled_pass=${REPLY_ENABLED_PASS:-false}
+          reply_token_present=${REPLY_TOKEN_PRESENT:-false}
+          reply_token_min_length_pass=${REPLY_TOKEN_MIN_LENGTH_PASS:-false}
+          source_config_preserved=${SOURCE_CONFIG_PRESERVED:-false}
           presentation_gcs_bucket=$PRESENTATION_BUCKET
           presentation_gcs_object=$PRESENTATION_OBJECT
-          snapshot_pass=${SNAPSHOT_PASS:-false}
-          user_requested_next_gate=true
-          approved_put_http=${APPROVED_PUT_HTTP:-unknown}
-          approved_write_pass=${APPROVED_WRITE_PASS:-false}
-          authoritative_reread_pass=${AUTHORITATIVE_REREAD_PASS:-false}
-          new_generation=${NEW_GENERATION:-unknown}
-          stale_put_http=${STALE_PUT_HTTP:-unknown}
-          stale_generation_rejected=${STALE_GENERATION_REJECTED:-false}
+          synthetic_reply_http=${SYNTHETIC_REPLY_HTTP:-unknown}
+          synthetic_reply_pass=${SYNTHETIC_REPLY_PASS:-false}
+          sends_customer_message=${SENDS_CUSTOMER_MESSAGE:-false}
+          executes_writes=${EXECUTES_WRITES:-false}
+          private_service_pass=${PRIVATE_SERVICE_PASS:-false}
           positive_traffic_unchanged=${TRAFFIC_PASS:-false}
+          presentation_write_executed=false
           customer_message_sent=false
           order_or_case_write=false
           vendre_write=false
           gmail_write=false
           nshift_write=false
+          iam_write_executed=false
+          returns_reconfigured=false
           production_traffic_cutover=false
           EOF
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add "$RESULT_PATH"
-          git commit -m 'Record AI Arman approved presentation write gate [skip ci]' || true
+          git commit -m 'Record AI Arman reply credential candidate status [skip ci]' || true
           git push origin HEAD:feature/ai-arman-foundation-v1
