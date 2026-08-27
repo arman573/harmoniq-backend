@@ -1,0 +1,61 @@
+name: Verify AI Arman resolver candidate 20260820
+
+on:
+  pull_request:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify:
+    if: github.head_ref == 'verify/ai-arman-resolver-candidate-20260820'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PROJECT_ID: harmoniq-210513
+      REGION: europe-north1
+      SERVICE_NAME: harmoniq-ai-arman-beta0
+      CANDIDATE_TAG: resolver-ai-3298af83
+      WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+      DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Verify resolver candidate is private zero traffic and write-disabled
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service.json"
+            REV="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/service.json" | head -n1)"
+            if [[ -n "$REV" ]]; then break; fi
+            if [[ "$attempt" == 30 ]]; then echo 'Resolver candidate tag not found.' >&2; exit 1; fi
+            sleep 5
+          done
+          URL="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/service.json" | head -n1)"
+          test -n "$REV"; test -n "$URL"
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")" = '0'
+          gcloud run revisions describe "$REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/revision.json"
+          envv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/revision.json"; }
+          test "$(envv AI_ARMAN_ADMIN_RESOLVER_ENABLED)" = 'true'
+          test "$(envv AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED)" = 'false'
+          test "$(envv AI_ARMAN_MODEL_PROMOTION_ENABLED)" = 'false'
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then exit 1; fi
+          echo "Candidate revision: $REV"
+          echo "Candidate URL: $URL"
+          echo 'PASS: private, zero traffic, resolver enabled, admin writes disabled, promotion disabled.'
