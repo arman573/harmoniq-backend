@@ -50,6 +50,36 @@ describe('AiArmanAdminReplyDraftRetryingService', () => {
     });
   });
 
+  it('retries incomplete structured output once and returns recovery', async () => {
+    const base = jest
+      .spyOn(AiArmanAdminReplyDraftService.prototype, 'createDraft')
+      .mockResolvedValueOnce({
+        ok: false,
+        code: 'admin_reply_model_incomplete',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        draftText: 'Vi hjälper dig vidare med ärendet.',
+        requiresHumanDecision: false,
+        decisionReasons: [],
+        confidence: 0.9,
+        sendsCustomerMessage: false,
+        executesWrites: false,
+      });
+
+    const service = new AiArmanAdminReplyDraftRetryingService({} as never);
+    const result = await service.createDraft(INPUT);
+
+    expect(base).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ ok: true });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warn.mock.calls[0][0]))).toMatchObject({
+      event: 'ai_arman_admin_reply_draft_failed',
+      code: 'admin_reply_model_incomplete',
+      attempt: 1,
+    });
+  });
+
   it('does not retry deterministic invalid output', async () => {
     const base = jest
       .spyOn(AiArmanAdminReplyDraftService.prototype, 'createDraft')
@@ -64,6 +94,27 @@ describe('AiArmanAdminReplyDraftRetryingService', () => {
     expect(base).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ ok: false, code: 'admin_reply_model_invalid' });
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a completed response missing output text', async () => {
+    const base = jest
+      .spyOn(AiArmanAdminReplyDraftService.prototype, 'createDraft')
+      .mockResolvedValue({
+        ok: false,
+        code: 'admin_reply_model_missing_output',
+      });
+
+    const service = new AiArmanAdminReplyDraftRetryingService({} as never);
+    const result = await service.createDraft(INPUT);
+
+    expect(base).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ ok: false, code: 'admin_reply_model_missing_output' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warn.mock.calls[0][0]))).toMatchObject({
+      event: 'ai_arman_admin_reply_draft_failed',
+      code: 'admin_reply_model_missing_output',
+      attempt: 1,
+    });
   });
 
   it('does not retry a successful first draft', async () => {
