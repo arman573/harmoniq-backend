@@ -23,14 +23,15 @@ env:
   ARTIFACT_REPOSITORY: harmoniq-containers
   WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
   DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
-  SOURCE_SHA: 352e37b7be158cccb889e556fc7e02760939b00e
+  BASE_APPLICATION_SHA: 352e37b7be158cccb889e556fc7e02760939b00e
+  SOURCE_SHA: 257e0d59c6957cc80a9058eb74732bebe4dbddc4
   STABLE_TAG: resolver-ready-3298af83
   EXPECTED_STABLE_REV: harmoniq-ai-arman-beta0-resv4-07aacf15-15
   SOURCE_CANDIDATE_TAG: cpgcs-352e37b7
   SOURCE_CANDIDATE_REV: harmoniq-ai-arman-beta0-cpgcs-352e37b7-20
   EXPECTED_RETURNS_LIVE_REV: harmoniq-returns-api-trk2494077-1
   RETURNS_CANDIDATE_TAG: ai-arman-stock-bridge
-  RETURNS_CANDIDATE_REV: harmoniq-returns-api-aistock-53
+  RETURNS_CANDIDATE_REV: harmoniq-returns-api-aireplyfix-88
   PRESENTATION_BUCKET: harmoniq-210513-ai-arman-customer-presentation
   PRESENTATION_OBJECT: ai-arman/customer-presentation-v1.json
   RESULT_PATH: .github/deploy-status/ai-arman-reply-credential-candidate-latest.txt
@@ -47,7 +48,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ env.SOURCE_SHA }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-node@v4
@@ -64,6 +65,23 @@ jobs:
           test "$GITHUB_REPOSITORY" = 'arman573/harmoniq-backend'
           test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git cat-file -e "$BASE_APPLICATION_SHA^{commit}"
+
+          git diff --name-only "$BASE_APPLICATION_SHA" "$SOURCE_SHA" \
+            | grep -Ev '^(\.github/|docs/)' \
+            | sort > "$RUNNER_TEMP/application-delta.txt"
+          cat > "$RUNNER_TEMP/expected-application-delta.txt" <<'EOF'
+          src/ai-arman/admin/admin-reply-draft-retrying.service.spec.ts
+          src/ai-arman/admin/admin-reply-draft-retrying.service.ts
+          EOF
+          sort -o "$RUNNER_TEMP/expected-application-delta.txt" "$RUNNER_TEMP/expected-application-delta.txt"
+          diff -u "$RUNNER_TEMP/expected-application-delta.txt" "$RUNNER_TEMP/application-delta.txt"
+
+          for path in Dockerfile.ai-arman-candidate package.json package-lock.json nest-cli.json tsconfig.json tsconfig.build.json; do
+            test "$(git rev-parse "$BASE_APPLICATION_SHA:$path")" = "$(git rev-parse "$SOURCE_SHA:$path")"
+          done
+          echo 'APPLICATION_DELTA_PASS=true' >> "$GITHUB_ENV"
+
           test -f src/ai-arman/admin/admin-reply-draft.controller.ts
           test -f src/ai-arman/admin/admin-reply-draft.service.ts
           grep -Fq "AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN" src/ai-arman/admin/admin-reply-draft.controller.ts
@@ -298,7 +316,9 @@ jobs:
           cat > "$RESULT_PATH" <<EOF
           overall=$JOB_STATUS
           run_id=$GITHUB_RUN_ID
+          base_application_source=$BASE_APPLICATION_SHA
           application_source=$SOURCE_SHA
+          application_delta_pass=${APPLICATION_DELTA_PASS:-false}
           workflow_head=$GITHUB_SHA
           stage=$FAILED_STAGE
           snapshot_pass=${SNAPSHOT_PASS:-false}
