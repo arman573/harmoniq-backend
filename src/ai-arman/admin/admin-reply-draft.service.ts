@@ -5,6 +5,7 @@ const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const MAX_CONTEXT_MESSAGES = 30;
 const MAX_MESSAGE_LENGTH = 2400;
 const MAX_DRAFT_LENGTH = 4000;
+const MAX_OUTPUT_TOKENS = 1600;
 
 const OUTPUT_SCHEMA = {
   type: 'object',
@@ -83,7 +84,7 @@ export class AiArmanAdminReplyDraftService {
           store: false,
           instructions: INSTRUCTIONS,
           input: JSON.stringify(normalized),
-          max_output_tokens: 700,
+          max_output_tokens: MAX_OUTPUT_TOKENS,
           text: {
             format: {
               type: 'json_schema',
@@ -104,8 +105,16 @@ export class AiArmanAdminReplyDraftService {
       }
 
       const body = (await response.json()) as unknown;
+      if (isRecord(body) && body.status === 'incomplete') {
+        return { ok: false as const, code: 'admin_reply_model_incomplete' };
+      }
+
       const outputText = extractOutputText(body);
-      const parsed = outputText ? JSON.parse(outputText) : null;
+      if (!outputText) {
+        return { ok: false as const, code: 'admin_reply_model_missing_output' };
+      }
+
+      const parsed = JSON.parse(outputText) as unknown;
       const result = projectResult(parsed);
       return result
         ? {
