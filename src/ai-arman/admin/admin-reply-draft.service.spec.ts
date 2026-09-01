@@ -25,6 +25,7 @@ describe('AiArmanAdminReplyDraftService', () => {
     const fetchMock = jest.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body || '{}'));
       expect(request.store).toBe(false);
+      expect(request.max_output_tokens).toBe(1600);
       expect(request.input).not.toContain('kund@example.se');
       expect(request.input).toContain('[email_redacted]');
       return new Response(JSON.stringify({
@@ -85,6 +86,35 @@ describe('AiArmanAdminReplyDraftService', () => {
       requiresHumanDecision: true,
       sendsCustomerMessage: false,
       executesWrites: false,
+    });
+  });
+
+  it('classifies incomplete structured output without exposing provider content', async () => {
+    enableModel();
+    global.fetch = jest.fn(async () => new Response(JSON.stringify({
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output: [],
+    }), { status: 200 })) as typeof fetch;
+
+    const service = new AiArmanAdminReplyDraftService(new AiArmanAdminReplyDraftConfig());
+    await expect(service.createDraft({ caseId: 'HQR-791' })).resolves.toEqual({
+      ok: false,
+      code: 'admin_reply_model_incomplete',
+    });
+  });
+
+  it('classifies a completed response with no output text separately', async () => {
+    enableModel();
+    global.fetch = jest.fn(async () => new Response(JSON.stringify({
+      status: 'completed',
+      output: [{ type: 'message', content: [] }],
+    }), { status: 200 })) as typeof fetch;
+
+    const service = new AiArmanAdminReplyDraftService(new AiArmanAdminReplyDraftConfig());
+    await expect(service.createDraft({ caseId: 'HQR-792' })).resolves.toEqual({
+      ok: false,
+      code: 'admin_reply_model_missing_output',
     });
   });
 
