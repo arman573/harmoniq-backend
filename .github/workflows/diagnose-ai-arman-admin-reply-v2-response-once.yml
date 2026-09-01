@@ -20,63 +20,193 @@ jobs:
       SERVICE_NAME: harmoniq-ai-arman-beta0
       WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
       DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
-      CANDIDATE_URL: https://adminreplyv2-8ce9ab5f-1---harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
-      CANONICAL_URL: https://harmoniq-ai-arman-beta0-cw6q5ekseq-lz.a.run.app
-      TARGET_FULL_SHA: 8ce9ab5f3c42756eb90d7f7ab2ce4c1d6ef34d49
+      TARGET_REVISION: harmoniq-ai-arman-beta0-adminv2-a5272b63-216
+      WINDOW_START: 2026-09-01T16:42:08Z
+      WINDOW_END: 2026-09-01T16:43:30Z
       RESULT_PATH: docs/ai-arman/ADMIN_REPLY_V2_RESPONSE_DIAGNOSTIC_LATEST.md
+
     steps:
       - uses: actions/checkout@v4
         with:
           ref: feature/ai-arman-foundation-v1
           fetch-depth: 1
-      - uses: google-github-actions/auth@v3
-        with:
-          project_id: ${{ env.PROJECT_ID }}
-          workload_identity_provider: ${{ env.WIF_PROVIDER }}
-          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
-      - id: idtoken
+
+      - name: Authenticate read-only diagnostic boundary
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
-          token_format: id_token
-          id_token_audience: ${{ env.CANONICAL_URL }}
-          id_token_include_email: true
-          create_credentials_file: false
-      - name: Probe safe response shape
-        id: probe
-        env:
-          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Read current candidate boundary and late sanitized provenance
+        shell: bash
         run: |
           set -euo pipefail
-          APP_TOKEN="$(printf 'candidate:%s' "$TARGET_FULL_SHA" | sha256sum | awk '{print $1}')"
-          echo "::add-mask::$APP_TOKEN"; echo "::add-mask::$ID_TOKEN"
-          cat > "$RUNNER_TEMP/request.json" <<'JSON'
-          {"caseId":"HQR-SYNTHETIC-DIAGNOSTIC","caseType":"support","status":"chat_waiting_admin","customerName":"Testkund","messages":[{"direction":"inbound","sender":"Kund","subject":"Leveransfråga","text":"Hej, paketet uppges vara skickat men jag saknar spårningslänk. Kan ni hjälpa mig?","date":"2026-08-19T08:22:00Z"}]}
-          JSON
-          CODE="$(curl --silent --show-error --output "$RUNNER_TEMP/response.json" --write-out '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $APP_TOKEN" --header 'Content-Type: application/json' --data @"$RUNNER_TEMP/request.json" "$CANDIDATE_URL/ai-arman/internal/admin/reply-draft" || true)"
-          SAFE="$(jq -c '{ok:(.ok // null),code:(.code // null),draftType:(.draftText|type),draftLength:(if (.draftText|type)=="string" then (.draftText|length) else 0 end),requiresHumanDecisionType:(.requiresHumanDecision|type),decisionReasonsType:(.decisionReasons|type),confidenceType:(.confidence|type),sendsCustomerMessage:(.sendsCustomerMessage // null),executesWrites:(.executesWrites // null)}' "$RUNNER_TEMP/response.json" 2>/dev/null || echo '{"parse":"failed"}')"
-          echo "http=$CODE" >> "$GITHUB_OUTPUT"
-          echo "safe=$SAFE" >> "$GITHUB_OUTPUT"
-      - name: Record safe diagnostic
-        env:
-          HTTP: ${{ steps.probe.outputs.http }}
-          SAFE: ${{ steps.probe.outputs.safe }}
+          test "$GITHUB_REPOSITORY" = 'arman573/harmoniq-backend'
+          test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
+          test "$GITHUB_ACTOR" = 'arman573'
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then
+            echo 'AI service unexpectedly public' >&2
+            exit 1
+          fi
+
+          TARGET_PERCENT="$(jq -r --arg r "$TARGET_REVISION" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")"
+          test "$TARGET_PERCENT" = '0'
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/service.json" > "$RUNNER_TEMP/positive.json"
+          test "$(jq -r '[.[].percent] | add // 0' "$RUNNER_TEMP/positive.json")" = '100'
+
+          gcloud run revisions describe "$TARGET_REVISION" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/revision.json"
+          REPLY_TIMEOUT_OVERRIDE="$(jq -r '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_ADMIN_REPLY_DRAFT_TIMEOUT_MS") | .value // empty' "$RUNNER_TEMP/revision.json" | head -n1)"
+          MODEL_TIMEOUT_OVERRIDE="$(jq -r '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_MODEL_INTERPRETATION_TIMEOUT_MS") | .value // empty' "$RUNNER_TEMP/revision.json" | head -n1)"
+
+          EVENT_FILTER="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE_NAME\" AND resource.labels.revision_name=\"$TARGET_REVISION\" AND timestamp>=\"$WINDOW_START\" AND timestamp<=\"$WINDOW_END\" AND (jsonPayload.event=\"ai_arman_admin_reply_draft_failed\" OR textPayload:\"ai_arman_admin_reply_draft_failed\")"
+          REQUEST_FILTER="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE_NAME\" AND resource.labels.revision_name=\"$TARGET_REVISION\" AND logName:\"run.googleapis.com%2Frequests\" AND timestamp>=\"$WINDOW_START\" AND timestamp<=\"$WINDOW_END\""
+
+          gcloud logging read "$EVENT_FILTER" --project "$PROJECT_ID" --limit=50 --order=asc --format=json > "$RUNNER_TEMP/events.json"
+          gcloud logging read "$REQUEST_FILTER" --project "$PROJECT_ID" --limit=50 --order=asc --format=json > "$RUNNER_TEMP/requests.json"
+
+          python3 - "$RUNNER_TEMP/events.json" "$RUNNER_TEMP/requests.json" "$RUNNER_TEMP/safe.env" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          from urllib.parse import urlsplit
+
+          allowed_codes = {
+              'invalid_admin_reply_context',
+              'admin_reply_model_http_error',
+              'admin_reply_model_timeout',
+              'admin_reply_model_request_failed',
+              'admin_reply_model_invalid',
+              'admin_reply_model_incomplete',
+              'admin_reply_model_missing_output',
+          }
+
+          events = json.loads(Path(sys.argv[1]).read_text() or '[]')
+          safe_events = []
+          for entry in events:
+              obj = entry.get('jsonPayload') if isinstance(entry.get('jsonPayload'), dict) else None
+              if not obj or obj.get('event') != 'ai_arman_admin_reply_draft_failed':
+                  text = entry.get('textPayload')
+                  if not isinstance(text, str):
+                      continue
+                  try:
+                      obj = json.loads(text.strip())
+                  except Exception:
+                      continue
+              if obj.get('event') != 'ai_arman_admin_reply_draft_failed':
+                  continue
+              code = obj.get('code')
+              attempt = obj.get('attempt')
+              duration = obj.get('durationMs')
+              provider = obj.get('providerHttpStatus')
+              if code not in allowed_codes or not isinstance(attempt, int) or attempt not in (1, 2) or not isinstance(duration, int):
+                  continue
+              if provider is not None and (not isinstance(provider, int) or not 100 <= provider <= 599):
+                  provider = None
+              safe_events.append((code, attempt, duration, provider))
+
+          requests = json.loads(Path(sys.argv[2]).read_text() or '[]')
+          safe_requests = []
+          for entry in requests:
+              h = entry.get('httpRequest')
+              if not isinstance(h, dict):
+                  continue
+              method = h.get('requestMethod') if isinstance(h.get('requestMethod'), str) else 'unknown'
+              status = h.get('status') if isinstance(h.get('status'), int) else None
+              latency = h.get('latency') if isinstance(h.get('latency'), str) else 'unknown'
+              raw_url = h.get('requestUrl') if isinstance(h.get('requestUrl'), str) else ''
+              path = urlsplit(raw_url).path if raw_url else ''
+              expected_path = path == '/ai-arman/internal/admin/reply-draft'
+              safe_requests.append((method, status, latency, expected_path))
+
+          def ev_at(index):
+              if len(safe_events) <= index:
+                  return ('none', 'none', 'none', 'none')
+              code, attempt, duration, provider = safe_events[index]
+              return (code, attempt, duration, provider if provider is not None else 'none')
+
+          first = ev_at(0)
+          second = ev_at(1)
+          last_req = safe_requests[-1] if safe_requests else ('none', None, 'none', False)
+          req_status = last_req[1] if last_req[1] is not None else 'none'
+          Path(sys.argv[3]).write_text(
+              f'EVENT_COUNT={len(safe_events)}\n'
+              f'EVENT1_CODE={first[0]}\n'
+              f'EVENT1_ATTEMPT={first[1]}\n'
+              f'EVENT1_DURATION_MS={first[2]}\n'
+              f'EVENT1_PROVIDER_HTTP={first[3]}\n'
+              f'EVENT2_CODE={second[0]}\n'
+              f'EVENT2_ATTEMPT={second[1]}\n'
+              f'EVENT2_DURATION_MS={second[2]}\n'
+              f'EVENT2_PROVIDER_HTTP={second[3]}\n'
+              f'REQUEST_COUNT={len(safe_requests)}\n'
+              f'LAST_REQUEST_METHOD={last_req[0]}\n'
+              f'LAST_REQUEST_STATUS={req_status}\n'
+              f'LAST_REQUEST_LATENCY={last_req[2]}\n'
+              f'LAST_REQUEST_EXPECTED_PATH={str(last_req[3]).lower()}\n'
+          )
+          PY
+
+          source "$RUNNER_TEMP/safe.env"
+          printf '%s\n' "$(cat "$RUNNER_TEMP/positive.json")" > "$RUNNER_TEMP/positive.txt"
+          echo "TARGET_PERCENT=$TARGET_PERCENT" >> "$GITHUB_ENV"
+          echo "REPLY_TIMEOUT_OVERRIDE=${REPLY_TIMEOUT_OVERRIDE:-missing}" >> "$GITHUB_ENV"
+          echo "MODEL_TIMEOUT_OVERRIDE=${MODEL_TIMEOUT_OVERRIDE:-missing}" >> "$GITHUB_ENV"
+          echo "POSITIVE_TRAFFIC=$(cat "$RUNNER_TEMP/positive.txt")" >> "$GITHUB_ENV"
+          echo "EVENT_COUNT=$EVENT_COUNT" >> "$GITHUB_ENV"
+          echo "EVENT1_CODE=$EVENT1_CODE" >> "$GITHUB_ENV"
+          echo "EVENT1_ATTEMPT=$EVENT1_ATTEMPT" >> "$GITHUB_ENV"
+          echo "EVENT1_DURATION_MS=$EVENT1_DURATION_MS" >> "$GITHUB_ENV"
+          echo "EVENT1_PROVIDER_HTTP=$EVENT1_PROVIDER_HTTP" >> "$GITHUB_ENV"
+          echo "EVENT2_CODE=$EVENT2_CODE" >> "$GITHUB_ENV"
+          echo "EVENT2_ATTEMPT=$EVENT2_ATTEMPT" >> "$GITHUB_ENV"
+          echo "EVENT2_DURATION_MS=$EVENT2_DURATION_MS" >> "$GITHUB_ENV"
+          echo "EVENT2_PROVIDER_HTTP=$EVENT2_PROVIDER_HTTP" >> "$GITHUB_ENV"
+          echo "REQUEST_COUNT=$REQUEST_COUNT" >> "$GITHUB_ENV"
+          echo "LAST_REQUEST_METHOD=$LAST_REQUEST_METHOD" >> "$GITHUB_ENV"
+          echo "LAST_REQUEST_STATUS=$LAST_REQUEST_STATUS" >> "$GITHUB_ENV"
+          echo "LAST_REQUEST_LATENCY=$LAST_REQUEST_LATENCY" >> "$GITHUB_ENV"
+          echo "LAST_REQUEST_EXPECTED_PATH=$LAST_REQUEST_EXPECTED_PATH" >> "$GITHUB_ENV"
+
+      - name: Record late sanitized read-only diagnostic
+        shell: bash
         run: |
           set -euo pipefail
+          git fetch origin feature/ai-arman-foundation-v1
+          git checkout -B result origin/feature/ai-arman-foundation-v1
           cat > "$RESULT_PATH" <<EOF
-          # AI Arman admin reply v2 safe response diagnostic
+          # AI Arman admin reply v2 late read-only diagnostic
 
           - Checked at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-          - Candidate traffic remains untouched by this workflow.
-          - HTTP status: \`$HTTP\`
-          - Safe response shape: \`$SAFE\`
-          - Draft text content: **not recorded**
-          - No GCP mutation performed.
+          - Historical window: \`$WINDOW_START\` to \`$WINDOW_END\`
+          - Target revision: \`$TARGET_REVISION\`
+          - Target traffic: **$TARGET_PERCENT%**
+          - Current positive production traffic: \`$POSITIVE_TRAFFIC\`
+          - Private IAM: **PASS**
+          - Dedicated reply timeout override: \`$REPLY_TIMEOUT_OVERRIDE\`
+          - Model interpretation timeout override: \`$MODEL_TIMEOUT_OVERRIDE\`
+          - Safe failure event count: **$EVENT_COUNT**
+          - Event 1: code \`$EVENT1_CODE\`, attempt \`$EVENT1_ATTEMPT\`, duration \`$EVENT1_DURATION_MS ms\`, provider HTTP \`$EVENT1_PROVIDER_HTTP\`
+          - Event 2: code \`$EVENT2_CODE\`, attempt \`$EVENT2_ATTEMPT\`, duration \`$EVENT2_DURATION_MS ms\`, provider HTTP \`$EVENT2_PROVIDER_HTTP\`
+          - Cloud Run request count: **$REQUEST_COUNT**
+          - Last request method: \`$LAST_REQUEST_METHOD\`
+          - Last request HTTP status: \`$LAST_REQUEST_STATUS\`
+          - Last request latency: \`$LAST_REQUEST_LATENCY\`
+          - Last request expected reply path: **$LAST_REQUEST_EXPECTED_PATH**
+          - GCP mutation performed: **false**
+          - IAM mutation performed: **false**
+          - Production traffic cutover: **false**
+          - Customer/order/case/Vendre/Gmail/nShift write: **false**
           EOF
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add "$RESULT_PATH"
-          git commit -m 'Record AI Arman admin reply v2 response diagnostic'
+          git commit -m 'Record AI Arman admin reply v2 late diagnostic [skip ci]'
           git push origin HEAD:feature/ai-arman-foundation-v1
