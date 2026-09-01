@@ -101,7 +101,7 @@ jobs:
         run: |
           set -euo pipefail
           SHORT_SHA="${GITHUB_SHA:0:8}"
-          TAG="adminreplyv2-${SHORT_SHA}-${GITHUB_RUN_NUMBER}"
+          TAG="arv2-${SHORT_SHA}-${GITHUB_RUN_NUMBER}"
           APP_TOKEN="$(printf 'candidate:%s' "$GITHUB_SHA" | sha256sum | awk '{print $1}')"
           echo "::add-mask::$APP_TOKEN"
           echo "AI_ADMIN_APP_TOKEN=$APP_TOKEN" >> "$GITHUB_ENV"
