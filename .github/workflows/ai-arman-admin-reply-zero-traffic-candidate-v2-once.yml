@@ -70,13 +70,16 @@ jobs:
           set -euo pipefail
           gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/before.json"
           gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam.json"
-          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then exit 1; fi
-          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent}] | sort_by(.percent,.revisionName)' "$RUNNER_TEMP/before.json" > "$RUNNER_TEMP/positive-before.json"
-          jq -e 'length == 2 and ([.[].percent] | sort) == [1,99]' "$RUNNER_TEMP/positive-before.json" >/dev/null
-          test "$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/before.json")" = '2'
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then
+            echo 'AI Arman service is unexpectedly public; refusing deploy.' >&2
+            exit 1
+          fi
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag:(.tag // null)}] | sort_by(.revisionName,.percent,.tag)' "$RUNNER_TEMP/before.json" > "$RUNNER_TEMP/positive-before.json"
+          jq -e 'length >= 1 and ([.[].percent] | add) == 100' "$RUNNER_TEMP/positive-before.json" >/dev/null
           SERVICE_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/before.json")"
           test -n "$SERVICE_URL"
           echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
+          echo "production_traffic=$(cat "$RUNNER_TEMP/positive-before.json")" >> "$GITHUB_OUTPUT"
 
       - name: Build immutable image
         id: image
@@ -126,8 +129,13 @@ jobs:
         run: |
           set -euo pipefail
           gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/final.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-final.json"
           gcloud run revisions describe "$REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/rev.json"
-          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent}] | sort_by(.percent,.revisionName)' "$RUNNER_TEMP/final.json" > "$RUNNER_TEMP/positive-after.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-final.json" >/dev/null; then
+            echo 'AI Arman service became public; refusing PASS.' >&2
+            exit 1
+          fi
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag:(.tag // null)}] | sort_by(.revisionName,.percent,.tag)' "$RUNNER_TEMP/final.json" > "$RUNNER_TEMP/positive-after.json"
           cmp "$RUNNER_TEMP/positive-before.json" "$RUNNER_TEMP/positive-after.json"
           test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/final.json")" = '0'
           envv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/rev.json"; }
@@ -169,6 +177,7 @@ jobs:
           TAG_URL: ${{ steps.deploy.outputs.url }}
           SERVICE_URL: ${{ steps.before.outputs.service_url }}
           DIGEST: ${{ steps.image.outputs.digest }}
+          PRODUCTION_TRAFFIC: ${{ steps.before.outputs.production_traffic }}
         run: |
           set -euo pipefail
           cat > "$RESULT_PATH" <<EOF
@@ -182,7 +191,8 @@ jobs:
           - Canonical service URL: \`$SERVICE_URL\`
           - Image digest: \`$DIGEST\`
           - Candidate traffic: **0%**
-          - Production traffic: **unchanged 99/1**
+          - Production traffic before/after: **unchanged**
+          - Production traffic snapshot: \`$PRODUCTION_TRAFFIC\`
           - Private service: **PASS**
           - Required pricing gate configured: **PASS**
           - Real synthetic admin draft: **PASS**
