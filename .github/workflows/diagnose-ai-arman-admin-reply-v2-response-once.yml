@@ -19,7 +19,7 @@ jobs:
       REGION: europe-north1
       SERVICE_NAME: harmoniq-ai-arman-beta0
       WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
-      DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+      DEPLOY_SERVICE_ACCOUNT: github-pickup-deployer@harmoniq-210513.iam.gserviceaccount.com
       TARGET_REVISION: harmoniq-ai-arman-beta0-adminv2-a5272b63-216
       WINDOW_START: 2026-09-01T16:42:08Z
       WINDOW_END: 2026-09-01T16:43:30Z
