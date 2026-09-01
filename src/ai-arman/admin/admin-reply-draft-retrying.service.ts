@@ -9,6 +9,7 @@ const RETRYABLE_CODES = new Set([
   'admin_reply_model_http_error',
   'admin_reply_model_timeout',
   'admin_reply_model_request_failed',
+  'admin_reply_model_incomplete',
 ]);
 
 const SAFE_FAILURE_CODES = new Set([
@@ -16,6 +17,8 @@ const SAFE_FAILURE_CODES = new Set([
   'admin_reply_model_http_error',
   'admin_reply_model_timeout',
   'admin_reply_model_request_failed',
+  'admin_reply_model_incomplete',
+  'admin_reply_model_missing_output',
   'admin_reply_model_invalid',
 ]);
 
