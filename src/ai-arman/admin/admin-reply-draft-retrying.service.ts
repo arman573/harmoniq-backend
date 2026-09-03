@@ -7,7 +7,6 @@ import {
 
 const RETRYABLE_CODES = new Set([
   'admin_reply_model_http_error',
-  'admin_reply_model_timeout',
   'admin_reply_model_request_failed',
   'admin_reply_model_incomplete',
 ]);

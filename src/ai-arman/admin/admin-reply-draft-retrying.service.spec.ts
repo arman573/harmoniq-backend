@@ -19,28 +19,19 @@ describe('AiArmanAdminReplyDraftRetryingService', () => {
     jest.restoreAllMocks();
   });
 
-  it('retries once after a retryable provider failure and returns recovery', async () => {
+  it('does not retry a model timeout so the synchronous request stays within its outer budget', async () => {
     const base = jest
       .spyOn(AiArmanAdminReplyDraftService.prototype, 'createDraft')
-      .mockResolvedValueOnce({
+      .mockResolvedValue({
         ok: false,
         code: 'admin_reply_model_timeout',
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        draftText: 'Hej! Vi återkommer i ditt ärende.',
-        requiresHumanDecision: false,
-        decisionReasons: [],
-        confidence: 0.9,
-        sendsCustomerMessage: false,
-        executesWrites: false,
       });
 
     const service = new AiArmanAdminReplyDraftRetryingService({} as never);
     const result = await service.createDraft(INPUT);
 
-    expect(base).toHaveBeenCalledTimes(2);
-    expect(result).toMatchObject({ ok: true, draftText: expect.any(String) });
+    expect(base).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ ok: false, code: 'admin_reply_model_timeout' });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(warn.mock.calls[0][0]))).toMatchObject({
       event: 'ai_arman_admin_reply_draft_failed',
@@ -71,7 +62,11 @@ describe('AiArmanAdminReplyDraftRetryingService', () => {
     const result = await service.createDraft(INPUT);
 
     expect(base).toHaveBeenCalledTimes(2);
-    expect(result).toMatchObject({ ok: true });
+    expect(result).toMatchObject({
+      ok: true,
+      sendsCustomerMessage: false,
+      executesWrites: false,
+    });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(warn.mock.calls[0][0]))).toMatchObject({
       event: 'ai_arman_admin_reply_draft_failed',

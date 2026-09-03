@@ -7,10 +7,10 @@ describe('AiArmanAdminReplyDraftConfig', () => {
     process.env = { ...originalEnv };
   });
 
-  it('uses a dedicated 12 second default for reply generation', () => {
+  it('uses a dedicated 18 second default for reply generation', () => {
     enableModel();
     delete process.env.AI_ARMAN_ADMIN_REPLY_DRAFT_TIMEOUT_MS;
-    expect(new AiArmanAdminReplyDraftConfig().read().timeoutMs).toBe(12_000);
+    expect(new AiArmanAdminReplyDraftConfig().read().timeoutMs).toBe(18_000);
   });
 
   it('accepts 15 seconds for admin reply generation without changing model interpretation timeout', () => {
