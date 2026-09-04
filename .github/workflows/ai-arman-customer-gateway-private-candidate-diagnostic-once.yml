@@ -1,0 +1,195 @@
+name: AI Arman customer gateway private candidate diagnostic once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: ai-arman-customer-gateway-private-candidate-diagnostic-once
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  SERVICE_NAME: harmoniq-ai-arman-customer-gateway-candidate
+  LIVE_AI_SERVICE: harmoniq-ai-arman-beta0
+  EXPECTED_SOURCE_SHA: 75e339f1
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  RESULT_PATH: docs/ai-arman/CUSTOMER_GATEWAY_PRIVATE_CANDIDATE_DIAG_LATEST.md
+
+jobs:
+  diagnose:
+    if: github.event.head_commit.message == 'Diagnose private customer gateway candidate once'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+
+      - name: Authenticate read-only deploy identity
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Read gateway and live state
+        shell: bash
+        run: |
+          set -u
+          mkdir -p "$RUNNER_TEMP/diag"
+
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1 2>/dev/null || true)"
+
+          SERVICE_EXISTS=no
+          SERVICE_DESCRIBE_STATUS=failed
+          REVISION='-'
+          SERVICE_URL='-'
+          RUNTIME_SA='-'
+          MAX_SCALE='-'
+          CONCURRENCY='-'
+          IMAGE='-'
+          SOURCE_LABEL='-'
+          REVISION_READY='unknown'
+          WIDGET_ENABLED='-'
+          IDENTITY_ENABLED='-'
+          OTP_ENABLED='-'
+          VENDRE_ENABLED='-'
+          MODEL_INTERPRETATION='-'
+          MODEL_SHADOW='-'
+          MODEL_PROMOTION='-'
+          IAM_READ='not_attempted'
+          PUBLIC_IAM='unknown'
+          HEALTH_HTTP='not_attempted'
+          WIDGET_HTTP='not_attempted'
+          INTERNAL_HTTP='not_attempted'
+          INVOKE_RESULT='not_attempted'
+
+          if gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/diag/gateway.json" 2> "$RUNNER_TEMP/diag/gateway.err"; then
+            SERVICE_EXISTS=yes
+            SERVICE_DESCRIBE_STATUS=success
+            REVISION="$(jq -r '.status.latestReadyRevisionName // empty' "$RUNNER_TEMP/diag/gateway.json")"
+            SERVICE_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/diag/gateway.json")"
+            RUNTIME_SA="$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/diag/gateway.json")"
+            MAX_SCALE="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/diag/gateway.json")"
+            SOURCE_LABEL="$(jq -r '.metadata.labels["source-sha"] // empty' "$RUNNER_TEMP/diag/gateway.json")"
+
+            if [ -n "$REVISION" ] && gcloud run revisions describe "$REVISION" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/diag/revision.json" 2> "$RUNNER_TEMP/diag/revision.err"; then
+              CONCURRENCY="$(jq -r '.spec.containerConcurrency // empty' "$RUNNER_TEMP/diag/revision.json")"
+              IMAGE="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/diag/revision.json")"
+              REVISION_READY="$(jq -r '[.status.conditions[]? | select(.type == "Ready")][0].status // "unknown"' "$RUNNER_TEMP/diag/revision.json")"
+              env_value() { jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name == $n) | .value // empty' "$RUNNER_TEMP/diag/revision.json"; }
+              WIDGET_ENABLED="$(env_value AI_ARMAN_CUSTOMER_WIDGET_ENABLED)"
+              IDENTITY_ENABLED="$(env_value AI_ARMAN_CUSTOMER_IDENTITY_ENABLED)"
+              OTP_ENABLED="$(env_value AI_ARMAN_CUSTOMER_OTP_EMAIL_ENABLED)"
+              VENDRE_ENABLED="$(env_value AI_ARMAN_VENDRE_CUSTOMER_DIRECTORY_ENABLED)"
+              MODEL_INTERPRETATION="$(env_value AI_ARMAN_MODEL_INTERPRETATION_ENABLED)"
+              MODEL_SHADOW="$(env_value AI_ARMAN_MODEL_SHADOW_ENABLED)"
+              MODEL_PROMOTION="$(env_value AI_ARMAN_MODEL_PROMOTION_ENABLED)"
+            fi
+
+            if gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/diag/iam.json" 2> "$RUNNER_TEMP/diag/iam.err"; then
+              IAM_READ=success
+              if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/diag/iam.json" >/dev/null; then
+                PUBLIC_IAM=yes
+              else
+                PUBLIC_IAM=no
+              fi
+            else
+              IAM_READ=denied_or_failed
+            fi
+
+            if [ -n "$SERVICE_URL" ] && [ "$SERVICE_URL" != '-' ]; then
+              ID_TOKEN="$(gcloud auth print-identity-token --audiences="$SERVICE_URL" 2> "$RUNNER_TEMP/diag/token.err" || true)"
+              if [ -n "$ID_TOKEN" ]; then
+                INVOKE_RESULT=token_minted
+                HEALTH_HTTP="$(curl --silent --show-error --max-time 15 --output "$RUNNER_TEMP/diag/health.out" --write-out '%{http_code}' --header "Authorization: Bearer $ID_TOKEN" "$SERVICE_URL/health" 2> "$RUNNER_TEMP/diag/health.err" || true)"
+                WIDGET_HTTP="$(curl --silent --show-error --max-time 15 --output "$RUNNER_TEMP/diag/widget.out" --write-out '%{http_code}' --header "Authorization: Bearer $ID_TOKEN" "$SERVICE_URL/ai-arman/customer/widget.js" 2> "$RUNNER_TEMP/diag/widget.err" || true)"
+                INTERNAL_HTTP="$(curl --silent --show-error --max-time 15 --output "$RUNNER_TEMP/diag/internal.out" --write-out '%{http_code}' --header "Authorization: Bearer $ID_TOKEN" "$SERVICE_URL/ai-arman/foundation" 2> "$RUNNER_TEMP/diag/internal.err" || true)"
+              else
+                INVOKE_RESULT=id_token_unavailable
+              fi
+            fi
+          fi
+
+          LIVE_READ=failed
+          LIVE_TRAFFIC='-'
+          LIVE_MAX_SCALE='-'
+          if gcloud run services describe "$LIVE_AI_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/diag/live.json" 2> "$RUNNER_TEMP/diag/live.err"; then
+            LIVE_READ=success
+            LIVE_TRAFFIC="$(jq -r '[.status.traffic[]? | select((.percent // 0) > 0) | (.percent // 0)] | sort | join("/")' "$RUNNER_TEMP/diag/live.json")"
+            LIVE_MAX_SCALE="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/diag/live.json")"
+          fi
+
+          SOURCE_MATCH=no
+          if [ "$SOURCE_LABEL" = "$EXPECTED_SOURCE_SHA" ]; then SOURCE_MATCH=yes; fi
+
+          {
+            echo '# AI Arman – customer gateway private candidate diagnostic latest'
+            echo
+            echo "- Recorded at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- Diagnostic source commit: \`$GITHUB_SHA\`"
+            echo "- Expected deployed source label: \`$EXPECTED_SOURCE_SHA\`"
+            echo "- Active identity: \`$ACTIVE_ACCOUNT\`"
+            echo '- Mode: **read-only Cloud Run/IAM/runtime probes; no GCP mutation**'
+            echo
+            echo '## Gateway service state'
+            echo
+            echo "- Service exists: **$SERVICE_EXISTS**"
+            echo "- Service describe: \`$SERVICE_DESCRIBE_STATUS\`"
+            echo "- Revision: \`$REVISION\`"
+            echo "- Revision Ready: \`$REVISION_READY\`"
+            echo "- Service URL present: **$([ "$SERVICE_URL" != '-' ] && echo yes || echo no)**"
+            echo "- Runtime service account: \`$RUNTIME_SA\`"
+            echo "- Max instances: \`$MAX_SCALE\`"
+            echo "- Concurrency: \`$CONCURRENCY\`"
+            echo "- Source label: \`$SOURCE_LABEL\`"
+            echo "- Source label matches expected deploy commit: **$SOURCE_MATCH**"
+            echo "- Image configured: **$([ "$IMAGE" != '-' ] && echo yes || echo no)**"
+            echo
+            echo '## Gateway feature flags'
+            echo
+            echo "- Customer widget: \`$WIDGET_ENABLED\`"
+            echo "- Customer identity: \`$IDENTITY_ENABLED\`"
+            echo "- Gmail OTP: \`$OTP_ENABLED\`"
+            echo "- Vendre customer directory: \`$VENDRE_ENABLED\`"
+            echo "- Model interpretation: \`$MODEL_INTERPRETATION\`"
+            echo "- Model shadow: \`$MODEL_SHADOW\`"
+            echo "- Model promotion: \`$MODEL_PROMOTION\`"
+            echo
+            echo '## Privacy / invocation probes'
+            echo
+            echo "- IAM read: \`$IAM_READ\`"
+            echo "- Public allUsers/allAuthenticatedUsers IAM: \`$PUBLIC_IAM\`"
+            echo "- Identity-token probe: \`$INVOKE_RESULT\`"
+            echo "- /health HTTP: \`$HEALTH_HTTP\`"
+            echo "- /ai-arman/customer/widget.js HTTP: \`$WIDGET_HTTP\`"
+            echo "- /ai-arman/foundation HTTP: \`$INTERNAL_HTTP\`"
+            echo
+            echo '## Existing live AI boundary'
+            echo
+            echo "- Live service read: \`$LIVE_READ\`"
+            echo "- Positive traffic percentages sorted: \`$LIVE_TRAFFIC\`"
+            echo "- Live max instances: \`$LIVE_MAX_SCALE\`"
+            echo
+            echo 'No secret values, ID tokens, customer data, IAM policies, or response bodies are written to this checkpoint.'
+          } > "$RESULT_PATH"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record customer gateway candidate diagnostic' || exit 0
+          git push origin HEAD:feature/ai-arman-foundation-v1

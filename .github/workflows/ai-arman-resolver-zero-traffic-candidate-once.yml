@@ -1,0 +1,239 @@
+name: AI Arman resolver zero traffic candidate once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/ai-arman-resolver-zero-traffic-candidate-once.yml
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: ai-arman-resolver-zero-traffic-candidate-once
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  SERVICE_NAME: harmoniq-ai-arman-beta0
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  ARTIFACT_REPOSITORY: harmoniq-containers
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  SOURCE_SHA: 3298af83deea3d186f4295e4637b20e62badb0a5
+  CANDIDATE_TAG: resolver-ai-3298af83
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Guard trusted invocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Checkout frozen resolver source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+
+      - name: Guard frozen source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Verify frozen source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test -- --runInBand
+          npm run build
+          docker build -f Dockerfile.ai-arman-candidate -t ai-arman-resolver:verify .
+
+      - name: Authenticate with dedicated AI Arman deployer
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Snapshot live boundary
+        id: before
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/before.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-before.json" >/dev/null; then
+            echo 'AI service is public; refusing candidate deploy.' >&2
+            exit 1
+          fi
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/before.json" > "$RUNNER_TEMP/positive-before.json"
+          SERVICE_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/before.json")"
+          test -n "$SERVICE_URL"
+          echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Build immutable resolver image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:resolver-${SOURCE_SHA:0:12}-$GITHUB_RUN_ID"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build --pull -f Dockerfile.ai-arman-candidate -t "$IMAGE" .
+          docker push "$IMAGE"
+          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image=$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME@$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy private zero traffic resolver candidate
+        id: deploy
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          APP_TOKEN="$(printf 'resolver:%s' "$SOURCE_SHA" | sha256sum | awk '{print $1}')"
+          echo "::add-mask::$APP_TOKEN"
+          gcloud run deploy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --platform managed \
+            --image "$IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --revision-suffix "resolver-${SOURCE_SHA:0:8}-${GITHUB_RUN_NUMBER}" \
+            --tag "$CANDIDATE_TAG" --no-traffic \
+            --update-env-vars "AI_ARMAN_ADMIN_RESOLVER_ENABLED=true,AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN=$APP_TOKEN,AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED=false,AI_ARMAN_MODEL_PROMOTION_ENABLED=false" \
+            --quiet
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/after.json"
+          REV="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/after.json" | head -n1)"
+          URL="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/after.json" | head -n1)"
+          test -n "$REV"
+          test -n "$URL"
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/after.json")" = '0'
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Verify candidate config and unchanged production traffic
+        shell: bash
+        env:
+          REV: ${{ steps.deploy.outputs.revision }}
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/final.json"
+          gcloud run revisions describe "$REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/revision.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/final.json" > "$RUNNER_TEMP/positive-after.json"
+          cmp "$RUNNER_TEMP/positive-before.json" "$RUNNER_TEMP/positive-after.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-after.json" >/dev/null; then exit 1; fi
+          envv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/revision.json"; }
+          test "$(envv AI_ARMAN_ADMIN_RESOLVER_ENABLED)" = 'true'
+          test "$(envv AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED)" = 'false'
+          test "$(envv AI_ARMAN_MODEL_PROMOTION_ENABLED)" = 'false'
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/final.json")" = '0'
+
+      - name: Mint private candidate identity token
+        id: idtoken
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ steps.before.outputs.service_url }}
+          id_token_include_email: true
+          create_credentials_file: false
+
+      - name: Verify resolver boundary without writes
+        shell: bash
+        env:
+          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+          TAG_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ID_TOKEN"
+          APP_TOKEN="$(printf 'resolver:%s' "$SOURCE_SHA" | sha256sum | awk '{print $1}')"
+          echo "::add-mask::$APP_TOKEN"
+          UNAUTH="$(curl --max-time 20 -sS -o /dev/null -w '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header 'Content-Type: application/json' --data '{"caseId":"HQR-SYNTHETIC"}' "$TAG_URL/ai-arman/internal/admin-resolver/prepare" || true)"
+          test "$UNAUTH" = '401'
+          EXEC="$(curl --max-time 20 -sS -o "$RUNNER_TEMP/execute.json" -w '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $APP_TOKEN" --header 'Content-Type: application/json' --data '{"caseId":"HQR-SYNTHETIC","approved":false,"action":"case.complete"}' "$TAG_URL/ai-arman/internal/admin-resolver/execute" || true)"
+          case "$EXEC" in 200|201) ;; *) cat "$RUNNER_TEMP/execute.json" >&2; exit 1 ;; esac
+          jq -e '.ok==false and .code=="resolver_explicit_approval_required" and .writeExecuted==false' "$RUNNER_TEMP/execute.json" >/dev/null
+
+      - name: Summary
+        shell: bash
+        env:
+          REV: ${{ steps.deploy.outputs.revision }}
+          TAG_URL: ${{ steps.deploy.outputs.url }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          {
+            echo '## AI Arman resolver zero-traffic candidate'
+            echo
+            echo "- Frozen source: \`$SOURCE_SHA\`"
+            echo "- Revision: \`$REV\`"
+            echo "- Tagged URL: \`$TAG_URL\`"
+            echo "- Image digest: \`$DIGEST\`"
+            echo '- Traffic: **0%**'
+            echo '- Production positive traffic: **unchanged**'
+            echo '- Private IAM: **PASS**'
+            echo '- Resolver enabled on candidate: **true**'
+            echo '- Admin writes on candidate: **false**'
+            echo '- Model promotion: **false**'
+            echo '- Unauthorized app-token boundary: **PASS**'
+            echo '- Execute without explicit approval: **blocked**'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record sanitized result in repository
+        if: always()
+        shell: bash
+        env:
+          JOB_STATUS: ${{ job.status }}
+          REV: ${{ steps.deploy.outputs.revision }}
+          TAG_URL: ${{ steps.deploy.outputs.url }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          git fetch origin feature/ai-arman-foundation-v1
+          git checkout -B feature/ai-arman-foundation-v1 origin/feature/ai-arman-foundation-v1
+          mkdir -p docs/ai-arman
+          cat > docs/ai-arman/RESOLVER_ZERO_TRAFFIC_CANDIDATE_RESULT.md <<EOF
+          # AI Arman resolver zero-traffic candidate result
+
+          - Run ID: $GITHUB_RUN_ID
+          - Job status: $JOB_STATUS
+          - Frozen source: $SOURCE_SHA
+          - Candidate revision: ${REV:-not-created}
+          - Candidate tagged URL: ${TAG_URL:-not-created}
+          - Image digest: ${DIGEST:-not-created}
+          - Intended traffic: 0%
+          - Resolver intended enabled on candidate: true
+          - Admin writes intended on candidate: false
+          - Model promotion intended: false
+          - Production traffic mutation intended: none
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/ai-arman/RESOLVER_ZERO_TRAFFIC_CANDIDATE_RESULT.md
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Record resolver zero-traffic candidate result'
+          git push origin HEAD:feature/ai-arman-foundation-v1

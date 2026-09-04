@@ -1,0 +1,194 @@
+name: Diagnose AI Arman write-ready draft once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/diagnose-ai-arman-write-ready-draft-once.yml
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: ai-arman-write-ready-draft-diagnostic-once
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  SERVICE_NAME: harmoniq-ai-arman-beta0
+  CANDIDATE_TAG: resolver-ready-3298af83
+  RESULT_PATH: docs/ai-arman/ADMIN_RESOLVER_WRITE_READY_DRAFT_DIAGNOSTIC.md
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Guard trusted invocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
+          test "$GITHUB_ACTOR" = 'arman573'
+
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+          fetch-depth: 1
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Inspect write-ready candidate draft configuration
+        id: inspect
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service.json"
+          REV="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/service.json" | head -n1)"
+          URL="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/service.json" | head -n1)"
+          CANONICAL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/service.json")"
+          test -n "$REV"; test -n "$URL"; test -n "$CANONICAL"
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")" = '0'
+          gcloud run revisions describe "$REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/rev.json"
+          envv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/rev.json"; }
+          REPLY_TOKEN="$(envv AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN)"
+          RESOLVER_TOKEN="$(envv AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN)"
+          [[ -n "$REPLY_TOKEN" ]] && echo "::add-mask::$REPLY_TOKEN"
+          [[ -n "$RESOLVER_TOKEN" ]] && echo "::add-mask::$RESOLVER_TOKEN"
+          echo "REPLY_TOKEN=$REPLY_TOKEN" >> "$GITHUB_ENV"
+          echo "RESOLVER_TOKEN=$RESOLVER_TOKEN" >> "$GITHUB_ENV"
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "canonical=$CANONICAL" >> "$GITHUB_OUTPUT"
+          echo "reply_enabled=$(envv AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED)" >> "$GITHUB_OUTPUT"
+          echo "model_enabled=$(envv AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" >> "$GITHUB_OUTPUT"
+          echo "model=$(envv AI_ARMAN_OPENAI_MODEL)" >> "$GITHUB_OUTPUT"
+          echo "reply_timeout=$(envv AI_ARMAN_ADMIN_REPLY_DRAFT_TIMEOUT_MS)" >> "$GITHUB_OUTPUT"
+          echo "model_timeout=$(envv AI_ARMAN_MODEL_INTERPRETATION_TIMEOUT_MS)" >> "$GITHUB_OUTPUT"
+          echo "reply_token_configured=$([[ ${#REPLY_TOKEN} -ge 16 ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "resolver_token_configured=$([[ ${#RESOLVER_TOKEN} -ge 16 ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          OPENAI_SECRET=false
+          if jq -e '.spec.containers[0].env[]? | select(.name=="OPENAI_API_KEY") | .valueFrom.secretKeyRef.name=="ai-arman-openai-api-key"' "$RUNNER_TEMP/rev.json" >/dev/null; then OPENAI_SECRET=true; fi
+          echo "openai_secret=$OPENAI_SECRET" >> "$GITHUB_OUTPUT"
+
+      - name: Mint private candidate identity token
+        id: idtoken
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ steps.inspect.outputs.canonical }}
+          id_token_include_email: true
+          create_credentials_file: false
+
+      - name: Probe isolated draft service with synthetic context only
+        id: draft
+        shell: bash
+        env:
+          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+          TAG_URL: ${{ steps.inspect.outputs.url }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ID_TOKEN"
+          if [[ ${#REPLY_TOKEN} -lt 16 ]]; then
+            echo 'http=not-run' >> "$GITHUB_OUTPUT"
+            echo 'ok=false' >> "$GITHUB_OUTPUT"
+            echo 'code=reply_token_missing' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          HTTP="$(curl --max-time 45 -sS -o "$RUNNER_TEMP/draft.json" -w '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $REPLY_TOKEN" --header 'Content-Type: application/json' --data '{"caseId":"HQR-SYNTHETIC-DRAFT","caseType":"return","status":"open","statusLabel":"Öppen","customerName":"Testkund","messages":[{"direction":"inbound","sender":"Kund","subject":"Retur","text":"Jag behöver hjälp med min retur.","date":"2026-08-20"}]}' "$TAG_URL/ai-arman/internal/admin/reply-draft" || true)"
+          OK="$(jq -r '.ok // false' "$RUNNER_TEMP/draft.json" 2>/dev/null || echo false)"
+          CODE="$(jq -r '.code // .error // "none"' "$RUNNER_TEMP/draft.json" 2>/dev/null || echo invalid_json)"
+          echo "http=$HTTP" >> "$GITHUB_OUTPUT"
+          echo "ok=$OK" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          rm -f "$RUNNER_TEMP/draft.json"
+
+      - name: Probe resolver prepare status without logging customer content
+        id: resolver
+        shell: bash
+        env:
+          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+          TAG_URL: ${{ steps.inspect.outputs.url }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ID_TOKEN"
+          if [[ ${#RESOLVER_TOKEN} -lt 16 ]]; then
+            echo 'http=not-run' >> "$GITHUB_OUTPUT"
+            echo 'draft_status=resolver_token_missing' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          HTTP="$(curl --max-time 70 -sS -o "$RUNNER_TEMP/prepare.json" -w '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $RESOLVER_TOKEN" --header 'Content-Type: application/json' --data '{"caseId":"HQR-2493614"}' "$TAG_URL/ai-arman/internal/admin-resolver/prepare" || true)"
+          DRAFT_STATUS="$(jq -r '.draftStatus // .code // "unknown"' "$RUNNER_TEMP/prepare.json" 2>/dev/null || echo invalid_json)"
+          ANALYSIS_STATUS="$(jq -r '.analysisStatus // "unknown"' "$RUNNER_TEMP/prepare.json" 2>/dev/null || echo unknown)"
+          echo "http=$HTTP" >> "$GITHUB_OUTPUT"
+          echo "draft_status=$DRAFT_STATUS" >> "$GITHUB_OUTPUT"
+          echo "analysis_status=$ANALYSIS_STATUS" >> "$GITHUB_OUTPUT"
+          rm -f "$RUNNER_TEMP/prepare.json"
+
+      - name: Record safe draft diagnostic
+        shell: bash
+        env:
+          REV: ${{ steps.inspect.outputs.revision }}
+          REPLY_ENABLED: ${{ steps.inspect.outputs.reply_enabled }}
+          MODEL_ENABLED: ${{ steps.inspect.outputs.model_enabled }}
+          MODEL: ${{ steps.inspect.outputs.model }}
+          REPLY_TIMEOUT: ${{ steps.inspect.outputs.reply_timeout }}
+          MODEL_TIMEOUT: ${{ steps.inspect.outputs.model_timeout }}
+          REPLY_TOKEN_CONFIGURED: ${{ steps.inspect.outputs.reply_token_configured }}
+          RESOLVER_TOKEN_CONFIGURED: ${{ steps.inspect.outputs.resolver_token_configured }}
+          OPENAI_SECRET: ${{ steps.inspect.outputs.openai_secret }}
+          DRAFT_HTTP: ${{ steps.draft.outputs.http }}
+          DRAFT_OK: ${{ steps.draft.outputs.ok }}
+          DRAFT_CODE: ${{ steps.draft.outputs.code }}
+          RESOLVER_HTTP: ${{ steps.resolver.outputs.http }}
+          RESOLVER_DRAFT_STATUS: ${{ steps.resolver.outputs.draft_status }}
+          RESOLVER_ANALYSIS_STATUS: ${{ steps.resolver.outputs.analysis_status }}
+        run: |
+          set -euo pipefail
+          git fetch origin feature/ai-arman-foundation-v1
+          git checkout -B result origin/feature/ai-arman-foundation-v1
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman write-ready draft diagnostic
+
+          - Checked at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Run ID: $GITHUB_RUN_ID
+          - Candidate revision: \`$REV\`
+          - Candidate traffic: **0%**
+          - Reply draft enabled: \`$REPLY_ENABLED\`
+          - Model interpretation enabled: \`$MODEL_ENABLED\`
+          - Model: \`$MODEL\`
+          - Reply timeout ms: \`$REPLY_TIMEOUT\`
+          - Model timeout ms: \`$MODEL_TIMEOUT\`
+          - Reply access token configured: **$REPLY_TOKEN_CONFIGURED**
+          - Resolver access token configured: **$RESOLVER_TOKEN_CONFIGURED**
+          - OpenAI Secret Manager reference present: **$OPENAI_SECRET**
+          - Isolated synthetic draft HTTP: \`$DRAFT_HTTP\`
+          - Isolated synthetic draft ok: **$DRAFT_OK**
+          - Isolated synthetic draft code: \`$DRAFT_CODE\`
+          - Real resolver prepare HTTP: \`$RESOLVER_HTTP\`
+          - Resolver analysis status: \`$RESOLVER_ANALYSIS_STATUS\`
+          - Resolver draft status: \`$RESOLVER_DRAFT_STATUS\`
+          - Customer message sent: **false**
+          - Resolver write executed: **false**
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record AI Arman write-ready draft diagnostic'
+          git push origin HEAD:feature/ai-arman-foundation-v1

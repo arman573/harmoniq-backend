@@ -1,0 +1,183 @@
+name: AI Arman telemetry IAM preflight
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/ai-arman-telemetry-iam-preflight.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  PROJECT_ID: harmoniq-210513
+  PROJECT_NUMBER: '222024985388'
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+  RESULT_PATH: docs/ai-arman/TELEMETRY_IAM_PREFLIGHT_LATEST.md
+
+jobs:
+  telemetry-iam-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Enforce exact branch and actor
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Check out exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+
+      - name: Authenticate existing AI Arman deployer
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Test exact project IAM permissions without mutation
+        id: permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          test -n "$ACCESS_TOKEN"
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          cat > "$RUNNER_TEMP/permissions-request.json" <<'JSON'
+          {
+            "permissions": [
+              "iam.serviceAccounts.create",
+              "iam.serviceAccounts.get",
+              "iam.serviceAccounts.getIamPolicy",
+              "iam.serviceAccounts.setIamPolicy",
+              "iam.roles.create",
+              "iam.roles.get",
+              "iam.roles.update",
+              "resourcemanager.projects.getIamPolicy",
+              "resourcemanager.projects.setIamPolicy",
+              "monitoring.timeSeries.list"
+            ]
+          }
+          JSON
+
+          HTTP_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/permissions-response.json" \
+            --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data-binary @"$RUNNER_TEMP/permissions-request.json" \
+            "https://cloudresourcemanager.googleapis.com/v1/projects/$PROJECT_ID:testIamPermissions")"
+          test "$HTTP_CODE" = "200"
+
+          has_permission() {
+            jq -e --arg p "$1" '.permissions // [] | index($p) != null' "$RUNNER_TEMP/permissions-response.json" >/dev/null
+          }
+          flag() {
+            if has_permission "$1"; then printf 'YES'; else printf 'NO'; fi
+          }
+
+          SA_CREATE="$(flag iam.serviceAccounts.create)"
+          SA_GET="$(flag iam.serviceAccounts.get)"
+          SA_GET_IAM="$(flag iam.serviceAccounts.getIamPolicy)"
+          SA_SET_IAM="$(flag iam.serviceAccounts.setIamPolicy)"
+          ROLE_CREATE="$(flag iam.roles.create)"
+          ROLE_GET="$(flag iam.roles.get)"
+          ROLE_UPDATE="$(flag iam.roles.update)"
+          PROJECT_GET_IAM="$(flag resourcemanager.projects.getIamPolicy)"
+          PROJECT_SET_IAM="$(flag resourcemanager.projects.setIamPolicy)"
+          MONITORING_LIST="$(flag monitoring.timeSeries.list)"
+
+          BOOTSTRAP_CAPABLE=NO
+          if [ "$SA_CREATE" = YES ] && [ "$SA_SET_IAM" = YES ] && [ "$ROLE_CREATE" = YES ] && [ "$ROLE_GET" = YES ] && [ "$ROLE_UPDATE" = YES ] && [ "$PROJECT_GET_IAM" = YES ] && [ "$PROJECT_SET_IAM" = YES ]; then
+            BOOTSTRAP_CAPABLE=YES
+          fi
+
+          {
+            echo "sa_create=$SA_CREATE"
+            echo "sa_get=$SA_GET"
+            echo "sa_get_iam=$SA_GET_IAM"
+            echo "sa_set_iam=$SA_SET_IAM"
+            echo "role_create=$ROLE_CREATE"
+            echo "role_get=$ROLE_GET"
+            echo "role_update=$ROLE_UPDATE"
+            echo "project_get_iam=$PROJECT_GET_IAM"
+            echo "project_set_iam=$PROJECT_SET_IAM"
+            echo "monitoring_list=$MONITORING_LIST"
+            echo "bootstrap_capable=$BOOTSTRAP_CAPABLE"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "TELEMETRY_IAM_PERMISSION_TEST=PASS"
+          echo "BOOTSTRAP_CAPABLE=$BOOTSTRAP_CAPABLE"
+
+      - name: Persist preflight result
+        if: always()
+        shell: bash
+        env:
+          SA_CREATE: ${{ steps.permissions.outputs.sa_create }}
+          SA_GET: ${{ steps.permissions.outputs.sa_get }}
+          SA_GET_IAM: ${{ steps.permissions.outputs.sa_get_iam }}
+          SA_SET_IAM: ${{ steps.permissions.outputs.sa_set_iam }}
+          ROLE_CREATE: ${{ steps.permissions.outputs.role_create }}
+          ROLE_GET: ${{ steps.permissions.outputs.role_get }}
+          ROLE_UPDATE: ${{ steps.permissions.outputs.role_update }}
+          PROJECT_GET_IAM: ${{ steps.permissions.outputs.project_get_iam }}
+          PROJECT_SET_IAM: ${{ steps.permissions.outputs.project_set_iam }}
+          MONITORING_LIST: ${{ steps.permissions.outputs.monitoring_list }}
+          BOOTSTRAP_CAPABLE: ${{ steps.permissions.outputs.bootstrap_capable }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$RESULT_PATH")"
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman telemetry IAM preflight - latest
+
+          Generated by GitHub Actions run ${GITHUB_RUN_ID} from commit ${GITHUB_SHA}.
+
+          This preflight is GCP read-only. It calls only IAM test-permission/read APIs and performs no IAM, Cloud Run, traffic, model, secret or runtime mutation.
+
+          ## Existing AI Arman deployer permissions
+
+          - iam.serviceAccounts.create: ${SA_CREATE}
+          - iam.serviceAccounts.get: ${SA_GET}
+          - iam.serviceAccounts.getIamPolicy: ${SA_GET_IAM}
+          - iam.serviceAccounts.setIamPolicy: ${SA_SET_IAM}
+          - iam.roles.create: ${ROLE_CREATE}
+          - iam.roles.get: ${ROLE_GET}
+          - iam.roles.update: ${ROLE_UPDATE}
+          - resourcemanager.projects.getIamPolicy: ${PROJECT_GET_IAM}
+          - resourcemanager.projects.setIamPolicy: ${PROJECT_SET_IAM}
+          - monitoring.timeSeries.list: ${MONITORING_LIST}
+
+          ## Decision
+
+          - Can current deployer bootstrap a dedicated telemetry service account + custom metric-reader role entirely through GitHub: ${BOOTSTRAP_CAPABLE}
+          - No permission was granted by this workflow.
+          - No traffic or Cloud Run configuration was changed.
+          - Model promotion remains outside this workflow.
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$RESULT_PATH"
+          if git diff --cached --quiet; then
+            echo "TELEMETRY_IAM_PREFLIGHT_RESULT_UNCHANGED=PASS"
+          else
+            git commit -m "Record AI Arman telemetry IAM preflight"
+            git push origin HEAD:feature/ai-arman-foundation-v1
+            echo "TELEMETRY_IAM_PREFLIGHT_RESULT_PERSISTED=PASS"
+          fi

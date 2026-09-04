@@ -1,0 +1,90 @@
+name: Find AI Arman admin gateway revision once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  find:
+    if: github.event.head_commit.message == 'Find AI Arman admin gateway revision'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      PROJECT_ID: harmoniq-210513
+      REGION: europe-north1
+      SERVICE_NAME: harmoniq-ai-arman-beta0
+      RESULT_PATH: docs/ai-arman/ADMIN_GATEWAY_REVISION_SEARCH.md
+      WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+      DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+          fetch-depth: 1
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Inspect recent AI revisions safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run revisions list --service "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --limit 30 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)' > "$RUNNER_TEMP/revisions.txt"
+          test -s "$RUNNER_TEMP/revisions.txt"
+          : > "$RUNNER_TEMP/rows.md"
+          FOUND=''
+          while IFS= read -r rev; do
+            [[ -z "$rev" ]] && continue
+            gcloud run revisions describe "$rev" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/rev.json"
+            envv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/rev.json"; }
+            enabled="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED)"
+            base="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL)"
+            audience="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE)"
+            token="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN)"
+            write="$(envv AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED)"
+            [[ -n "$token" ]] && echo "::add-mask::$token"
+            complete=false
+            if [[ "$enabled" == 'true' && -n "$base" && -n "$audience" && ${#token} -ge 32 ]]; then
+              complete=true
+              [[ -z "$FOUND" ]] && FOUND="$rev"
+            fi
+            printf -- '- Revision `%s` | complete gateway **%s** | enabled `%s` | base `%s` | audience `%s` | token length `%s` | writes `%s`\n' \
+              "$rev" "$complete" "${enabled:-missing}" \
+              "$([[ -n "$base" ]] && echo present || echo missing)" \
+              "$([[ -n "$audience" ]] && echo present || echo missing)" \
+              "${#token}" "${write:-missing}" >> "$RUNNER_TEMP/rows.md"
+          done < "$RUNNER_TEMP/revisions.txt"
+          echo "FOUND_REVISION=$FOUND" >> "$GITHUB_ENV"
+
+      - name: Record revision search without secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin feature/ai-arman-foundation-v1
+          git checkout -B result origin/feature/ai-arman-foundation-v1
+          {
+            echo '# AI Arman admin gateway revision search'
+            echo
+            echo "- Checked at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- First recent revision with complete gateway config: \`${FOUND_REVISION:-none}\`"
+            echo '- Values for gateway URLs/tokens are intentionally not recorded.'
+            echo
+            cat "$RUNNER_TEMP/rows.md"
+          } > "$RESULT_PATH"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record AI Arman admin gateway revision search'
+          git push origin HEAD:feature/ai-arman-foundation-v1

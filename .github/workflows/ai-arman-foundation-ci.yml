@@ -1,0 +1,221 @@
+name: AI Arman foundation CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/ai-arman-foundation-ci.yml'
+      - '.github/workflows/ai-arman-beta0-gcp-preflight.yml'
+      - '.github/workflows/ai-arman-beta0-candidate-deploy.yml'
+      - '.dockerignore'
+      - 'Dockerfile.ai-arman-candidate'
+      - 'Dockerfile.ai-arman-customer-gateway'
+      - 'docs/ai-arman/**'
+      - 'src/ai-arman/**'
+      - 'src/ai-arman-candidate.module.ts'
+      - 'src/ai-arman-candidate.module.spec.ts'
+      - 'src/ai-arman-customer-gateway.module.ts'
+      - 'src/main-ai-arman-candidate.ts'
+      - 'src/main-ai-arman-customer-gateway.ts'
+      - 'src/http-port.ts'
+      - 'src/http-port.spec.ts'
+      - 'src/app.module.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'nest-cli.json'
+      - 'tsconfig.json'
+      - 'tsconfig.build.json'
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - '.github/workflows/ai-arman-foundation-ci.yml'
+      - '.github/workflows/ai-arman-beta0-gcp-preflight.yml'
+      - '.github/workflows/ai-arman-beta0-candidate-deploy.yml'
+      - '.dockerignore'
+      - 'Dockerfile.ai-arman-candidate'
+      - 'Dockerfile.ai-arman-customer-gateway'
+      - 'docs/ai-arman/**'
+      - 'src/ai-arman/**'
+      - 'src/ai-arman-candidate.module.ts'
+      - 'src/ai-arman-candidate.module.spec.ts'
+      - 'src/ai-arman-customer-gateway.module.ts'
+      - 'src/main-ai-arman-candidate.ts'
+      - 'src/main-ai-arman-customer-gateway.ts'
+      - 'src/http-port.ts'
+      - 'src/http-port.spec.ts'
+      - 'src/app.module.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'nest-cli.json'
+      - 'tsconfig.json'
+      - 'tsconfig.build.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-arman-foundation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test -- --runInBand
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Build isolated candidate container
+        run: docker build -f Dockerfile.ai-arman-candidate -t ai-arman-candidate:ci .
+
+      - name: Smoke test isolated candidate container
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CONTAINER_ID="$(docker run -d \
+            -p 18080:8080 \
+            -e PORT=8080 \
+            -e AI_ARMAN_WIDGET_PREVIEW_ENABLED=false \
+            -e AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false \
+            -e AI_ARMAN_MODEL_SHADOW_ENABLED=false \
+            -e AI_ARMAN_MODEL_PROMOTION_ENABLED=false \
+            ai-arman-candidate:ci)"
+
+          cleanup() {
+            docker logs "$CONTAINER_ID" || true
+            docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..30}; do
+            if curl --silent --fail http://127.0.0.1:18080/ai-arman/foundation \
+              > "$RUNNER_TEMP/ai-arman-foundation.json"; then
+              break
+            fi
+            sleep 1
+          done
+
+          jq -e '
+            .ok == true and
+            .service == "ai-arman" and
+            .phase == "foundation-v1" and
+            .productionActionsEnabled == false
+          ' "$RUNNER_TEMP/ai-arman-foundation.json" >/dev/null
+
+          WIDGET_STATUS="$(curl --silent --output "$RUNNER_TEMP/widget-disabled.txt" \
+            --write-out '%{http_code}' \
+            http://127.0.0.1:18080/ai-arman/widget/beta0-preview)"
+
+          if [[ "$WIDGET_STATUS" != "404" ]]; then
+            echo "Expected disabled widget preview to return 404, got $WIDGET_STATUS." >&2
+            exit 1
+          fi
+
+          docker logs "$CONTAINER_ID" > "$RUNNER_TEMP/ai-arman-candidate.log" 2>&1
+          if grep -Eqi '(127\.0\.0\.1|localhost).*(5432|postgres)|ECONNREFUSED.*5432|postgres.*(127\.0\.0\.1|localhost)' \
+            "$RUNNER_TEMP/ai-arman-candidate.log"; then
+            echo "Detected localhost/Postgres startup attempt in isolated candidate." >&2
+            cat "$RUNNER_TEMP/ai-arman-candidate.log" >&2
+            exit 1
+          fi
+
+      - name: Build isolated customer gateway container
+        run: docker build -f Dockerfile.ai-arman-customer-gateway -t ai-arman-customer-gateway:ci .
+
+      - name: Smoke test isolated customer gateway boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CONTAINER_ID="$(docker run -d \
+            -p 18081:8080 \
+            -e PORT=8080 \
+            -e AI_ARMAN_CUSTOMER_WIDGET_ENABLED=false \
+            -e AI_ARMAN_CUSTOMER_IDENTITY_ENABLED=false \
+            -e AI_ARMAN_CUSTOMER_OTP_EMAIL_ENABLED=false \
+            -e AI_ARMAN_VENDRE_CUSTOMER_DIRECTORY_ENABLED=false \
+            -e AI_ARMAN_WIDGET_PREVIEW_ENABLED=false \
+            -e AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false \
+            -e AI_ARMAN_MODEL_SHADOW_ENABLED=false \
+            -e AI_ARMAN_MODEL_PROMOTION_ENABLED=false \
+            ai-arman-customer-gateway:ci)"
+
+          cleanup() {
+            docker logs "$CONTAINER_ID" || true
+            docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..30}; do
+            if curl --silent --fail http://127.0.0.1:18081/health \
+              > "$RUNNER_TEMP/customer-gateway-health.json"; then
+              break
+            fi
+            sleep 1
+          done
+
+          jq -e '
+            .ok == true and
+            .service == "ai-arman-customer-gateway" and
+            .productionActionsEnabled == false
+          ' "$RUNNER_TEMP/customer-gateway-health.json" >/dev/null
+
+          for path in \
+            /ai-arman/foundation \
+            /ai-arman/internal-preview \
+            /ai-arman/internal-preview/diagnostics \
+            /ai-arman/widget/beta0-preview \
+            /ai-arman/chat/messages; do
+            CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:18081${path}")"
+            test "$CODE" = "404"
+          done
+
+          WIDGET_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            http://127.0.0.1:18081/ai-arman/customer/widget.js)"
+          test "$WIDGET_CODE" = "404"
+
+          NO_ORIGIN_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --request POST \
+            --header 'Content-Type: application/json' \
+            --data '{"email":"customer@example.com"}' \
+            http://127.0.0.1:18081/ai-arman/customer/identity/start)"
+          test "$NO_ORIGIN_CODE" = "403"
+
+          IDENTITY_CODE="$(curl --silent --output "$RUNNER_TEMP/customer-identity-off.json" --write-out '%{http_code}' \
+            --request POST \
+            --header 'Origin: https://harmoniq.se' \
+            --header 'Content-Type: application/json' \
+            --data '{"email":"customer@example.com"}' \
+            http://127.0.0.1:18081/ai-arman/customer/identity/start)"
+          test "$IDENTITY_CODE" = "201"
+          jq -e '.ok == false and .code == "identity_unavailable"' \
+            "$RUNNER_TEMP/customer-identity-off.json" >/dev/null
+
+          docker logs "$CONTAINER_ID" > "$RUNNER_TEMP/customer-gateway.log" 2>&1
+          if grep -Eqi '(127\.0\.0\.1|localhost).*(5432|postgres)|ECONNREFUSED.*5432|postgres.*(127\.0\.0\.1|localhost)' \
+            "$RUNNER_TEMP/customer-gateway.log"; then
+            echo "Detected localhost/Postgres startup attempt in customer gateway." >&2
+            cat "$RUNNER_TEMP/customer-gateway.log" >&2
+            exit 1
+          fi

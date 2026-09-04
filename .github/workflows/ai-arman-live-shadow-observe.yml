@@ -1,0 +1,227 @@
+name: AI Arman live shadow observe
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/ai-arman-live-shadow-observe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: ai-arman-live-shadow-observe
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  SERVICE_NAME: harmoniq-ai-arman-beta0
+  LIVE_REVISION: harmoniq-ai-arman-beta0-00002-2kq
+  CANDIDATE_REVISION: harmoniq-ai-arman-beta0-shadow-a979b694-2
+  EXPECTED_CANDIDATE_DIGEST: sha256:f28eff874264cdf72d3edc3f8d7cda9a7c4a8770f3254f4c240136900e151932
+  LIVE_SHADOW_STARTED_AT: '2026-08-17T19:53:10Z'
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+  RESULT_PATH: docs/ai-arman/LIVE_SHADOW_OBSERVATION_LATEST.md
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Enforce exact branch and actor
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Check out exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+
+      - name: Authenticate read-only observation identity
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Verify live shadow boundary without mutation
+        id: boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/service.json"
+          gcloud run revisions describe "$CANDIDATE_REVISION" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/candidate.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --format=json \
+            > "$RUNNER_TEMP/iam.json"
+
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then
+            echo "Public IAM detected." >&2
+            exit 1
+          fi
+
+          LIVE_PERCENT="$(jq -r --arg rev "$LIVE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")"
+          CANDIDATE_PERCENT="$(jq -r --arg rev "$CANDIDATE_REVISION" '[.status.traffic[]? | select(.revisionName == $rev) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service.json")"
+          SERVICE_MAX="$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/service.json")"
+          PROMOTION="$(jq -r '.spec.containers[0].env[]? | select(.name == "AI_ARMAN_MODEL_PROMOTION_ENABLED") | .value // empty' "$RUNNER_TEMP/candidate.json")"
+          WIDGET="$(jq -r '.spec.containers[0].env[]? | select(.name == "AI_ARMAN_WIDGET_PREVIEW_ENABLED") | .value // empty' "$RUNNER_TEMP/candidate.json")"
+          IMAGE_FIELD="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/candidate.json")"
+
+          test "$LIVE_PERCENT" = "99"
+          test "$CANDIDATE_PERCENT" = "1"
+          test "$SERVICE_MAX" = "2"
+          test "$PROMOTION" = "false"
+          test "$WIDGET" = "false"
+          echo "$IMAGE_FIELD" | grep -F "$EXPECTED_CANDIDATE_DIGEST" >/dev/null
+
+          echo "live_percent=$LIVE_PERCENT" >> "$GITHUB_OUTPUT"
+          echo "candidate_percent=$CANDIDATE_PERCENT" >> "$GITHUB_OUTPUT"
+          echo "service_max=$SERVICE_MAX" >> "$GITHUB_OUTPUT"
+          echo "LIVE_SHADOW_BOUNDARY=PASS"
+          echo "PRIVATE_IAM=PASS"
+          echo "PROMOTION_OFF=PASS"
+          echo "WIDGET_OFF=PASS"
+          echo "IMMUTABLE_DIGEST=PASS"
+
+      - name: Read Cloud Run revision request metrics
+        id: metrics
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          test -n "$ACCESS_TOKEN"
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          END_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          FILTER="metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE_NAME\" AND resource.labels.location=\"$REGION\""
+
+          HTTP_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/request-count.json" \
+            --write-out '%{http_code}' \
+            --get \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --data-urlencode "filter=$FILTER" \
+            --data-urlencode "interval.startTime=$LIVE_SHADOW_STARTED_AT" \
+            --data-urlencode "interval.endTime=$END_TIME" \
+            --data-urlencode 'view=FULL' \
+            --data-urlencode 'pageSize=1000' \
+            "https://monitoring.googleapis.com/v3/projects/$PROJECT_ID/timeSeries")"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "MONITORING_QUERY=FAILED http=$HTTP_CODE" >&2
+            jq -r '.error.message // "Cloud Monitoring query failed"' "$RUNNER_TEMP/request-count.json" >&2 || true
+            exit 1
+          fi
+
+          sum_revision() {
+            jq -r --arg rev "$1" '[.timeSeries[]? | select(.resource.labels.revision_name == $rev) | .points[]?.value.int64Value? | tonumber] | add // 0' "$RUNNER_TEMP/request-count.json"
+          }
+          sum_revision_class() {
+            jq -r --arg rev "$1" --arg cls "$2" '[.timeSeries[]? | select(.resource.labels.revision_name == $rev and .metric.labels.response_code_class == $cls) | .points[]?.value.int64Value? | tonumber] | add // 0' "$RUNNER_TEMP/request-count.json"
+          }
+
+          LIVE_REQUESTS="$(sum_revision "$LIVE_REVISION")"
+          CANDIDATE_REQUESTS="$(sum_revision "$CANDIDATE_REVISION")"
+          LIVE_5XX="$(sum_revision_class "$LIVE_REVISION" '5xx')"
+          CANDIDATE_5XX="$(sum_revision_class "$CANDIDATE_REVISION" '5xx')"
+          TOTAL_REQUESTS=$((LIVE_REQUESTS + CANDIDATE_REQUESTS))
+
+          echo "live_requests=$LIVE_REQUESTS" >> "$GITHUB_OUTPUT"
+          echo "candidate_requests=$CANDIDATE_REQUESTS" >> "$GITHUB_OUTPUT"
+          echo "live_5xx=$LIVE_5XX" >> "$GITHUB_OUTPUT"
+          echo "candidate_5xx=$CANDIDATE_5XX" >> "$GITHUB_OUTPUT"
+          echo "total_requests=$TOTAL_REQUESTS" >> "$GITHUB_OUTPUT"
+          echo "observation_end=$END_TIME" >> "$GITHUB_OUTPUT"
+
+          echo "MONITORING_QUERY=PASS"
+          echo "OBSERVATION_WINDOW=$LIVE_SHADOW_STARTED_AT..$END_TIME"
+          echo "LIVE_REQUESTS=$LIVE_REQUESTS"
+          echo "CANDIDATE_REQUESTS=$CANDIDATE_REQUESTS"
+          echo "LIVE_5XX=$LIVE_5XX"
+          echo "CANDIDATE_5XX=$CANDIDATE_5XX"
+
+          if [ "$CANDIDATE_5XX" -gt 0 ]; then
+            echo "Candidate has 5xx responses in the live-shadow window." >&2
+            exit 1
+          fi
+
+      - name: Persist observation result in GitHub
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$RESULT_PATH")"
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman live-shadow observation — latest
+
+          Generated by GitHub Actions run ${GITHUB_RUN_ID} from commit ${GITHUB_SHA}.
+
+          This is an observation record only. The workflow contains no Cloud Run traffic or configuration mutation command.
+
+          - Observation started from live-shadow activation: \`${LIVE_SHADOW_STARTED_AT}\`
+          - Observation ended: \`${{ steps.metrics.outputs.observation_end }}\`
+          - Boundary step: \`${{ steps.boundary.outcome }}\`
+          - Metrics step: \`${{ steps.metrics.outcome }}\`
+          - Expected traffic boundary: 99% deterministic / 1% shadow
+          - Observed deterministic traffic percent: \`${{ steps.boundary.outputs.live_percent }}\`
+          - Observed shadow traffic percent: \`${{ steps.boundary.outputs.candidate_percent }}\`
+          - Observed service max: \`${{ steps.boundary.outputs.service_max }}\`
+          - Deterministic revision requests: \`${{ steps.metrics.outputs.live_requests }}\`
+          - Shadow revision requests: \`${{ steps.metrics.outputs.candidate_requests }}\`
+          - Deterministic 5xx: \`${{ steps.metrics.outputs.live_5xx }}\`
+          - Shadow 5xx: \`${{ steps.metrics.outputs.candidate_5xx }}\`
+          - Candidate digest expected and boundary-verified: \`${EXPECTED_CANDIDATE_DIGEST}\`
+          - Model promotion expected and boundary-verified: OFF
+          - Widget expected and boundary-verified: OFF
+          - Public IAM expected and boundary-verified: absent
+          - Traffic increase performed: NO
+          - Model-provider request generated by this workflow: NO
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$RESULT_PATH"
+          if git diff --cached --quiet; then
+            echo "OBSERVATION_RESULT_UNCHANGED=PASS"
+          else
+            git commit -m "Record latest AI Arman live shadow observation"
+            git push origin HEAD:feature/ai-arman-foundation-v1
+            echo "OBSERVATION_RESULT_PERSISTED=PASS"
+          fi
+
+      - name: Observation summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## AI Arman live-shadow observation"
+            echo
+            echo "- Cloud Run observation is read-only; no traffic/configuration mutation is present."
+            echo "- Boundary outcome: \`${{ steps.boundary.outcome }}\`"
+            echo "- Metrics outcome: \`${{ steps.metrics.outcome }}\`"
+            echo "- Expected boundary: 99% deterministic / 1% shadow."
+            echo "- Deterministic requests observed: \`${{ steps.metrics.outputs.live_requests }}\`"
+            echo "- Shadow requests observed: \`${{ steps.metrics.outputs.candidate_requests }}\`"
+            echo "- Deterministic 5xx: \`${{ steps.metrics.outputs.live_5xx }}\`"
+            echo "- Shadow 5xx: \`${{ steps.metrics.outputs.candidate_5xx }}\`"
+            echo "- Model promotion remains OFF."
+            echo "- No traffic increase above 1% is performed."
+          } >> "$GITHUB_STEP_SUMMARY"

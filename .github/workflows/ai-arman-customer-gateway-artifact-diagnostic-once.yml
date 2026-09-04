@@ -1,0 +1,96 @@
+name: AI Arman customer gateway artifact diagnostic once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: ai-arman-customer-gateway-artifact-diagnostic-once
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  ARTIFACT_REPOSITORY: harmoniq-containers
+  PACKAGE: harmoniq-ai-arman-customer-gateway-candidate
+  EXPECTED_PREFIX: private-v2-75e339f18b17-
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  RESULT_PATH: docs/ai-arman/CUSTOMER_GATEWAY_ARTIFACT_DIAG_LATEST.md
+
+jobs:
+  diagnose-artifact:
+    if: github.event.head_commit.message == 'Diagnose customer gateway artifact once'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Inspect artifact metadata only
+        shell: bash
+        run: |
+          set -u
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1 2>/dev/null || true)"
+          LIST_STATUS=failed
+          MATCH_COUNT=0
+          MATCH_TAGS='-'
+          LATEST_MATCH_CREATED='-'
+          PACKAGE_VISIBLE=no
+
+          if gcloud artifacts docker images list "$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$PACKAGE" \
+            --include-tags --format=json > "$RUNNER_TEMP/images.json" 2> "$RUNNER_TEMP/images.err"; then
+            LIST_STATUS=success
+            PACKAGE_VISIBLE=yes
+            jq -r --arg p "$EXPECTED_PREFIX" '
+              [ .[]
+                | . as $img
+                | ((.tags // [])[]? | select(startswith($p))) as $tag
+                | {tag:$tag, updateTime:($img.updateTime // $img.createTime // "")}
+              ]' "$RUNNER_TEMP/images.json" > "$RUNNER_TEMP/matches.json"
+            MATCH_COUNT="$(jq 'length' "$RUNNER_TEMP/matches.json")"
+            if [ "$MATCH_COUNT" -gt 0 ]; then
+              MATCH_TAGS="$(jq -r '[.[].tag] | unique | join(",")' "$RUNNER_TEMP/matches.json")"
+              LATEST_MATCH_CREATED="$(jq -r 'sort_by(.updateTime) | last | .updateTime // "-"' "$RUNNER_TEMP/matches.json")"
+            fi
+          fi
+
+          {
+            echo '# AI Arman – customer gateway artifact diagnostic latest'
+            echo
+            echo "- Recorded at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- Diagnostic source commit: \`$GITHUB_SHA\`"
+            echo "- Active identity: \`$ACTIVE_ACCOUNT\`"
+            echo '- Mode: **read-only Artifact Registry metadata; no mutation**'
+            echo
+            echo "- Artifact list status: \`$LIST_STATUS\`"
+            echo "- Package visible: **$PACKAGE_VISIBLE**"
+            echo "- Expected tag prefix: \`$EXPECTED_PREFIX\`"
+            echo "- Matching image/tag count: **$MATCH_COUNT**"
+            echo "- Matching tags: \`$MATCH_TAGS\`"
+            echo "- Latest matching update/create time: \`$LATEST_MATCH_CREATED\`"
+            echo
+            echo 'No image bytes, credentials, secret values, tokens, or customer data are written to this checkpoint.'
+          } > "$RESULT_PATH"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record customer gateway artifact diagnostic' || exit 0
+          git push origin HEAD:feature/ai-arman-foundation-v1
