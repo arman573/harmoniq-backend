@@ -216,12 +216,26 @@ jobs:
           echo "revision=$REV" >> "$GITHUB_OUTPUT"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
+      - name: Mint candidate ID token through proven WIF path
+        id: candidate_id_token
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ steps.before.outputs.service_url }}
+          id_token_include_email: true
+          create_credentials_file: false
+          export_environment_variables: false
+
       - name: Verify candidate config, boundaries and real HQT draft
         env:
           REV: ${{ steps.deploy.outputs.revision }}
           TAG_URL: ${{ steps.deploy.outputs.url }}
           CANDIDATE_IMAGE: ${{ steps.image.outputs.image }}
           SERVICE_URL: ${{ steps.before.outputs.service_url }}
+          ID_TOKEN: ${{ steps.candidate_id_token.outputs.id_token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -253,11 +267,6 @@ jobs:
           cmp "$RUNNER_TEMP/ai-positive-before.json" "$RUNNER_TEMP/ai-positive-after.json" || fail positive-traffic-drift
           test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai-final.json")" = 0 || fail candidate-positive-traffic
 
-          ID_TOKEN="$(gcloud auth print-identity-token --audiences="$SERVICE_URL" --impersonate-service-account="$DEPLOY_SERVICE_ACCOUNT" 2>/dev/null || true)"
-          if [ -z "$ID_TOKEN" ]; then
-            ACCESS_TOKEN="$(gcloud auth print-access-token)"
-            ID_TOKEN="$(curl -sS -X POST -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json; charset=utf-8' -d "{\"audience\":\"$SERVICE_URL\",\"includeEmail\":true}" "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/$DEPLOY_SERVICE_ACCOUNT:generateIdToken" | jq -r '.token // empty')"
-          fi
           test -n "$ID_TOKEN" || fail id-token
           echo "::add-mask::$ID_TOKEN"
           cat > "$RUNNER_TEMP/request.json" <<'JSON'
