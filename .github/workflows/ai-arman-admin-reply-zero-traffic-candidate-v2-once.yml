@@ -91,9 +91,26 @@ jobs:
           RETURNS_BASE_URL="$(renvv AI_ARMAN_ADMIN_REPLY_BASE_URL)"
           RETURNS_AUDIENCE="$(renvv AI_ARMAN_ADMIN_REPLY_AUDIENCE)"
           test -n "$RETURNS_BASE_URL" || fail returns-reply-base-url
-          test "${RETURNS_BASE_URL%/}" = "${SERVICE_URL%/}" || fail returns-reply-base-url-drift
-          if [ -n "$RETURNS_AUDIENCE" ]; then
-            test "${RETURNS_AUDIENCE%/}" = "${SERVICE_URL%/}" || fail returns-reply-audience-drift
+
+          SERVICE_NORM="${SERVICE_URL%/}"
+          RETURNS_BASE_NORM="${RETURNS_BASE_URL%/}"
+          RETURNS_TARGET_KIND=canonical
+          RETURNS_TARGET_TAG=''
+          RETURNS_TARGET_REV="$AI_LIVE_REV"
+          RETURNS_TARGET_PERCENT=100
+          if [ "$RETURNS_BASE_NORM" != "$SERVICE_NORM" ]; then
+            RETURNS_TARGET_TAG="$(jq -r --arg u "$RETURNS_BASE_NORM" '.status.traffic[]? | select(((.url // "") | rtrimstr("/")) == $u) | .tag // empty' "$RUNNER_TEMP/ai-before.json" | head -n1)"
+            RETURNS_TARGET_REV="$(jq -r --arg u "$RETURNS_BASE_NORM" '.status.traffic[]? | select(((.url // "") | rtrimstr("/")) == $u) | .revisionName // empty' "$RUNNER_TEMP/ai-before.json" | head -n1)"
+            RETURNS_TARGET_PERCENT="$(jq -r --arg u "$RETURNS_BASE_NORM" '.status.traffic[]? | select(((.url // "") | rtrimstr("/")) == $u) | .percent // 0' "$RUNNER_TEMP/ai-before.json" | head -n1)"
+            test -n "$RETURNS_TARGET_TAG" || fail returns-reply-base-url-foreign
+            test -n "$RETURNS_TARGET_REV" || fail returns-reply-base-url-foreign
+            RETURNS_TARGET_KIND=verified-service-tag
+          fi
+
+          EFFECTIVE_AUDIENCE="${RETURNS_AUDIENCE:-$RETURNS_BASE_URL}"
+          EFFECTIVE_AUDIENCE_NORM="${EFFECTIVE_AUDIENCE%/}"
+          if [ "$EFFECTIVE_AUDIENCE_NORM" != "$SERVICE_NORM" ] && [ "$EFFECTIVE_AUDIENCE_NORM" != "$RETURNS_BASE_NORM" ]; then
+            fail returns-reply-audience-foreign
           fi
 
           APP_ENV="$(jq -c '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_ADMIN_REPLY_ACCESS_TOKEN")' "$RUNNER_TEMP/returns-live.json" | head -n1)"
@@ -120,10 +137,18 @@ jobs:
           echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
           echo "ai_live_revision=$AI_LIVE_REV" >> "$GITHUB_OUTPUT"
           echo "returns_live_revision=$RETURNS_LIVE_REV" >> "$GITHUB_OUTPUT"
+          echo "returns_target_kind=$RETURNS_TARGET_KIND" >> "$GITHUB_OUTPUT"
+          echo "returns_target_tag=$RETURNS_TARGET_TAG" >> "$GITHUB_OUTPUT"
+          echo "returns_target_revision=$RETURNS_TARGET_REV" >> "$GITHUB_OUTPUT"
+          echo "returns_target_percent=$RETURNS_TARGET_PERCENT" >> "$GITHUB_OUTPUT"
           echo "positive_traffic=$(cat "$RUNNER_TEMP/ai-positive-before.json")" >> "$GITHUB_OUTPUT"
           echo "AI_LIVE_REVISION=$AI_LIVE_REV"
           echo "RETURNS_LIVE_REVISION=$RETURNS_LIVE_REV"
           echo "AI_LIVE_TRAFFIC=$(cat "$RUNNER_TEMP/ai-positive-before.json")"
+          echo "RETURNS_AI_TARGET_KIND=$RETURNS_TARGET_KIND"
+          echo "RETURNS_AI_TARGET_TAG=${RETURNS_TARGET_TAG:-none}"
+          echo "RETURNS_AI_TARGET_REVISION=$RETURNS_TARGET_REV"
+          echo "RETURNS_AI_TARGET_PERCENT=$RETURNS_TARGET_PERCENT"
           echo "ADMIN_REPLY_TOKEN_SOURCE=$TOKEN_SOURCE"
           echo 'RETURNS_TO_AI_CONFIG_PASS=true'
           echo 'PRIVATE_IAM_PASS=true'
