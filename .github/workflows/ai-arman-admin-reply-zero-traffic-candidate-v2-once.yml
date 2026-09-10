@@ -82,11 +82,22 @@ jobs:
           SERVICE_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/service-before.json")"
           LIVE_IMAGE="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/live.json")"
           RUNTIME_SA="$(jq -r '.spec.serviceAccountName // empty' "$RUNNER_TEMP/live.json")"
-          APP_TOKEN="$(jq -r '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN") | .value // empty' "$RUNNER_TEMP/live.json" | head -n1)"
+          APP_ENV="$(jq -c '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN")' "$RUNNER_TEMP/live.json" | head -n1)"
           test -n "$SERVICE_URL" || fail service-url
           test -n "$LIVE_IMAGE" || fail live-image
           test -n "$RUNTIME_SA" || fail runtime-service-account
-          test -n "$APP_TOKEN" || fail live-admin-reply-token
+          test -n "$APP_ENV" || fail live-admin-reply-token-config
+          APP_TOKEN="$(printf '%s' "$APP_ENV" | jq -r '.value // empty')"
+          TOKEN_SOURCE=literal
+          if [ -z "$APP_TOKEN" ]; then
+            SECRET_NAME="$(printf '%s' "$APP_ENV" | jq -r '.valueFrom.secretKeyRef.name // .valueSource.secretKeyRef.secret // empty')"
+            SECRET_VERSION="$(printf '%s' "$APP_ENV" | jq -r '.valueFrom.secretKeyRef.key // .valueSource.secretKeyRef.version // "latest"')"
+            test -n "$SECRET_NAME" || fail live-admin-reply-token-secret-ref
+            test -n "$SECRET_VERSION" || SECRET_VERSION=latest
+            APP_TOKEN="$(gcloud secrets versions access "$SECRET_VERSION" --secret="$SECRET_NAME" --project "$PROJECT_ID" 2>/dev/null || true)"
+            test -n "$APP_TOKEN" || fail live-admin-reply-token-secret-access
+            TOKEN_SOURCE=secretKeyRef
+          fi
           echo "::add-mask::$APP_TOKEN"
           echo "AI_ADMIN_APP_TOKEN=$APP_TOKEN" >> "$GITHUB_ENV"
           envv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/live.json" | head -n1; }
@@ -97,9 +108,11 @@ jobs:
           echo "runtime_sa=$RUNTIME_SA" >> "$GITHUB_OUTPUT"
           echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
           echo "positive_traffic=$(cat "$RUNNER_TEMP/positive-before.json")" >> "$GITHUB_OUTPUT"
+          echo "token_source=$TOKEN_SOURCE" >> "$GITHUB_OUTPUT"
           echo "LIVE_REVISION=$LIVE_REV"
           echo "LIVE_IMAGE=$LIVE_IMAGE"
           echo "LIVE_TRAFFIC=$(cat "$RUNNER_TEMP/positive-before.json")"
+          echo "ADMIN_REPLY_TOKEN_SOURCE=$TOKEN_SOURCE"
           echo 'PRIVATE_IAM_PASS=true'
 
       - name: Build immutable green-source image
