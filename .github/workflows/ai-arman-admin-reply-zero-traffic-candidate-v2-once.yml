@@ -21,7 +21,7 @@ env:
   REGION: europe-north1
   SERVICE_NAME: harmoniq-ai-arman-beta0
   RETURNS_SERVICE_NAME: harmoniq-returns-api
-  SOURCE_SHA: 9b8f9b7f8b63ffbfee07a1f8efc7c1d1063561b1
+  SOURCE_SHA: bedc762cd031a6a796047d2e06e7bebf7b99ef8c
   RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
   OPENAI_SECRET_NAME: ai-arman-openai-api-key
   ARTIFACT_REPOSITORY: harmoniq-containers
