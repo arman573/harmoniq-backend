@@ -10,6 +10,9 @@ export type SafeVendreOrderRead = {
   createdAt: string;
   shippingDate: string;
   dispatchState: VendreOrderDispatchState;
+  trackingNumber: string;
+  trackingUrl: string;
+  shipmentStatus: string;
 };
 
 export type VendreOrderReadResult =
