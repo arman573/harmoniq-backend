@@ -25,6 +25,7 @@ describe('AiArmanAdminReplyDraftService', () => {
     const fetchMock = jest.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body || '{}'));
       expect(request.store).toBe(false);
+      expect(request.reasoning).toEqual({ effort: 'minimal' });
       expect(request.max_output_tokens).toBe(1600);
       expect(request.input).not.toContain('kund@example.se');
       expect(request.input).toContain('[email_redacted]');
