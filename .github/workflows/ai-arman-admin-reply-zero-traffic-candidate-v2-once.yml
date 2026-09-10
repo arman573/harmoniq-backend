@@ -28,6 +28,12 @@ env:
   WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
   DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
   CANDIDATE_TAG: arlive-test
+  APPROVED_CANDIDATE_REVISION: harmoniq-ai-arman-beta0-arrt-bedc762c-230
+  APPROVED_CANDIDATE_IMAGE: europe-north1-docker.pkg.dev/harmoniq-210513/harmoniq-containers/harmoniq-ai-arman-beta0@sha256:041a49a3a0b020a1d76727a66abe7ad59f952bd568cec6d4bea351fed501b493
+  EXPECTED_AI_LIVE_REVISION: harmoniq-ai-arman-beta0-retadminv2-1
+  EXPECTED_RETURNS_LIVE_REVISION: harmoniq-returns-api-prdmet-3df93016-48
+  EXPECTED_RETURNS_TARGET_TAG: arv2-9b8f9b7f-223
+  EXPECTED_RETURNS_TARGET_REVISION: harmoniq-ai-arman-beta0-adminv2-9b8f9b7f-223
 
 jobs:
   deploy-and-verify:
@@ -284,3 +290,177 @@ jobs:
           echo 'NO_CUSTOMER_SEND_OR_WRITE=true'
           echo 'PRIVATE_IAM_UNCHANGED=true'
           echo 'POSITIVE_TRAFFIC_UNCHANGED=true'
+
+  promote-approved-live:
+    if: github.event.head_commit.message == 'Promote AI Arman admin reply approved live'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Fail closed preflight for exact approved candidate and current Returns target
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail(){ echo "PROMOTION_PREFLIGHT_FAIL=$1"; exit 1; }
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-before.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json | jq -cS . > "$RUNNER_TEMP/ai-iam-before.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/ai-iam-before.json" >/dev/null; then fail ai-service-public; fi
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag:(.tag // null)}] | sort_by(.revisionName,.percent,.tag)' "$RUNNER_TEMP/ai-before.json" > "$RUNNER_TEMP/positive-before.json"
+          test "$(jq -r 'length' "$RUNNER_TEMP/positive-before.json")" = 1 || fail ai-positive-traffic-count
+          test "$(jq -r '.[0].revisionName' "$RUNNER_TEMP/positive-before.json")" = "$EXPECTED_AI_LIVE_REVISION" || fail ai-live-revision-drift
+          test "$(jq -r '.[0].percent' "$RUNNER_TEMP/positive-before.json")" = 100 || fail ai-live-percent-drift
+          SERVICE_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/ai-before.json")"
+          test -n "$SERVICE_URL" || fail ai-service-url
+
+          CAND_TAG_REV="$(jq -r --arg t "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$t) | .revisionName // empty' "$RUNNER_TEMP/ai-before.json" | head -n1)"
+          CAND_TAG_URL="$(jq -r --arg t "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$t) | .url // empty' "$RUNNER_TEMP/ai-before.json" | head -n1)"
+          CAND_TAG_PCT="$(jq -r --arg t "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$t) | .percent // 0' "$RUNNER_TEMP/ai-before.json" | head -n1)"
+          test "$CAND_TAG_REV" = "$APPROVED_CANDIDATE_REVISION" || fail approved-candidate-tag-drift
+          test -n "$CAND_TAG_URL" || fail approved-candidate-url
+          test "$CAND_TAG_PCT" = 0 || fail approved-candidate-positive-traffic
+
+          gcloud run revisions describe "$APPROVED_CANDIDATE_REVISION" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate.json"
+          test "$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/candidate.json")" = "$APPROVED_CANDIDATE_IMAGE" || fail approved-candidate-image-drift
+          test "$(jq -r '.spec.serviceAccountName // empty' "$RUNNER_TEMP/candidate.json")" = "$RUNTIME_SERVICE_ACCOUNT" || fail approved-candidate-service-account-drift
+          cenv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/candidate.json" | head -n1; }
+          test "$(cenv AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED)" = true || fail approved-candidate-reply-disabled
+          test "$(cenv AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" = true || fail approved-candidate-model-disabled
+          test "$(cenv AI_ARMAN_MODEL_PROMOTION_ENABLED)" = false || fail approved-candidate-model-promotion-enabled
+          test "$(cenv AI_ARMAN_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS)" = 0.25 || fail approved-candidate-input-price
+          test "$(cenv AI_ARMAN_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS)" = 2 || fail approved-candidate-output-price
+
+          gcloud run services describe "$RETURNS_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-service.json"
+          RETURNS_LIVE_REV="$(jq -r '[.status.traffic[]? | select((.percent // 0)>0)] | if length==1 and .[0].percent==100 then .[0].revisionName else empty end' "$RUNNER_TEMP/returns-service.json")"
+          test "$RETURNS_LIVE_REV" = "$EXPECTED_RETURNS_LIVE_REVISION" || fail returns-live-revision-drift
+          gcloud run revisions describe "$RETURNS_LIVE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-live.json"
+          renv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/returns-live.json" | head -n1; }
+          test "$(renv AI_ARMAN_ADMIN_REPLY_ENABLED)" = true || fail returns-reply-disabled
+          RETURNS_BASE_URL="$(renv AI_ARMAN_ADMIN_REPLY_BASE_URL)"
+          RETURNS_AUDIENCE="$(renv AI_ARMAN_ADMIN_REPLY_AUDIENCE)"
+          test -n "$RETURNS_BASE_URL" || fail returns-base-url
+
+          TARGET_TAG="$(jq -r --arg u "${RETURNS_BASE_URL%/}" '.status.traffic[]? | select(((.url // "") | rtrimstr("/")) == $u) | .tag // empty' "$RUNNER_TEMP/ai-before.json" | head -n1)"
+          TARGET_REV="$(jq -r --arg u "${RETURNS_BASE_URL%/}" '.status.traffic[]? | select(((.url // "") | rtrimstr("/")) == $u) | .revisionName // empty' "$RUNNER_TEMP/ai-before.json" | head -n1)"
+          TARGET_PCT="$(jq -r --arg u "${RETURNS_BASE_URL%/}" '.status.traffic[]? | select(((.url // "") | rtrimstr("/")) == $u) | .percent // 0' "$RUNNER_TEMP/ai-before.json" | head -n1)"
+          test "$TARGET_TAG" = "$EXPECTED_RETURNS_TARGET_TAG" || fail returns-target-tag-drift
+          test "$TARGET_REV" = "$EXPECTED_RETURNS_TARGET_REVISION" || fail returns-target-revision-drift
+          test "$TARGET_PCT" = 0 || fail returns-target-positive-traffic
+
+          EFFECTIVE_AUDIENCE="${RETURNS_AUDIENCE:-$RETURNS_BASE_URL}"
+          if [ "${EFFECTIVE_AUDIENCE%/}" != "${SERVICE_URL%/}" ] && [ "${EFFECTIVE_AUDIENCE%/}" != "${RETURNS_BASE_URL%/}" ]; then fail returns-audience-foreign; fi
+
+          APP_TOKEN="$(renv AI_ARMAN_ADMIN_REPLY_ACCESS_TOKEN)"
+          test -n "$APP_TOKEN" || fail returns-token-not-literal
+          echo "::add-mask::$APP_TOKEN"
+          test "$(cenv AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN)" = "$APP_TOKEN" || fail approved-candidate-token-drift
+          echo "AI_ADMIN_APP_TOKEN=$APP_TOKEN" >> "$GITHUB_ENV"
+
+          echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
+          echo "candidate_url=$CAND_TAG_URL" >> "$GITHUB_OUTPUT"
+          echo "target_url=$RETURNS_BASE_URL" >> "$GITHUB_OUTPUT"
+          echo "target_tag=$TARGET_TAG" >> "$GITHUB_OUTPUT"
+          echo "old_target_revision=$TARGET_REV" >> "$GITHUB_OUTPUT"
+          echo 'PROMOTION_PREFLIGHT_PASS=true'
+          echo "APPROVED_CANDIDATE_REVISION=$APPROVED_CANDIDATE_REVISION"
+          echo "APPROVED_CANDIDATE_IMAGE=$APPROVED_CANDIDATE_IMAGE"
+          echo "RETURNS_TARGET_TAG=$TARGET_TAG"
+          echo "RETURNS_TARGET_REVISION_BEFORE=$TARGET_REV"
+          echo 'APPROVED_CANDIDATE_TRAFFIC=0%'
+          echo 'PRIVATE_IAM_PASS=true'
+
+      - name: Mint private identity token for approved candidate
+        id: promote_id_token
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ steps.preflight.outputs.service_url }}
+          id_token_include_email: true
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Re-probe exact approved candidate before live retag
+        env:
+          ID_TOKEN: ${{ steps.promote_id_token.outputs.id_token }}
+          CANDIDATE_URL: ${{ steps.preflight.outputs.candidate_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ID_TOKEN"
+          echo "::add-mask::$ID_TOKEN"
+          cat > "$RUNNER_TEMP/promotion-probe.json" <<'JSON'
+          {"caseId":"HQT-SYNTHETIC-LIVE-PROMOTION","caseType":"support","status":"needs_link","customerName":"Testkund","messages":[{"direction":"inbound","sender":"Kund","subject":"Leveransfråga","text":"Hej, min leverans verkar fel och jag behöver hjälp att förstå nästa steg.","date":"2026-09-10T08:00:00Z"}]}
+          JSON
+          CODE="$(curl --silent --show-error --max-time 35 --output "$RUNNER_TEMP/promotion-pre.json" --write-out '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $AI_ADMIN_APP_TOKEN" --header 'Content-Type: application/json' --data @"$RUNNER_TEMP/promotion-probe.json" "$CANDIDATE_URL/ai-arman/internal/admin/reply-draft")"
+          case "$CODE" in 200|201|202) ;; *) echo "PREPROMOTE_HTTP=$CODE"; exit 1 ;; esac
+          jq -e '.ok==true and (.draftText|type=="string" and length>0) and .sendsCustomerMessage==false and .executesWrites==false and (.confidence|type=="number")' "$RUNNER_TEMP/promotion-pre.json" >/dev/null
+          echo 'APPROVED_CANDIDATE_REPROBE_PASS=true'
+          echo 'NO_CUSTOMER_SEND_OR_WRITE=true'
+
+      - name: Retag only the live Returns admin-reply integration with automatic rollback
+        env:
+          ID_TOKEN: ${{ steps.promote_id_token.outputs.id_token }}
+          TARGET_URL: ${{ steps.preflight.outputs.target_url }}
+          TARGET_TAG: ${{ steps.preflight.outputs.target_tag }}
+          OLD_TARGET_REVISION: ${{ steps.preflight.outputs.old_target_revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ID_TOKEN"
+          rollback(){
+            echo 'ROLLBACK_START=true'
+            gcloud run services update-traffic "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --update-tags "$TARGET_TAG=$OLD_TARGET_REVISION" --quiet
+            gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/rollback.json"
+            test "$(jq -r --arg t "$TARGET_TAG" '.status.traffic[]? | select(.tag==$t) | .revisionName // empty' "$RUNNER_TEMP/rollback.json" | head -n1)" = "$OLD_TARGET_REVISION"
+            jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag:(.tag // null)}] | sort_by(.revisionName,.percent,.tag)' "$RUNNER_TEMP/rollback.json" > "$RUNNER_TEMP/positive-rollback.json"
+            cmp "$RUNNER_TEMP/positive-before.json" "$RUNNER_TEMP/positive-rollback.json"
+            echo 'ROLLBACK_PASS=true'
+          }
+          fail_live(){ echo "PROMOTION_FAIL=$1"; rollback; exit 1; }
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/immediate-before.json"
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag:(.tag // null)}] | sort_by(.revisionName,.percent,.tag)' "$RUNNER_TEMP/immediate-before.json" > "$RUNNER_TEMP/positive-immediate.json"
+          cmp "$RUNNER_TEMP/positive-before.json" "$RUNNER_TEMP/positive-immediate.json" || { echo 'PROMOTION_ABORT=positive-traffic-changed-before-write'; exit 1; }
+          test "$(jq -r --arg t "$TARGET_TAG" '.status.traffic[]? | select(.tag==$t) | .revisionName // empty' "$RUNNER_TEMP/immediate-before.json" | head -n1)" = "$OLD_TARGET_REVISION" || { echo 'PROMOTION_ABORT=target-changed-before-write'; exit 1; }
+          test "$(jq -r --arg t "$TARGET_TAG" '.status.traffic[]? | select(.tag==$t) | .url // empty' "$RUNNER_TEMP/immediate-before.json" | head -n1)" = "$TARGET_URL" || { echo 'PROMOTION_ABORT=target-url-changed-before-write'; exit 1; }
+
+          gcloud run services update-traffic "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --update-tags "$TARGET_TAG=$APPROVED_CANDIDATE_REVISION" --quiet
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/after-retag.json"
+          NEW_TARGET_REV="$(jq -r --arg t "$TARGET_TAG" '.status.traffic[]? | select(.tag==$t) | .revisionName // empty' "$RUNNER_TEMP/after-retag.json" | head -n1)"
+          NEW_TARGET_URL="$(jq -r --arg t "$TARGET_TAG" '.status.traffic[]? | select(.tag==$t) | .url // empty' "$RUNNER_TEMP/after-retag.json" | head -n1)"
+          NEW_TARGET_PCT="$(jq -r --arg t "$TARGET_TAG" '.status.traffic[]? | select(.tag==$t) | .percent // 0' "$RUNNER_TEMP/after-retag.json" | head -n1)"
+          [ "$NEW_TARGET_REV" = "$APPROVED_CANDIDATE_REVISION" ] || fail_live target-revision
+          [ "$NEW_TARGET_URL" = "$TARGET_URL" ] || fail_live target-url
+          [ "$NEW_TARGET_PCT" = 0 ] || fail_live target-positive-traffic
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag:(.tag // null)}] | sort_by(.revisionName,.percent,.tag)' "$RUNNER_TEMP/after-retag.json" > "$RUNNER_TEMP/positive-after.json"
+          cmp "$RUNNER_TEMP/positive-before.json" "$RUNNER_TEMP/positive-after.json" || fail_live positive-traffic-drift
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json | jq -cS . > "$RUNNER_TEMP/ai-iam-after.json"
+          cmp "$RUNNER_TEMP/ai-iam-before.json" "$RUNNER_TEMP/ai-iam-after.json" || fail_live iam-drift
+
+          CODE="$(curl --silent --show-error --max-time 35 --output "$RUNNER_TEMP/promotion-post.json" --write-out '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $AI_ADMIN_APP_TOKEN" --header 'Content-Type: application/json' --data @"$RUNNER_TEMP/promotion-probe.json" "$TARGET_URL/ai-arman/internal/admin/reply-draft" || true)"
+          case "$CODE" in 200|201|202) ;; *) echo "POSTPROMOTE_HTTP=$CODE"; fail_live target-probe-http ;; esac
+          jq -e '.ok==true and (.draftText|type=="string" and length>0) and .sendsCustomerMessage==false and .executesWrites==false and (.confidence|type=="number")' "$RUNNER_TEMP/promotion-post.json" >/dev/null || fail_live target-probe-contract
+
+          echo "LIVE_RETURNS_TARGET_TAG=$TARGET_TAG"
+          echo "LIVE_RETURNS_TARGET_REVISION=$APPROVED_CANDIDATE_REVISION"
+          echo 'LIVE_RETURNS_TARGET_TRAFFIC=0%'
+          echo 'AI_GENERAL_POSITIVE_TRAFFIC_UNCHANGED=true'
+          echo 'PRIVATE_IAM_UNCHANGED=true'
+          echo 'LIVE_TARGET_HQT_DRAFT_PASS=true'
+          echo 'NO_CUSTOMER_SEND_OR_WRITE=true'
+          echo 'LIVE_ADOPTION_PASS=true'
