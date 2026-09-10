@@ -1,78 +1,27 @@
-# AI Arman – komplett nästa-chat-handoff
+# AI Arman – canonical project handoff
 
-Status: planering och genomförandeunderlag
-Datum: 2026-08-06
+Status: aktiv canonical continuation state
+Datum: 2026-09-10
 Primärt repo: `arman573/harmoniq-backend`
-Primär gren: `feature/ai-arman-foundation-v1`
-Primär draft-PR: `#18`
+Default branch: `main`
+Aktiv branch: `feature/ai-arman-foundation-v1`
+Relevant draft-PR: `#18`
 
-## 1. Läs detta först i nästa chatt
+## 1. SOURCE OF TRUTH OCH ARBETSSÄTT
 
-Läs filerna i denna ordning innan någon ändring görs:
+Den här filen är senaste canonical continuation state för AI Arman-delen av HARMONIQ Retur & reklamationsmodul.
 
-1. `docs/ai-arman/NEXT_CHAT_HANDOFF.md`
-2. `docs/ai-arman/PRODUCT_VISION.md`
-3. `docs/ai-arman/RECOMMENDATION_CONTRACT.md`
-4. `docs/ai-arman/PRODUCT_INTELLIGENCE_CONTRACT_V1.md`
-5. `docs/ai-arman/PERMISSION_MATRIX.md`
-6. `docs/ai-arman/TOOL_REGISTRY.md`
+Vid nästa fortsättning gäller:
 
-Läs därefter relevant kod i `harmoniq-backend` och den separata Product Intelligence-grenen innan implementation.
+1. verifierad verklig repo/runtime-state vinner alltid över denna handoff om något har ändrats efter handoffens commit,
+2. börja inte om från projektets historik,
+3. återupptäck inte redan bevisade saker utan konkret anledning,
+4. skapa inte nya branches, workflows, diagnostics, v2/v3/v4/v5/v6-spår eller parallella deployvägar för att komma runt ett problem,
+5. fortsätt från CURRENT GATE + EXACT NEXT ACTION + CURRENT CHANGE BUDGET,
+6. produktion, orderdata, Vendre, nShift, kundmeddelanden och andra externa writes får inte ändras som bieffekt av en read-only gate,
+7. tracking eller shipment får aldrig gissas.
 
-Viktiga externa källor inom samma projekt:
-
-- `arman573/harmoniq-backend` PR `#12` – sammanslagen kundchattkärna.
-- `arman573/harmoniq-backend` PR `#18` – öppen draft för AI Arman foundation.
-- `arman573/harmoniq-product-data-pipeline` PR `#25` – öppen draft för read-only Product Intelligence v1.
-
-## 2. Absolut arbetssätt
-
-Arman ska inte agera kodklistrare.
-
-Allt som är tekniskt möjligt ska utföras av ChatGPT direkt i GitHub:
-
-- läsa befintlig kod och dokumentation;
-- skapa och uppdatera filer;
-- göra små kontrollerade kodändringar;
-- skriva tester;
-- köra GitHub Actions;
-- läsa testresultat och loggar;
-- rätta fel;
-- uppdatera PR-beskrivningar och dokumentation;
-- verifiera att branch, commit och diff är korrekta.
-
-Ge endast en uppgift till Arman när den är helt omöjlig att utföra med tillgängliga verktyg och åtkomster. Exempel kan vara:
-
-- visuell kontroll i en inloggad Vendre-admin som inte kan nås via verktyg;
-- manuell inställning som kräver ägarbehörighet i ett externt konto;
-- uttryckligt säkerhetsgodkännande inför en produktionsåtgärd;
-- en faktisk kundupplevelsekontroll på en privat testsida som inte kan öppnas av verktygen.
-
-När Arman måste göra något ska uppgiften vara liten, exakt och förklarad. Han ska aldrig få stora kodblock att klistra in manuellt.
-
-## 3. Tydligt slutmål
-
-Slutmålet är en riktig kundsynlig svensk fritextbot på Harmoniq.se.
-
-Kunden ska kunna skriva naturligt, exempelvis:
-
-- `Jag har tunt och färgat hår som blir fett snabbt men torra längder. Vilket schampo passar?`
-- `Jag köpte Olaplex No.4. Kan jag använda det varje dag?`
-- `Varför har mitt paket inte kommit?`
-- `Jag fick fel produkt. Vad gör jag?`
-
-AI Arman ska:
-
-1. förstå kundens avsikt och sammanhang;
-2. komma ihåg tidigare svar i samma konversation;
-3. ställa relevanta följdfrågor;
-4. välja rätt backendverktyg;
-5. hämta verifierade produkt-, order-, tracking- eller ärendefakta;
-6. svara naturligt och tydligt på svenska;
-7. visa strukturerade produkt-, order- eller supportkort;
-8. lämna över till mänsklig kundservice med bevarad kontext när det behövs.
-
-Grundprincipen är fortsatt:
+Primär teknisk princip:
 
 ```text
 AI tolkar.
@@ -82,621 +31,506 @@ Backend validerar verktygsval.
 Backend utför endast uttryckligen tillåtna åtgärder.
 ```
 
-Språkmodellen får aldrig själv hitta på produktfakta, INCI, pris, lager, orderstatus, tracking, returstatus eller reklamationsbeslut.
+## 2. EXACT FINAL GOAL
 
-## 4. Lanseringsstrategi
+Det övergripande målet är en kundsynlig svensk AI Arman på Harmoniq.se som kan förstå naturlig fritext före och efter köp och använda verifierade backendfakta.
 
-Hela slutprodukten behöver inte bli färdig före första lansering.
+AI Arman ska på sikt kunna:
 
-AI Arman ska lanseras del för del:
+- förstå kundens avsikt och konversation,
+- ge verifierade produktrekommendationer,
+- svara om köpta produkter och användning utifrån auktoritativ produktdata,
+- läsa verifierad orderstatus och tracking,
+- förstå retur- och reklamationsfrågor,
+- länka eller lämna över till rätt befintligt flöde,
+- lämna över till mänsklig kundservice med kontext när det behövs.
 
-1. intern fritextprototyp;
-2. begränsad privat beta;
-3. liten publik Beta 1;
-4. fler kategorier och fler read-only-funktioner;
-5. kontrollerade skrivfunktioner först efter separat säkerhetsmodell och godkännande.
+Språkmodellen får aldrig hitta på produktfakta, pris, lager, orderstatus, tracking, returstatus eller reklamationsbeslut.
 
-Vi ska inte vänta på full personalisering, alla kategorier, automatisk returhantering eller full kundserviceautomation innan en första användbar version testas.
+### Current exact tracking goal
 
-## 5. Målbild för Beta 1
-
-Beta 1 ska vara en verklig bot, inte ett formulär med förklädda knappar.
-
-Fritextfältet ska alltid fungera. Snabbval får finnas som hjälp men ska inte vara ett krav.
-
-Widgetens start kan erbjuda tre genvägar:
-
-1. `Hjälp mig välja produkt`
-2. `Var är min beställning?`
-3. `Hjälp med en produkt jag köpt`
-
-Kunden ska även kunna ignorera genvägarna och skriva direkt.
-
-### 5.1 Före köp i Beta 1
-
-Första rekommendationsområdet bör vara hårvård:
-
-- schampo;
-- balsam;
-- hårinpackning;
-- leave-in.
-
-Flödet ska:
-
-1. tolka kundens fritext till en validerad behovsprofil;
-2. ställa högst nödvändiga följdfrågor;
-3. hämta produktkandidater;
-4. skicka kandidaterna till Product Intelligence;
-5. blockera produkter som saknar data eller inte klarar kvalitetsgrindarna;
-6. visa högst tre verkligt godkända alternativ;
-7. visa färre eller inga produkter om kvaliteten inte räcker.
-
-Varje produktkort ska kunna visa:
-
-- produktbild;
-- produktnamn;
-- varför produkten passar;
-- relevanta INCI-signaler;
-- behov produkten adresserar;
-- begränsningar och kompromisser;
-- verifierad användning;
-- pris och lager först när de hämtats från auktoritativ källa;
-- länk till produktsidan.
-
-Beta 1 behöver inte lägga produkter direkt i varukorgen.
-
-### 5.2 Efter köp i Beta 1
-
-Efterköp är en huvuddel, inte en senare sidofunktion.
-
-Beta 1 ska stegvis kunna:
-
-- förstå order-, leverans-, retur-, reklamations- och produktanvändningsfrågor;
-- läsa order och tracking read-only efter säker identifiering;
-- visa produkter från en verifierad order;
-- svara om användning och kombination av en köpt produkt utifrån verifierad produktdata;
-- upptäcka reaktions- och säkerhetsfrågor;
-- länka till rätt befintligt retur- eller reklamationsflöde;
-- lämna över till kundservice med konversationens sammanhang.
-
-Beta 1 ska inte:
-
-- ändra order;
-- byta adress;
-- avbryta order;
-- godkänna reklamation;
-- skapa återbetalning;
-- göra pris- eller lagerändringar;
-- skriva fritt till Vendre;
-- ge medicinsk diagnos.
-
-## 6. Widgetens målbild
-
-Widgeten ska kännas som en kunnig Harmoniq-rådgivare, inte som en generisk AI-demo.
-
-### 6.1 Stängd widget
-
-Tydlig knapp nere till höger:
+För order- och trackingfrågor är canonical ordning nu:
 
 ```text
-Fråga AI Arman
+verifierad kund/order
+→ exakt Vendre-order
+→ Vendre orderstatus
+→ tracking/parcel från samma Vendre-order
+→ endast om Vendre saknar verifierad tracking: befintlig customer-tracking/nShift-fallback
 ```
 
-Inte endast en anonym pratbubbla.
+Om Vendre-order exempelvis har status `Skickad` och redan innehåller parcel-/trackingnummer eller en verifierbar tracking-URL ska detta användas direkt. AI Arman ska då inte försöka välja eller gissa en nShift-shipment.
 
-### 6.2 Öppen desktop-widget
+## 3. PROJECT SCOPE
 
-Ungefär 390–420 px bred och 650–700 px hög.
+Current scope omfattar AI Armans verifierade read-only order/tracking-kedja och dess integration mot befintliga HARMONIQ-källor.
 
-Den ska innehålla:
+In-scope i current gate:
 
-- rubrik `AI Arman`;
-- text `Produkt- och orderhjälp`;
-- liten Beta-markering;
-- konversationsyta;
-- fritextfält fast längst ned;
-- frivilliga snabbval;
-- tydlig möjlighet att börja om, gå tillbaka och få mänsklig hjälp.
+- exakt Vendre-orderläsning,
+- namngiven Vendre-orderstatus,
+- trackingnummer, tracking-URL och shipment status från Vendre,
+- säkra trackingaliases och nested Vendre-strukturer,
+- verifierad kund-/orderbinding innan order eller tracking läses,
+- customer-tracking/nShift som fallback först efter Vendre,
+- source tests/build/container-smoke,
+- zero-traffic runtime proof mot verklig order `2491750`.
 
-### 6.3 Mobil
+Out-of-scope för current gate:
 
-På mobil ska widgeten öppnas nära helskärm med:
+- Vendre-writes,
+- orderändringar,
+- retursedelsskapande,
+- nShift-writes,
+- refund/replacement/goodwill,
+- kundmeddelanden,
+- OTP-utskick,
+- produktionstrafikcutover,
+- nya deployarkitekturer,
+- unrelated Returns UI-förändringar.
 
-- fast rubrik;
-- meddelanden i mitten;
-- fast skrivfält längst ned;
-- tydlig stäng- och bakåtknapp;
-- produktkort som fungerar utan horisontell layoutskada.
+## 4. ACCEPTANCE CRITERIA – CURRENT TRACKING SLICE
 
-### 6.4 Strukturerade svarsblock
+Current tracking slice är DONE först när följande är bevisat:
 
-Backend bör kunna returnera bland annat:
+1. Exakt Vendre-order läses efter verifierad kund/order-access.
+2. Namngiven orderstatus kan projiceras från Vendre, inklusive `status_name`, `orders_status_name`, `status` och relevant fallback.
+3. Vendre tracking projiceras säkert från godkända fält.
+4. Direkta trackingaliases stöds, bland annat `trackingNumber`, `tracking_number`, `parcelNo`, `parcel_no`, `parcelNumber`, `parcel_number`, `consignmentNumber`, `consignment_number` och `waybill`.
+5. Tracking kan läsas från relevanta nested objekt under `shipment`, `shipping`, `delivery`, `info` och deras `tracking`-objekt.
+6. HTTPS tracking-URL kan användas och känt trackingnummer kan extraheras från kända query-parametrar när explicit nummer saknas.
+7. Explicit trackingnummer vinner över URL-deriverat nummer.
+8. Osäkra tracking-URL:er exponeras inte.
+9. Om Vendre har tracking ska customer-tracking/nShift inte anropas.
+10. Om Vendre saknar tracking eller Vendre-read är otillgänglig får den etablerade tracking-fallbacken användas.
+11. Ingen fallback får välja en shipment på osäker korrelation.
+12. Source unit tests, TypeScript build och isolerade containersmokes ska vara gröna.
+13. En zero-traffic/current-runtime kandidat ska därefter bevisa beteendet mot verklig order `2491750` read-only.
+14. Produktion ska vara orörd fram till separat godkänd promotion gate.
+
+## 5. NO-TOUCH BEHAVIOR
+
+Följande ska förbli orört i current gate:
+
+- ingen positiv production traffic flyttas,
+- ingen stable-tag retargetas som bieffekt av en kandidatkontroll,
+- inga Vendre-writes,
+- inga orderstatusändringar,
+- inga nShift-writes eller shipment-skapanden,
+- inga kundmeddelanden eller OTP,
+- inga refunds, replacements eller goodwill-beslut,
+- inga nya branches,
+- inga nya workflows,
+- inga nya diagnostics eller parallella deployspår,
+- inga unrelated Returns-module changes,
+- inga gissade trackingnummer eller shipments.
+
+## 6. VERIFIED REPO STATE – 2026-09-10
+
+### AI Arman
+
+Repo:
+`arman573/harmoniq-backend`
+
+Default branch:
+`main`
+
+Aktiv canonical branch:
+`feature/ai-arman-foundation-v1`
+
+Relevant PR:
+`#18`, open draft.
+
+### Current application/source SHA
+
+Senaste verifierade application SHA för tracking-fixen är:
 
 ```text
-message
-question
-quick_replies
-product_cards
-order_status_card
-tracking_card
-purchased_product_card
-safety_notice
-support_handoff
-error_notice
+45f14285b503a4651864c82cfba8bc99e90ec3c7
 ```
 
-Widgeten ska rendera dessa typer. Den ska inte behöva tolka fri HTML från modellen.
+Detta är application/source SHA och ska skiljas från senare docs-only handoff commit SHA.
 
-## 7. Vad som redan fungerar
+## 7. ROOT CAUSE SOM ÄR BEVISAD
 
-### 7.1 Product Intelligence
+Tidigare tracking-intent gick efter verifiering direkt till `VerifiedTrackingReadService`, som i sin tur gick direkt mot den separata `TrackingReadClient` / customer-tracking-källan.
 
-Repo: `arman573/harmoniq-product-data-pipeline`
-Gren: `sync/ai-arman-product-intelligence-v1`
-Draft-PR: `#25`
-Aktuellt dokumenterat head vid denna handoff:
+Samtidigt användes Vendre separat för orderstatus via `VerifiedOrderReadService` och `VendreOrderReadClient`.
+
+Det gav fel precedence för slutmålet:
 
 ```text
-d274a47cab5ad5d63d16cb2fd5fb27c15da8e4cb
+tracking-fråga → customer-tracking/nShift först
 ```
 
-Det finns nu en fungerande read-only Product Intelligence-grund som kan:
-
-- ta emot kundbehov och produkter;
-- validera produktkatalogen;
-- analysera produktbenämning;
-- bevara och analysera original-INCI;
-- bedöma kategori och taggar;
-- skapa explicita blockerare;
-- returnera strukturerad evidens, begränsningar, användning och confidence;
-- faila stängt när produkt eller obligatorisk evidens saknas.
-
-Endpointkontrakt:
-
-```http
-POST /v1/ai-arman/product-intelligence/evaluate-batch
-```
-
-Deterministisk katalogbyggare finns med stabil serialisering, SHA-256 och content-addressed objektnamn.
-
-GitHub-validering på ovanstående head är grön för:
-
-- CI;
-- resurskontrakt;
-- immutable candidate image;
-- dependency audit;
-- candidate resource details;
-- GCP preflight;
-- catalog artifact.
-
-Allt detta är fortfarande draft och read-only. Ingen Cloud Run-tjänst har skapats, ingen katalog har laddats upp till GCS och ingen trafik har ändrats.
-
-### 7.2 AI Arman foundation i `harmoniq-backend`
-
-PR `#18` innehåller:
-
-- NestJS-modul för AI Arman;
-- deterministisk rekommendationsscoring;
-- produktupptäckt via Search Brain-klient;
-- klient mot Product Intelligence;
-- timeout och kontraktskontroll;
-- enrichment av produktkandidater;
-- blockerare och fail-closed-beteende;
-- chat-preview;
-- grundstruktur för produktkort;
-- kontrakt och säkerhetsdokumentation.
-
-`ProductIntelligenceClient` är en särskilt användbar del och bör återanvändas. Den anropar rätt endpoint, begränsar antal produkter, har timeout och avvisar fel kontraktsversion.
-
-### 7.3 Kundchattkärnan
-
-PR `#12` i `harmoniq-backend` är sammanslagen till grenen `feature/auto-customer-facts`, inte direkt till `main`.
-
-Den innehåller återanvändbara byggblock för:
-
-- konversationer;
-- meddelanden;
-- historik;
-- kund- och adminvyer;
-- intentklassning;
-- policy och säkerhetsgränser;
-- frustration och eskalering;
-- interna anteckningar;
-- mänskliga svar;
-- notifieringshakar och event;
-- admininkorg;
-- mätvärden;
-- supportöverlämning.
-
-Kod ska hämtas selektivt. Hela grenen eller PR:n ska inte mergas blint.
-
-## 8. Vad som inte är färdigt eller inte fungerar som slutprodukt
-
-### 8.1 Ingen verklig fritextbot ännu
-
-Nuvarande `chat/preview` är inte den bot Arman vill lansera.
-
-Den:
-
-- kräver att produktkandidater redan skickas in;
-- förväntar sig färdiga poäng och evidens;
-- använder huvudsakligen deterministisk, mallad svarskomposition;
-- håller inte en full naturlig dialog;
-- extraherar inte robust behov från komplex svensk fritext;
-- väljer inte automatiskt hela verktygskedjan.
-
-Den är ett testverktyg och ska inte exponeras som publik slutpunkt.
-
-### 8.2 Nuvarande intentklassning är begränsad
-
-Kundchattens intentklassning är regel- och nyckelordsbaserad.
-
-Det fungerar för tydliga fraser som order, retur, leverans och rekommendation men räcker inte för:
-
-- komplex svenska;
-- implicita behov;
-- flera avsikter i samma mening;
-- pronomen och hänvisningar till tidigare meddelanden;
-- nyanserade följdfrågor;
-- stabil konversationsförståelse.
-
-Den kan behållas som säker fallback och kontrollsignal men inte som ensam språkförståelse.
-
-### 8.3 Ingen språkmodellsintegration för verklig dialog
-
-Det saknas ett kontrollerat språkmodellslager som:
-
-- tolkar fritext till ett strikt schema;
-- sammanför tidigare meddelanden;
-- identifierar saknad information;
-- föreslår nästa fråga;
-- formulerar naturliga svenska svar från endast godkända fakta.
-
-Språkmodellen måste vara schema- och verktygsbegränsad. Den får inte ha fria produktionscredentials eller skapa egna API-anrop.
-
-### 8.4 Ingen publik widget
-
-Det finns ingen färdig kundsynlig frontend-widget med:
-
-- fritextfält;
-- sessionshantering;
-- mobil vy;
-- desktopvy;
-- produktkort;
-- orderkort;
-- laddning, fel och tomma lägen;
-- tillgänglighet;
-- mänsklig överlämning.
-
-### 8.5 Order, tracking och returkoppling är placeholder
-
-Supportintegrationen i kundchattkärnan definierar kapabiliteter som:
-
-- `order_lookup`;
-- `shipping_tracking`;
-- `return_request`;
-- `claim_wrong_product`;
-- `claim_damaged_product`;
-- `human_support_handoff`.
-
-Men implementationen returnerar medvetet `not_configured` och får inte behandlas som att order- eller trackingdata faktiskt hämtas.
-
-### 8.6 Product Intelligence är inte driftsatt
-
-PR `#25` är draft och omergad. Följande är inte gjort:
-
-- ingen katalogbucket;
-- ingen dedikerad runtime service account;
-- ingen kataloguppladdning;
-- ingen Cloud Run-tjänst;
-- ingen publik eller privat runtime;
-- ingen trafikändring.
-
-Det finns säkra bootstrap- och kandidatplaner men de får inte köras utan separat uttryckligt godkännande.
-
-### 8.7 Chattkärnan finns inte säkert i aktuell main-produktionslinje
-
-PR `#12` är mergad till en feature-gren. Nästa chatt måste kontrollera aktuell repohistorik innan kod flyttas. Anta inte att kundchattkärnan finns i `main` eller i någon live-tjänst.
-
-## 9. Vad som tidigare blev fel eller inte ska upprepas
-
-1. Projektet får inte beskrivas som endast en före-köp-produktguide. Efterköpsfrågor är en huvuddel av AI Arman.
-2. Startknappar får inte ersätta fritextboten. De är genvägar, inte kärnan.
-3. `chat/preview` får inte kallas färdig bot.
-4. Placeholder-orderstatus får aldrig presenteras som verklig integration.
-5. Search Brain-träffar får endast bli kandidater. Popularitet eller sökträff får inte ensam göra en produkt rekommenderbar.
-6. Webbläsaren får inte skicka egna poäng och på så sätt påverka beslutet.
-7. Äldre rekommendationskod får inte bli en konkurrerande auktoritet bredvid Product Intelligence.
-8. Gamla feature-grenar ska inte mergas blint. Återanvänd små, verifierade delar.
-9. Vi ska inte vänta på hela slutvisionen före lansering, men första versionen måste vara ärlig, säker och faktiskt användbar.
-10. Inga påståenden om att något är live, driftsatt eller kopplat får göras utan verifiering.
-
-## 10. Rekommenderad teknisk arkitektur
+Canonical precedence ska vara:
 
 ```text
-Harmoniq.se
-  -> AI Arman-widget
-  -> harmoniq-backend / AI Arman Orchestrator
-       -> conversation store
-       -> identity and policy
-       -> language interpretation
-       -> tool validator
-       -> Search Brain candidate discovery
-       -> Product Intelligence suitability
-       -> live product facts read-only
-       -> order and tracking read-only
-       -> purchased-product lookup
-       -> Returns Module link or later confirmed action
-       -> human support handoff
+tracking-fråga
+→ verifierad identity/order binding
+→ exakt Vendre getOrder(orderId)
+→ Vendre tracking om den finns
+→ annars befintlig tracking fallback
 ```
 
-Webbläsaren ska inte prata direkt med Vendre, Product Intelligence, nShift, Gmail eller andra känsliga system.
+Detta är nu implementerat i source.
 
-## 11. Riktig fritextkedja som ska byggas
+## 8. IMPLEMENTATION SOM NU FINNS I SOURCE
 
-### 11.1 Meddelandeendpoint
+### `src/ai-arman/integrations/vendre-order-read.types.ts`
 
-Bygg ett riktigt endpointkontrakt, exempelvis:
+`SafeVendreOrderRead` bär nu även:
 
-```http
-POST /ai-arman/chat/messages
-```
+- `trackingNumber`
+- `trackingUrl`
+- `shipmentStatus`
 
-Request ska minst innehålla:
+### `src/ai-arman/integrations/vendre-order-status.projection.ts`
 
-- `conversationId` eller ny-session-signal;
-- `message`;
-- säker page context;
-- serververifierad kundidentitet när sådan finns.
+Vendre-projektionen normaliserar nu status och tracking med bounded whitelist.
 
-Response ska innehålla:
+Status läses från bland annat:
 
-- kundsynligt meddelande;
-- strukturerad response type;
-- frivilliga quick replies;
-- produkt-, order- eller supportkort;
-- conversation ID;
-- säkerhets- och handoffstatus.
+- `status_name`
+- `orders_status_name`
+- `status`
+- `status_text`
 
-### 11.2 Strukturerad språkförståelse
+Trackingkällor omfattar root-order samt relevanta nested strukturer:
 
-Fritext ska först bli ett validerat internt objekt, exempelvis:
+- `shipment`
+- `shipping`
+- `delivery`
+- `info`
+- respektive `.tracking`
+- direkt `order.tracking`
 
-```json
-{
-  "intent": "product_recommendation",
-  "domain": "haircare",
-  "requestedProductTypes": ["shampoo"],
-  "needs": ["dry_lengths", "color_treated", "oily_scalp"],
-  "avoidSignals": ["overly_strong_cleansing"],
-  "missingInformation": ["scalp_sensitivity"],
-  "confidence": 0.91
-}
-```
+Trackingnummeraliases omfattar:
 
-Backend ska validera schemat och kan avvisa eller begränsa resultatet.
+- `trackingNumber`
+- `tracking_number`
+- `parcelNo`
+- `parcel_no`
+- `parcelNumber`
+- `parcel_number`
+- `consignmentNumber`
+- `consignment_number`
+- `waybill`
 
-### 11.3 Dialogstatus
+Tracking-URL aliases omfattar bland annat:
 
-Konversationen ska lagra strukturerade, verifierbara fakta från dialogen så att AI Arman:
+- `trackingUrl`
+- `tracking_url`
+- `trackingURL`
+- `parcelUrl`
+- `parcel_url`
 
-- inte frågar samma sak igen;
-- kan förstå korta svar som `ja`, `den andra` eller `varje dag`;
-- kan skilja kundens preferenser från produktfakta;
-- kan byta spår mellan produkt, order och support utan att tappa sammanhang.
+Generiskt `url` accepteras endast i ett tracking-subobjekt.
 
-### 11.4 Verktygsval
+Shipment status aliases omfattar bland annat:
 
-Språkmodellen får föreslå ett namngivet verktyg men backend avgör om verktyget är:
+- `shipmentStatus`
+- `shipment_status`
+- `deliveryStatus`
+- `delivery_status`
+- `trackingStatus`
+- `tracking_status`
 
-- registrerat;
-- tillåtet för aktuell identitet;
-- read-only eller skrivande;
-- i behov av explicit bekräftelse;
-- säkert att köra med aktuella data.
+Trackingnummer kan dessutom extraheras ur kända URL-queryparametrar, bland annat:
 
-### 11.5 Naturligt svar
+- `refNumber`
+- `trackingNumber`
+- `tracking_number`
+- `parcelNo`
+- `parcel_no`
+- `consignmentNumber`
+- `consignment_number`
+- `shipmentId`
+- `shipment_id`
 
-Språkmodellen får formulera sluttext endast från ett begränsat faktapaket som backend har godkänt.
+Endast HTTPS-URL utan credentials exponeras. Explicit trackingnummer har precedence framför URL-deriverat nummer.
 
-Den får inte lägga till:
+### `src/ai-arman/integrations/verified-tracking-read.service.ts`
 
-- ingredienser som saknas;
-- kliniska effekter som inte är belagda;
-- aktuellt pris eller lager från minnet;
-- orderstatus som inte hämtats;
-- löften om återbetalning eller reklamationsutfall.
-
-## 12. Exakt rekommenderad arbetsordning
-
-### Fas A – lås kontrakt före större kod
-
-1. Kontrollera aktuell status för PR `#18`, PR `#12` och PR `#25`.
-2. Dokumentera Beta 1:s exakta API-kontrakt.
-3. Definiera strukturerat schema för fritexttolkning.
-4. Definiera response-block för widgeten.
-5. Definiera conversation state.
-6. Definiera tillåtna verktyg för första releasen.
-7. Skriv tester för kontrakten innan implementation.
-
-### Fas B – bygg orchestratorn i `harmoniq-backend`
-
-1. Skapa en ren implementationgren från verifierad bas.
-2. Flytta in selektivt återanvändbara chat-core-delar.
-3. Behåll konversationslagring, historik, event och mänsklig handoff.
-4. Anslut Product Intelligence-klienten.
-5. Ersätt klientstyrda kandidater och poäng med backendstyrd discovery.
-6. Skapa riktiga chat message-endpointen.
-
-### Fas C – bygg kontrollerad språkförståelse
-
-1. Lägg till språkmodellsklient bakom interface.
-2. Kräv strikt strukturerat outputschema.
-3. Lägg timeout, kostnadsgräns, rate limit och felklassning.
-4. Spara modell- och promptversion i audit.
-5. Använd deterministisk fallback när modellen är otillgänglig.
-6. Lägg regressionstester för svenska fritextfall.
-
-### Fas D – slutför första rekommendationsresan
-
-1. Tolka hårvårdsbehov.
-2. Ställ följdfrågor.
-3. Hämta kandidater.
-4. Kontrollera kandidater med Product Intelligence.
-5. Applicera blockerare och grindar.
-6. Hämta livefakta read-only.
-7. Returnera strukturerade produktkort.
-8. Testa att ingen svag produkt fyller en tom plats.
-
-### Fas E – bygg efterköp read-only
-
-1. Säker kund- eller orderidentifiering.
-2. `get_order` read-only.
-3. `get_tracking_status` read-only.
-4. Visa köpta produkter.
-5. Besvara användningsfrågor med verifierad produktdata.
-6. Länka till Returns Module.
-7. Skapa mänsklig handoff med sammanfattning.
-
-Skrivfunktioner som skapar retur eller reklamation skjuts till senare release och kräver explicit confirmation, idempotency och audit enligt `PERMISSION_MATRIX.md`.
-
-### Fas F – bygg widgeten
-
-1. Stängd launcher.
-2. Startvy med frivilliga genvägar.
-3. Fritextdialog.
-4. Quick replies.
-5. Produktkort.
-6. Order- och trackingkort.
-7. Köpt produkt-kort.
-8. Säkerhetsmeddelande.
-9. Mänsklig överlämning.
-10. Fel, tomt läge och återförsök.
-11. Mobil och desktop.
-12. Tillgänglighet.
-
-### Fas G – intern beta
-
-1. Testkatalog och testorder.
-2. Ingen skrivåtkomst.
-3. Full loggning och audit.
-4. Regressionstester i GitHub Actions.
-5. Test av felaktig modelloutput.
-6. Test av timeout och beroendefel.
-7. Test av prompt injection och försök att få interna data.
-8. Intern visuell testlänk.
-
-### Fas H – begränsad publik Beta 1
-
-Lansera först begränsat, exempelvis:
-
-- endast på hårvårdssidor;
-- på kundkonto och ordersidor;
-- eller för en liten andel besökare.
-
-Mät:
-
-- öppningar;
-- fritextfrågor;
-- valda intent;
-- följdfrågor;
-- rekommendationer;
-- produktklick;
-- trackingklick;
-- mänskliga handoffs;
-- obesvarade frågor;
-- kundens hjälpsamhetsbedömning.
-
-## 13. Testkrav
-
-Alla tester som går att automatisera ska köras av ChatGPT genom GitHub Actions.
-
-Minimikrav före intern beta:
-
-- unit tests för schema och policy;
-- integrationstest för chat message-endpoint;
-- kontraktstest mot Product Intelligence;
-- konversationstest över flera turer;
-- svenska språkfall;
-- mixed-intent-test;
-- safety- och medicinsk gräns;
-- fail-closed vid saknad produktdata;
-- fail-closed vid order/tracking-fel;
-- kontroll att modellen inte kan ta bort blockerare;
-- kontroll att klienten inte kan skicka egna produktpoäng;
-- rate-limit-test;
-- timeout-test;
-- logg- och redaction-test;
-- mobil- och desktopbygge;
-- tillgänglighetskontroll där möjlig.
-
-Visuell testning som verktygen inte kan utföra fullt ut ges till Arman sist och endast med en liten exakt checklista.
-
-## 14. Säkerhetsgränser som inte får ändras
-
-- Product Intelligence är deterministisk auktoritet för produktlämplighet.
-- OpenAI eller annan språkmodell får inte ta bort blockerare.
-- Search Brain får hitta kandidater men inte själv godkänna produkter.
-- Personalisering får aldrig lyfta en sämre kvalitetsnivå över en bättre.
-- Pris, lager och orderfakta måste vara aktuella och auktoritativa.
-- Ingen modell får direkta Vendre-, Gmail-, nShift-, databas- eller GCP-credentials.
-- Kund-ID från fri text får aldrig accepteras som identitet.
-- Skrivverktyg kräver verifierad identitet, explicit confirmation, idempotency och audit.
-- Direkt återbetalning, orderavbrott, adressändring och obegränsade API-anrop är förbjudna i första releasen.
-
-## 15. Driftsättningsstatus och spärrar
-
-Product Intelligence är ännu inte driftsatt.
-
-Planerade exakta bekräftelsefraser i Product Intelligence-projektet är:
+Efter befintlig conversation/customer/order-verifiering gör tjänsten nu:
 
 ```text
-BOOTSTRAP_AI_ARMAN_PRIVATE_0_PERCENT
-DEPLOY_AI_ARMAN_0_PERCENT
+VendreOrderReadClient.getOrder(orderId)
+→ om Vendre ger tracking: returnera denna
+→ annars TrackingReadClient.getTracking(orderId)
 ```
 
-Ingen bootstrap, deploy, resursuppbyggnad, IAM-ändring, kataloguppladdning, trafikändring, merge eller publicering får göras utan separat uttryckligt godkännande.
+Detta centraliserar precedence utan att duplicera identitetsverifieringen i chat-orchestratorn.
 
-## 16. Definition of Done för första användbara fritextprototyp
+### Regressionstester
 
-Prototypen är klar när en testkund kan:
+Tester täcker nu bland annat:
 
-1. skriva ett komplext hårvårdsbehov i fri svensk text;
-2. få en relevant följdfråga;
-3. svara kort utan att upprepa hela sammanhanget;
-4. få produkter hämtade av backend;
-5. få kandidater kontrollerade av Product Intelligence;
-6. få högst tre godkända produktkort;
-7. få ett naturligt svar som endast använder verifierade fakta;
-8. byta till en efterköpsfråga;
-9. få read-only information eller korrekt säker handoff;
-10. se konversationen sparad;
-11. få ett ärligt felmeddelande när data eller tjänst saknas.
+- Vendre trackingnummer stoppar fallback-anrop,
+- Vendre utan tracking använder fallback,
+- Vendre read unavailable använder etablerad fallback,
+- verifieringsfel stoppar både Vendre och fallback före externa reads,
+- nested tracking aliases,
+- `orders_status_name: Skickad`,
+- explicit parcelnummer framför URL-derived,
+- blockerad osäker URL,
+- befintlig dispatch classification.
 
-Prototypen är inte klar om:
+## 9. SOURCE CI – GREEN
 
-- kunden måste välja formulärknappar i stället för att skriva;
-- webbläsaren bestämmer produktpoäng;
-- boten hittar på produkt- eller orderfakta;
-- placeholderdata visas som verklig;
-- konversationen glömmer tidigare svar;
-- en blockerad produkt rekommenderas;
-- mänsklig handoff tappar konversationens sammanhang.
+För application SHA:
 
-## 17. Första uppgift i nästa chatt
+```text
+45f14285b503a4651864c82cfba8bc99e90ec3c7
+```
 
-Börja inte med deploy eller widgetdesignkod.
+Canonical Foundation CI:
 
-Gör följande i GitHub:
+```text
+GitHub Actions run: 34477571628
+status: completed
+conclusion: success
+```
 
-1. läs denna handoff och de sex grunddokumenten;
-2. kontrollera aktuell PR-, branch- och commitstatus i båda reporna;
-3. inspektera de faktiska implementationerna i PR `#12` och PR `#18`;
-4. föreslå och dokumentera det exakta `POST /ai-arman/chat/messages`-kontraktet;
-5. dokumentera det strikta fritexttolkningsschemat och conversation state;
-6. lägg kontraktstester i GitHub;
-7. kör testerna via GitHub Actions;
-8. rätta eventuella fel;
-9. rapportera vad som är verifierat innan nästa kodfas påbörjas.
+Bevisat PASS i samma run:
 
-Arman ska inte behöva klistra in kod eller köra lokala kommandon för denna fas.
+- checkout source,
+- dependency install,
+- unit tests,
+- TypeScript build,
+- build AI Arman isolated container,
+- smoke AI Arman container,
+- build customer gateway isolated container,
+- smoke customer gateway container.
+
+En tidigare run på SHA `1d2eb2479c74e8007032b519d13ce179b49b4bfd` föll därför att `vendre-order-read.client.spec.ts` fortfarande förväntade gamla projection shape. Testkontraktet uppdaterades; senaste application SHA ovan är green source of truth.
+
+## 10. RELEVANT RETURNS-MODULE PROVENANCE
+
+Rätt Returns-repo är:
+
+`arman573/harmoniq-returns-module`
+
+Ingen Returns-kod ändrades i denna gate.
+
+Historisk verifierad relevant kod visar:
+
+### `server/src/services/adminOrderContextEnricher.js`
+
+Den läser exakt Vendre-order med `client.getOrder(orderId)`, normaliserar ordern och exponerar bland annat `orderStatus`.
+
+### `server/src/services/vendreOrderMapper.js`
+
+Den namngivna Vendre-statusen normaliserades som:
+
+```text
+status_name → orders_status_name → status
+```
+
+Detta är provenance för att den Vendre-status som användaren ser, exempelvis `Skickad`, kan komma från exakt Vendre-orderdata.
+
+Samma äldre mapper bar inte igenom tracking, vilket var en del av problemet.
+
+### Historical fallback
+
+Äldre `customerTrackingLookupService.js` på `refactor/cluster-architecture-foundation` läste den separata customer-tracking-tjänsten med retry/cache och parcel/tracking-normalisering.
+
+Denna väg är relevant som etablerad fallback, inte som primär trackingkälla.
+
+Ett äldre workflow för order `2494077` bevisade historiskt att Returns `/api/admin/cases/:caseId/order-context` kunde ge exakt parcelnummer från trackingkedjan. Detta är endast provenance och ska inte behandlas som current runtime state.
+
+## 11. ORDER 2491750 – PROVEN / UNPROVEN
+
+För order `2491750` gäller fortfarande:
+
+### Proven
+
+- exact Vendre-order-read är den korrekta primära arkitekturvägen,
+- source kan nu bära namngiven status och Vendre tracking,
+- source-precedence Vendre-first är implementerad och testad,
+- source CI är grön.
+
+### Unproven
+
+Följande är ännu inte runtime-bevisat för `2491750` på den nya application SHA:n:
+
+- exakt aktuell Vendre-status,
+- om raw Vendre-order faktiskt innehåller trackingnummer,
+- vilket Vendre-fält/nested path som i så fall innehåller numret,
+- om Vendre endast innehåller tracking-URL,
+- om URL-derived tracking krävs,
+- om Vendre saknar tracking och fallback därför måste användas,
+- exakt kandidatbeteende i current runtime.
+
+Därför får inget trackingnummer eller shipment anges som fakta för `2491750` förrän runtime-read bevisat det.
+
+## 12. PRODUCTION / RUNTIME STATE
+
+Ingen produktion ändrades i denna 2026-09-10 tracking-gate.
+
+Det har inte gjorts:
+
+- production traffic cutover,
+- stable-tag retarget,
+- Vendre write,
+- nShift write,
+- customer message,
+- OTP,
+- order/case mutation.
+
+Current application SHA `45f14285...` är source-green men är ännu inte bevisad som zero-traffic runtime candidate mot `2491750`.
+
+Senaste exakta Cloud Run live revision/image/positive-traffic för Sep-10 har inte färskbevisats i denna gate via en säker current-runtime inspection och ska därför inte ersättas med gamla snapshots. Historiska revisions- eller deployfiler är provenance, inte current truth.
+
+## 13. DEPLOYMENT PATH STATE
+
+Befintliga workflows har inspekterats read-only.
+
+### `ai-arman-beta0-candidate-deploy.yml`
+
+Finns, men är pinned till en äldre deploy-SHA och exact commit-message-trigger. Den är därför inte direkt en verifierad current-SHA kandidatväg utan modifiering.
+
+### `ai-arman-foundation-trusted-live-v4-20260822.yml`
+
+Finns, men är pinned till en äldre `SOURCE_SHA` och utför dessutom stable resolver retag efter PASS.
+
+Den får därför inte användas för att kringgå current gate, eftersom current gate kräver zero-traffic/read-only runtime proof utan att stable/positive traffic ändras.
+
+Ingen ny workflow skapades för att komma runt detta.
+
+## 14. CURRENT GATE
+
+```text
+RUNTIME PROVENANCE / ZERO-TRAFFIC VENDRE-FIRST TRACKING PROOF FOR ORDER 2491750
+```
+
+Source implementation gate är GREEN.
+
+Current gate är nu runtime/deploy provenance, inte mer featurekod.
+
+## 15. CURRENT BLOCKER
+
+Vi har ännu inte verifierat en befintlig canonical deploymentmekanism som kan köra application SHA:
+
+```text
+45f14285b503a4651864c82cfba8bc99e90ec3c7
+```
+
+som en ren zero-traffic kandidat utan att:
+
+- ändra positive production traffic,
+- retargeta stable tag,
+- skapa ny workflow,
+- skapa ny branch,
+- eller ta en parallell deployväg.
+
+Dessutom finns ingen direkt Vendre API-connector i chatverktygen som kan användas istället för runtimekedjan.
+
+Detta är ett deployment-path/provenance-blocker, inte ett skäl att gissa tracking eller börja om arkitekturen.
+
+## 16. EXACT NEXT ACTION
+
+Nästa chat ska börja här:
+
+1. Read-only verifiera att repo/branch/PR fortfarande är samma och att application SHA `45f14285...` fortfarande är den senaste green tracking-source SHA:n, bortsett från docs-only handoff commit.
+2. Read-only verifiera current Cloud Run service state för AI Arman och relevant Returns runtime genom den etablerade GCP/WIF-vägen om den kan nås utan ny diagnostic/workflow.
+3. Kontrollera om någon redan etablerad canonical workflow/deploymekanism kan deploya exakt `45f14285...` som zero-traffic current candidate utan stable-tag eller positive-traffic mutation.
+4. Om en sådan befintlig väg finns: använd den och bevisa kandidaten read-only.
+5. Om ingen sådan väg finns: ändra endast den redan canonical deploymekanismen inom en minimal change budget så att den kan targeta current application SHA utan promotion/stable retag. Skapa inte en ny workflow. Gör inte detta som workaround om det kräver bredare deployarkitektur.
+6. När kandidaten finns: verifiera config/identity/order binding och kör read-only runtime proof för order `2491750`.
+7. Logga endast safe projected facts: Vendre status, tracking presence, tracking source class och om fallback användes. Exponera inte känslig rå orderdata i docs/loggar.
+8. Om Vendre har tracking: bevisa att fallback inte anropas.
+9. Om Vendre saknar tracking: tillåt befintlig fallback, men acceptera endast tracking som kan bindas säkert till exakt order. Gissa aldrig en nShift-shipment.
+10. Först när detta är PASS får nästa promotion/production gate övervägas som en separat explicit gate.
+
+## 17. CURRENT CHANGE BUDGET
+
+Source featureändringen är nu färdig och green.
+
+Tillåten nästa change budget:
+
+- read-only runtime/deploy provenance,
+- vid konkret blocker: minimal ändring i redan etablerad canonical deploymekanism för current SHA + zero-traffic only,
+- runtime probe mot `2491750`,
+- test-/docsjustering endast om runtime bevisar ett konkret fel i nuvarande implementation.
+
+Inte tillåtet inom current budget:
+
+- nya workflows,
+- nya branches,
+- parallell deployarkitektur,
+- bred refactor,
+- nya featureområden,
+- production promotion innan current gate är PASS.
+
+## 18. ROADMAP FRÅN CURRENT STATE TILL DONE
+
+### Gate A – Source Vendre-first tracking
+
+Status: **PASS**.
+
+Bevis:
+- implementation finns,
+- precedence testad,
+- source CI run `34477571628` är green.
+
+### Gate B – Current runtime provenance / zero-traffic 2491750
+
+Status: **CURRENT**.
+
+Mål:
+- current application SHA i zero-traffic candidate,
+- Vendre status/tracking bevisad på verklig order,
+- fallback precedence bevisad i runtime,
+- produktion helt oförändrad.
+
+### Gate C – Promotion decision
+
+Status: **NOT STARTED**.
+
+Endast efter Gate B PASS.
+
+Kräver separat kontroll av:
+- candidate/live diff,
+- auth/safety invariants,
+- traffic state,
+- rollbackväg,
+- no-touch områden,
+- explicit promotionbeslut.
+
+### Gate D – Broader Beta 1 continuation
+
+Efter stabil order/tracking slice fortsätter bredare AI Arman-roadmap med verifierad produktintelligens, köpt-produkt-användning, retur/reklamation support, widget och mänsklig handoff enligt samma backend-authority-princip.
+
+## 19. CLEANUP / CURRENT DONE STATUS
+
+Gjort i denna gate:
+
+- root cause identifierad,
+- Vendre-first precedence implementerad,
+- Vendre trackingprojection implementerad,
+- nested aliases och URL-extraction implementerad,
+- tests uppdaterade,
+- stale testkontrakt fixat,
+- senaste application SHA source-green,
+- inga nya branches skapade,
+- inga nya workflows skapade,
+- inga production writes utförda,
+- inga trackingnummer gissade.
+
+Återstår innan tracking-slicen är DONE:
+
+- current runtime/candidate proof mot `2491750`,
+- därefter separat promotionbeslut om allt är grönt.
+
+## 20. IMPORTANT SHA SEPARATION
+
+Application/source SHA för den green trackingimplementationen:
+
+```text
+45f14285b503a4651864c82cfba8bc99e90ec3c7
+```
+
+Handoff commit SHA är den docs-only commit som skapas när denna fil sparas och ska rapporteras separat.
+
+En senare docs-only handoff commit får inte felaktigt kallas application/candidate SHA.
