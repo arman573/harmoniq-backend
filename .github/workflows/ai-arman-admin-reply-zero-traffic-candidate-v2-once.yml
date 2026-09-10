@@ -20,7 +20,10 @@ env:
   PROJECT_ID: harmoniq-210513
   REGION: europe-north1
   SERVICE_NAME: harmoniq-ai-arman-beta0
+  RETURNS_SERVICE_NAME: harmoniq-returns-api
   SOURCE_SHA: 9b8f9b7f8b63ffbfee07a1f8efc7c1d1063561b1
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  OPENAI_SECRET_NAME: ai-arman-openai-api-key
   ARTIFACT_REPOSITORY: harmoniq-containers
   WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
   DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
@@ -62,57 +65,67 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Snapshot exact current production boundary
+      - name: Snapshot live boundaries and Returns reply credential
         id: before
         shell: bash
         run: |
           set -euo pipefail
           fail(){ echo "PREFLIGHT_FAIL=$1"; exit 1; }
-          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-before.json"
-          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json | jq -cS . > "$RUNNER_TEMP/iam-before.json"
-          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-before.json" >/dev/null; then fail service-public; fi
-          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag:(.tag // null)}] | sort_by(.revisionName,.percent,.tag)' "$RUNNER_TEMP/service-before.json" > "$RUNNER_TEMP/positive-before.json"
-          jq -e 'length >= 1 and ([.[].percent] | add) == 100' "$RUNNER_TEMP/positive-before.json" >/dev/null || fail traffic-sum
-          LIVE_REV="$(jq -r '[.status.traffic[]? | select((.percent // 0)>0 and (.tag // "") == "")] | if length==1 and .[0].percent==100 then .[0].revisionName else empty end' "$RUNNER_TEMP/service-before.json")"
-          if [ -z "$LIVE_REV" ]; then
-            LIVE_REV="$(jq -r '[.status.traffic[]? | select((.percent // 0)>0)] | if length==1 and .[0].percent==100 then .[0].revisionName else empty end' "$RUNNER_TEMP/service-before.json")"
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-before.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json | jq -cS . > "$RUNNER_TEMP/ai-iam-before.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/ai-iam-before.json" >/dev/null; then fail ai-service-public; fi
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag:(.tag // null)}] | sort_by(.revisionName,.percent,.tag)' "$RUNNER_TEMP/ai-before.json" > "$RUNNER_TEMP/ai-positive-before.json"
+          jq -e 'length >= 1 and ([.[].percent] | add) == 100' "$RUNNER_TEMP/ai-positive-before.json" >/dev/null || fail ai-traffic-sum
+          AI_LIVE_REV="$(jq -r '[.status.traffic[]? | select((.percent // 0)>0)] | if length==1 and .[0].percent==100 then .[0].revisionName else empty end' "$RUNNER_TEMP/ai-before.json")"
+          test -n "$AI_LIVE_REV" || fail ai-single-live-revision
+          SERVICE_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/ai-before.json")"
+          test -n "$SERVICE_URL" || fail ai-service-url
+
+          gcloud run services describe "$RETURNS_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-service.json"
+          RETURNS_LIVE_REV="$(jq -r '[.status.traffic[]? | select((.percent // 0)>0)] | if length==1 and .[0].percent==100 then .[0].revisionName else empty end' "$RUNNER_TEMP/returns-service.json")"
+          test -n "$RETURNS_LIVE_REV" || fail returns-single-live-revision
+          gcloud run revisions describe "$RETURNS_LIVE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-live.json"
+          renvv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/returns-live.json" | head -n1; }
+          test "$(renvv AI_ARMAN_ADMIN_REPLY_ENABLED)" = true || fail returns-reply-disabled
+          RETURNS_BASE_URL="$(renvv AI_ARMAN_ADMIN_REPLY_BASE_URL)"
+          RETURNS_AUDIENCE="$(renvv AI_ARMAN_ADMIN_REPLY_AUDIENCE)"
+          test -n "$RETURNS_BASE_URL" || fail returns-reply-base-url
+          test "${RETURNS_BASE_URL%/}" = "${SERVICE_URL%/}" || fail returns-reply-base-url-drift
+          if [ -n "$RETURNS_AUDIENCE" ]; then
+            test "${RETURNS_AUDIENCE%/}" = "${SERVICE_URL%/}" || fail returns-reply-audience-drift
           fi
-          test -n "$LIVE_REV" || fail single-live-revision
-          gcloud run revisions describe "$LIVE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/live.json"
-          SERVICE_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/service-before.json")"
-          LIVE_IMAGE="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/live.json")"
-          RUNTIME_SA="$(jq -r '.spec.serviceAccountName // empty' "$RUNNER_TEMP/live.json")"
-          APP_ENV="$(jq -c '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN")' "$RUNNER_TEMP/live.json" | head -n1)"
-          test -n "$SERVICE_URL" || fail service-url
-          test -n "$LIVE_IMAGE" || fail live-image
-          test -n "$RUNTIME_SA" || fail runtime-service-account
-          test -n "$APP_ENV" || fail live-admin-reply-token-config
+
+          APP_ENV="$(jq -c '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_ADMIN_REPLY_ACCESS_TOKEN")' "$RUNNER_TEMP/returns-live.json" | head -n1)"
+          test -n "$APP_ENV" || fail returns-admin-reply-token-config
           APP_TOKEN="$(printf '%s' "$APP_ENV" | jq -r '.value // empty')"
           TOKEN_SOURCE=literal
+          RETURNS_SECRET_NAME=''
+          RETURNS_SECRET_VERSION=''
           if [ -z "$APP_TOKEN" ]; then
-            SECRET_NAME="$(printf '%s' "$APP_ENV" | jq -r '.valueFrom.secretKeyRef.name // .valueSource.secretKeyRef.secret // empty')"
-            SECRET_VERSION="$(printf '%s' "$APP_ENV" | jq -r '.valueFrom.secretKeyRef.key // .valueSource.secretKeyRef.version // "latest"')"
-            test -n "$SECRET_NAME" || fail live-admin-reply-token-secret-ref
-            test -n "$SECRET_VERSION" || SECRET_VERSION=latest
-            APP_TOKEN="$(gcloud secrets versions access "$SECRET_VERSION" --secret="$SECRET_NAME" --project "$PROJECT_ID" 2>/dev/null || true)"
-            test -n "$APP_TOKEN" || fail live-admin-reply-token-secret-access
+            RETURNS_SECRET_NAME="$(printf '%s' "$APP_ENV" | jq -r '.valueFrom.secretKeyRef.name // .valueSource.secretKeyRef.secret // empty')"
+            RETURNS_SECRET_VERSION="$(printf '%s' "$APP_ENV" | jq -r '.valueFrom.secretKeyRef.key // .valueSource.secretKeyRef.version // "latest"')"
+            test -n "$RETURNS_SECRET_NAME" || fail returns-admin-reply-token-secret-ref
+            test -n "$RETURNS_SECRET_VERSION" || RETURNS_SECRET_VERSION=latest
+            APP_TOKEN="$(gcloud secrets versions access "$RETURNS_SECRET_VERSION" --secret="$RETURNS_SECRET_NAME" --project "$PROJECT_ID" 2>/dev/null || true)"
+            test -n "$APP_TOKEN" || fail returns-admin-reply-token-secret-access
             TOKEN_SOURCE=secretKeyRef
           fi
           echo "::add-mask::$APP_TOKEN"
           echo "AI_ADMIN_APP_TOKEN=$APP_TOKEN" >> "$GITHUB_ENV"
-          envv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/live.json" | head -n1; }
-          test "$(envv AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED)" = true || fail live-reply-disabled
-          test "$(envv AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" = true || fail live-model-disabled
-          echo "live_revision=$LIVE_REV" >> "$GITHUB_OUTPUT"
-          echo "live_image=$LIVE_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "runtime_sa=$RUNTIME_SA" >> "$GITHUB_OUTPUT"
+          echo "ADMIN_REPLY_TOKEN_SOURCE=$TOKEN_SOURCE" >> "$GITHUB_ENV"
+          echo "RETURNS_REPLY_SECRET_NAME=$RETURNS_SECRET_NAME" >> "$GITHUB_ENV"
+          echo "RETURNS_REPLY_SECRET_VERSION=$RETURNS_SECRET_VERSION" >> "$GITHUB_ENV"
+
           echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
-          echo "positive_traffic=$(cat "$RUNNER_TEMP/positive-before.json")" >> "$GITHUB_OUTPUT"
-          echo "token_source=$TOKEN_SOURCE" >> "$GITHUB_OUTPUT"
-          echo "LIVE_REVISION=$LIVE_REV"
-          echo "LIVE_IMAGE=$LIVE_IMAGE"
-          echo "LIVE_TRAFFIC=$(cat "$RUNNER_TEMP/positive-before.json")"
+          echo "ai_live_revision=$AI_LIVE_REV" >> "$GITHUB_OUTPUT"
+          echo "returns_live_revision=$RETURNS_LIVE_REV" >> "$GITHUB_OUTPUT"
+          echo "positive_traffic=$(cat "$RUNNER_TEMP/ai-positive-before.json")" >> "$GITHUB_OUTPUT"
+          echo "AI_LIVE_REVISION=$AI_LIVE_REV"
+          echo "RETURNS_LIVE_REVISION=$RETURNS_LIVE_REV"
+          echo "AI_LIVE_TRAFFIC=$(cat "$RUNNER_TEMP/ai-positive-before.json")"
           echo "ADMIN_REPLY_TOKEN_SOURCE=$TOKEN_SOURCE"
+          echo 'RETURNS_TO_AI_CONFIG_PASS=true'
           echo 'PRIVATE_IAM_PASS=true'
 
       - name: Build immutable green-source image
@@ -123,37 +136,62 @@ jobs:
           IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:admin-reply-live-runtime-${SOURCE_SHA:0:12}-$GITHUB_RUN_ID"
           gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
           docker build --pull -f Dockerfile.ai-arman-candidate -t "$IMAGE" .
-          docker push "$IMAGE"
-          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          docker push "$IMAGE" 2>&1 | tee "$RUNNER_TEMP/push.log"
+          DIGEST="$(sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' "$RUNNER_TEMP/push.log" | tail -n1)"
+          if [ -z "$DIGEST" ]; then
+            DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          fi
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           echo "image=$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME@$DIGEST" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy zero-traffic candidate inheriting live runtime
+      - name: Deploy zero-traffic candidate with proven config and Returns credential
         id: deploy
         env:
           IMAGE: ${{ steps.image.outputs.image }}
         shell: bash
         run: |
           set -euo pipefail
-          gcloud run deploy "$SERVICE_NAME" \
-            --project "$PROJECT_ID" \
-            --region "$REGION" \
-            --platform managed \
-            --image "$IMAGE" \
-            --revision-suffix "arlive-${SOURCE_SHA:0:8}-${GITHUB_RUN_NUMBER}" \
-            --tag "$CANDIDATE_TAG" \
-            --no-traffic \
+          COMMON_ENV='NODE_ENV=production,AI_ARMAN_WIDGET_PREVIEW_ENABLED=false,AI_ARMAN_INTERNAL_PREVIEW_DIAGNOSTICS_ENABLED=false,AI_ARMAN_CUSTOMER_WIDGET_ENABLED=false,AI_ARMAN_CUSTOMER_IDENTITY_ENABLED=false,AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED=true,AI_ARMAN_MODEL_INTERPRETATION_ENABLED=true,AI_ARMAN_MODEL_SHADOW_ENABLED=false,AI_ARMAN_MODEL_PROMOTION_ENABLED=false,AI_ARMAN_OPENAI_MODEL=gpt-5-mini,AI_ARMAN_MODEL_INTERPRETATION_TIMEOUT_MS=10000,AI_ARMAN_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS=0.25,AI_ARMAN_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS=2'
+          BASE_ARGS=(
+            "$SERVICE_NAME"
+            --project "$PROJECT_ID"
+            --region "$REGION"
+            --platform managed
+            --image "$IMAGE"
+            --service-account "$RUNTIME_SERVICE_ACCOUNT"
+            --revision-suffix "arrt-${SOURCE_SHA:0:8}-${GITHUB_RUN_NUMBER}"
+            --tag "$CANDIDATE_TAG"
+            --no-traffic
+            --port 8080
+            --cpu 1
+            --memory 256Mi
+            --cpu-throttling
+            --no-cpu-boost
+            --concurrency 1
+            --timeout 30
+            --labels "release=admin-reply-candidate-v2,source-sha=${SOURCE_SHA:0:8},promotion=off,traffic=zero"
             --quiet
-          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-after.json"
-          REV="$(jq -r --arg t "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$t) | .revisionName // empty' "$RUNNER_TEMP/service-after.json" | head -n1)"
-          URL="$(jq -r --arg t "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$t) | .url // empty' "$RUNNER_TEMP/service-after.json" | head -n1)"
-          PCT="$(jq -r --arg t "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$t) | .percent // 0' "$RUNNER_TEMP/service-after.json" | head -n1)"
+          )
+          if [ "$ADMIN_REPLY_TOKEN_SOURCE" = secretKeyRef ]; then
+            gcloud run deploy "${BASE_ARGS[@]}" \
+              --set-env-vars "$COMMON_ENV" \
+              --set-secrets "OPENAI_API_KEY=$OPENAI_SECRET_NAME:1,AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN=$RETURNS_REPLY_SECRET_NAME:$RETURNS_REPLY_SECRET_VERSION"
+          else
+            gcloud run deploy "${BASE_ARGS[@]}" \
+              --set-env-vars "$COMMON_ENV,AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN=$AI_ADMIN_APP_TOKEN" \
+              --set-secrets "OPENAI_API_KEY=$OPENAI_SECRET_NAME:1"
+          fi
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-after-deploy.json"
+          REV="$(jq -r --arg t "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$t) | .revisionName // empty' "$RUNNER_TEMP/ai-after-deploy.json" | head -n1)"
+          URL="$(jq -r --arg t "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$t) | .url // empty' "$RUNNER_TEMP/ai-after-deploy.json" | head -n1)"
+          PCT="$(jq -r --arg t "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$t) | .percent // 0' "$RUNNER_TEMP/ai-after-deploy.json" | head -n1)"
           test -n "$REV"; test -n "$URL"; test "$PCT" = 0
           echo "revision=$REV" >> "$GITHUB_OUTPUT"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
-      - name: Verify runtime parity and real synthetic draft
+      - name: Verify candidate config, boundaries and real HQT draft
         env:
           REV: ${{ steps.deploy.outputs.revision }}
           TAG_URL: ${{ steps.deploy.outputs.url }}
@@ -163,15 +201,32 @@ jobs:
         run: |
           set -euo pipefail
           fail(){ echo "VERIFY_FAIL=$1"; exit 1; }
+
           gcloud run revisions describe "$REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/candidate.json"
           test "$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/candidate.json")" = "$CANDIDATE_IMAGE" || fail candidate-image
-          jq -cS '.spec | (.containers[]? |= del(.image,.name))' "$RUNNER_TEMP/live.json" > "$RUNNER_TEMP/live-runtime.json"
-          jq -cS '.spec | (.containers[]? |= del(.image,.name))' "$RUNNER_TEMP/candidate.json" > "$RUNNER_TEMP/candidate-runtime.json"
-          cmp "$RUNNER_TEMP/live-runtime.json" "$RUNNER_TEMP/candidate-runtime.json" || fail runtime-drift
-          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json | jq -cS . > "$RUNNER_TEMP/iam-after.json"
-          cmp "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-after.json" || fail iam-drift
-          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag:(.tag // null)}] | sort_by(.revisionName,.percent,.tag)' "$RUNNER_TEMP/service-after.json" > "$RUNNER_TEMP/positive-after.json"
-          cmp "$RUNNER_TEMP/positive-before.json" "$RUNNER_TEMP/positive-after.json" || fail positive-traffic-drift
+          test "$(jq -r '.spec.serviceAccountName // empty' "$RUNNER_TEMP/candidate.json")" = "$RUNTIME_SERVICE_ACCOUNT" || fail runtime-service-account
+          envv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/candidate.json" | head -n1; }
+          test "$(envv AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED)" = true || fail candidate-reply-disabled
+          test "$(envv AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" = true || fail candidate-model-disabled
+          test "$(envv AI_ARMAN_MODEL_PROMOTION_ENABLED)" = false || fail model-promotion-enabled
+          test "$(envv AI_ARMAN_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS)" = 0.25 || fail model-input-price
+          test "$(envv AI_ARMAN_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS)" = 2 || fail model-output-price
+
+          if [ "$ADMIN_REPLY_TOKEN_SOURCE" = secretKeyRef ]; then
+            CAND_SECRET_NAME="$(jq -r '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN") | .valueFrom.secretKeyRef.name // .valueSource.secretKeyRef.secret // empty' "$RUNNER_TEMP/candidate.json" | head -n1)"
+            CAND_SECRET_VERSION="$(jq -r '.spec.containers[0].env[]? | select(.name=="AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN") | .valueFrom.secretKeyRef.key // .valueSource.secretKeyRef.version // empty' "$RUNNER_TEMP/candidate.json" | head -n1)"
+            test "$CAND_SECRET_NAME" = "$RETURNS_REPLY_SECRET_NAME" || fail reply-token-secret-name-drift
+            test "$CAND_SECRET_VERSION" = "$RETURNS_REPLY_SECRET_VERSION" || fail reply-token-secret-version-drift
+          else
+            test "$(envv AI_ARMAN_ADMIN_REPLY_DRAFT_ACCESS_TOKEN)" = "$AI_ADMIN_APP_TOKEN" || fail reply-token-literal-drift
+          fi
+
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json | jq -cS . > "$RUNNER_TEMP/ai-iam-after.json"
+          cmp "$RUNNER_TEMP/ai-iam-before.json" "$RUNNER_TEMP/ai-iam-after.json" || fail iam-drift
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai-final.json"
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag:(.tag // null)}] | sort_by(.revisionName,.percent,.tag)' "$RUNNER_TEMP/ai-final.json" > "$RUNNER_TEMP/ai-positive-after.json"
+          cmp "$RUNNER_TEMP/ai-positive-before.json" "$RUNNER_TEMP/ai-positive-after.json" || fail positive-traffic-drift
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/ai-final.json")" = 0 || fail candidate-positive-traffic
 
           ID_TOKEN="$(gcloud auth print-identity-token --audiences="$SERVICE_URL" --impersonate-service-account="$DEPLOY_SERVICE_ACCOUNT" 2>/dev/null || true)"
           if [ -z "$ID_TOKEN" ]; then
@@ -181,15 +236,17 @@ jobs:
           test -n "$ID_TOKEN" || fail id-token
           echo "::add-mask::$ID_TOKEN"
           cat > "$RUNNER_TEMP/request.json" <<'JSON'
-          {"caseId":"HQT-SYNTHETIC-LIVE-RUNTIME","caseType":"support","status":"needs_link","customerName":"Testkund","messages":[{"direction":"inbound","sender":"Kund","subject":"Leveransfråga","text":"Hej, min leverans verkar fel och jag behöver hjälp att förstå nästa steg.","date":"2026-09-10T08:00:00Z"}]}
+          {"caseId":"HQT-SYNTHETIC-RETURNS-CREDENTIAL","caseType":"support","status":"needs_link","customerName":"Testkund","messages":[{"direction":"inbound","sender":"Kund","subject":"Leveransfråga","text":"Hej, min leverans verkar fel och jag behöver hjälp att förstå nästa steg.","date":"2026-09-10T08:00:00Z"}]}
           JSON
           CODE="$(curl --silent --show-error --max-time 35 --output "$RUNNER_TEMP/response.json" --write-out '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $AI_ADMIN_APP_TOKEN" --header 'Content-Type: application/json' --data @"$RUNNER_TEMP/request.json" "$TAG_URL/ai-arman/internal/admin/reply-draft")"
           case "$CODE" in 200|201|202) ;; *) echo "CANDIDATE_HTTP=$CODE"; jq '{ok,code,providerHttpStatus}' "$RUNNER_TEMP/response.json" >&2 || true; exit 1 ;; esac
           jq -e '.ok==true and (.draftText|type=="string" and length>0) and .sendsCustomerMessage==false and .executesWrites==false and (.confidence|type=="number")' "$RUNNER_TEMP/response.json" >/dev/null || fail draft-contract
+
           echo "CANDIDATE_REVISION=$REV"
           echo "CANDIDATE_IMAGE=$CANDIDATE_IMAGE"
           echo 'CANDIDATE_TRAFFIC=0%'
-          echo 'LIVE_RUNTIME_PARITY=true'
-          echo 'PRODUCTION_TOKEN_COMPATIBLE=true'
-          echo 'REAL_SYNTHETIC_ADMIN_DRAFT_PASS=true'
+          echo 'RETURNS_CREDENTIAL_PARITY=true'
+          echo 'REAL_SYNTHETIC_HQT_ADMIN_DRAFT_PASS=true'
           echo 'NO_CUSTOMER_SEND_OR_WRITE=true'
+          echo 'PRIVATE_IAM_UNCHANGED=true'
+          echo 'POSITIVE_TRAFFIC_UNCHANGED=true'
