@@ -86,6 +86,7 @@ export class AiArmanAdminReplyDraftService {
         body: JSON.stringify({
           model: config.model,
           store: false,
+          reasoning: { effort: 'minimal' },
           instructions: INSTRUCTIONS,
           input: JSON.stringify(normalized),
           max_output_tokens: MAX_OUTPUT_TOKENS,
