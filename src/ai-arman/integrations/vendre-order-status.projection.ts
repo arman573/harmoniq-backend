@@ -9,6 +9,9 @@ export type SafeVendreOrderStatus = {
   createdAt: string;
   shippingDate: string;
   dispatchState: VendreOrderDispatchState;
+  trackingNumber: string;
+  trackingUrl: string;
+  shipmentStatus: string;
 };
 
 export function projectVendreOrderStatus(
@@ -22,10 +25,16 @@ export function projectVendreOrderStatus(
   if (orderId !== String(expectedOrderId || '').trim()) return null;
 
   const statusId = normalizeInteger(order.status_id ?? order.statusId);
-  const status = firstText(order.status_name, order.status, order.status_text);
+  const status = firstText(
+    order.status_name,
+    order.orders_status_name,
+    order.status,
+    order.status_text,
+  );
   const shippingDate = normalizeDateSignal(
     order.shipping_date ?? order.shippingDate,
   );
+  const tracking = normalizeTracking(order);
 
   return {
     orderId,
@@ -40,7 +49,128 @@ export function projectVendreOrderStatus(
     ),
     shippingDate,
     dispatchState: classifyDispatch(statusId, status, shippingDate),
+    trackingNumber: tracking.trackingNumber,
+    trackingUrl: tracking.trackingUrl,
+    shipmentStatus: tracking.shipmentStatus,
   };
+}
+
+function normalizeTracking(order: UnknownRecord): {
+  trackingNumber: string;
+  trackingUrl: string;
+  shipmentStatus: string;
+} {
+  const sources = trackingSources(order);
+  const trackingUrl = firstSafeUrl(
+    ...sources.flatMap(({ value, allowGenericUrl }) => [
+      value.trackingUrl,
+      value.tracking_url,
+      value.trackingURL,
+      value.parcelUrl,
+      value.parcel_url,
+      ...(allowGenericUrl ? [value.url] : []),
+    ]),
+  );
+
+  const trackingNumber = firstText(
+    ...sources.flatMap(({ value }) => [
+      value.trackingNumber,
+      value.tracking_number,
+      value.parcelNo,
+      value.parcel_no,
+      value.parcelNumber,
+      value.parcel_number,
+      value.consignmentNumber,
+      value.consignment_number,
+      value.waybill,
+    ]),
+    trackingNumberFromUrl(trackingUrl),
+  );
+
+  const shipmentStatus = firstText(
+    ...sources.flatMap(({ value }) => [
+      value.shipmentStatus,
+      value.shipment_status,
+      value.deliveryStatus,
+      value.delivery_status,
+      value.trackingStatus,
+      value.tracking_status,
+    ]),
+  );
+
+  return {
+    trackingNumber: clampText(trackingNumber, 128),
+    trackingUrl,
+    shipmentStatus: clampText(shipmentStatus, 256),
+  };
+}
+
+function trackingSources(order: UnknownRecord): Array<{
+  value: UnknownRecord;
+  allowGenericUrl: boolean;
+}> {
+  const values: Array<{ value: UnknownRecord; allowGenericUrl: boolean }> = [
+    { value: order, allowGenericUrl: false },
+  ];
+
+  for (const key of ['shipment', 'shipping', 'delivery', 'info']) {
+    const nested = asRecord(order[key]);
+    if (!nested) continue;
+    values.push({ value: nested, allowGenericUrl: false });
+    const tracking = asRecord(nested.tracking);
+    if (tracking) values.push({ value: tracking, allowGenericUrl: true });
+  }
+
+  const directTracking = asRecord(order.tracking);
+  if (directTracking) values.push({ value: directTracking, allowGenericUrl: true });
+  return values;
+}
+
+function trackingNumberFromUrl(value: string): string {
+  if (!value) return '';
+  try {
+    const url = new URL(value);
+    const aliases = new Set([
+      'refnumber',
+      'trackingnumber',
+      'tracking_number',
+      'parcelno',
+      'parcel_no',
+      'consignmentnumber',
+      'consignment_number',
+      'shipmentid',
+      'shipment_id',
+    ]);
+    for (const [key, candidate] of url.searchParams.entries()) {
+      if (!aliases.has(key.toLowerCase())) continue;
+      const normalized = candidate.trim();
+      if (isPlausibleTrackingNumber(normalized)) return normalized;
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+function isPlausibleTrackingNumber(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{4,127}$/.test(value);
+}
+
+function firstSafeUrl(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const text = value.trim();
+    if (!text || Buffer.byteLength(text, 'utf8') > 2048) continue;
+    try {
+      const url = new URL(text);
+      if (url.protocol === 'https:' && !url.username && !url.password) {
+        return url.toString();
+      }
+    } catch {
+      continue;
+    }
+  }
+  return '';
 }
 
 function classifyDispatch(
@@ -81,9 +211,13 @@ function normalizeDateSignal(value: unknown): string {
   return normalized.slice(0, 64);
 }
 
+function clampText(value: string, maxLength: number): string {
+  return String(value || '').slice(0, maxLength);
+}
+
 function firstText(...values: unknown[]): string {
   for (const value of values) {
-    if (value === null || value === undefined) continue;
+    if (value === null || value === undefined || typeof value === 'object') continue;
     const text = String(value).trim();
     if (text) return text.slice(0, 256);
   }
@@ -93,6 +227,10 @@ function firstText(...values: unknown[]): string {
 function unwrapRecord(value: unknown): UnknownRecord | null {
   if (!isRecord(value)) return null;
   return isRecord(value.data) ? value.data : value;
+}
+
+function asRecord(value: unknown): UnknownRecord | null {
+  return isRecord(value) ? value : null;
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
