@@ -27,7 +27,7 @@ env:
   ARTIFACT_REPOSITORY: harmoniq-containers
   WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
   DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
-  CANDIDATE_TAG: admin-reply-live-runtime-test
+  CANDIDATE_TAG: arlive-test
 
 jobs:
   deploy-and-verify:
