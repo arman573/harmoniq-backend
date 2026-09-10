@@ -46,7 +46,7 @@ describe('VendreOrderReadClient', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('uses a strict GET request and returns only projected status facts', async () => {
+  it('uses a strict GET request and returns only projected order and tracking facts', async () => {
     allowRead();
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
       jsonResponse({
@@ -55,6 +55,11 @@ describe('VendreOrderReadClient', () => {
         status_name: 'Skickad',
         date_added: '2026-08-12T10:00:00Z',
         shipping_date: '2026-08-13T09:00:00Z',
+        shipment: {
+          parcelNo: 'ABC12345',
+          trackingUrl: 'https://carrier.example.test/track/ABC12345',
+          shipmentStatus: 'På väg',
+        },
         extra_field: 'not-projected',
       }),
     );
@@ -68,6 +73,9 @@ describe('VendreOrderReadClient', () => {
         createdAt: '2026-08-12T10:00:00Z',
         shippingDate: '2026-08-13T09:00:00Z',
         dispatchState: 'dispatched',
+        trackingNumber: 'ABC12345',
+        trackingUrl: 'https://carrier.example.test/track/ABC12345',
+        shipmentStatus: 'På väg',
       },
     });
 
