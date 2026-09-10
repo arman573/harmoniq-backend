@@ -2,7 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { ConversationCustomerVerificationStore } from '../identity/conversation-customer-verification.store';
 import { VerifiedCustomerContextStore } from '../identity/verified-customer-context.store';
 import { TrackingReadClient } from './tracking-read.client';
-import type { TrackingReadResult } from './tracking-read.types';
+import type { TrackingReadOrder, TrackingReadResult } from './tracking-read.types';
+import { VendreOrderReadClient } from './vendre-order-read.client';
+import type { SafeVendreOrderRead } from './vendre-order-read.types';
 
 export type VerifiedTrackingReadInput = {
   conversationId: string;
@@ -25,6 +27,7 @@ export class VerifiedTrackingReadService {
     private readonly conversationVerificationStore: ConversationCustomerVerificationStore,
     private readonly verifiedCustomerContextStore: VerifiedCustomerContextStore,
     private readonly trackingReadClient: TrackingReadClient,
+    private readonly vendreOrderReadClient: VendreOrderReadClient,
   ) {}
 
   async getTracking(
@@ -66,6 +69,42 @@ export class VerifiedTrackingReadService {
       };
     }
 
+    const vendreOrder = await this.vendreOrderReadClient.getOrder(input.orderId);
+    if (vendreOrder.ok) {
+      const tracking = projectVendreTracking(vendreOrder.order);
+      if (tracking) {
+        return { ok: true, tracking };
+      }
+    }
+
     return this.trackingReadClient.getTracking(input.orderId);
   }
+}
+
+function projectVendreTracking(order: SafeVendreOrderRead): TrackingReadOrder | null {
+  const parcelNo = cleanNullable(order.trackingNumber);
+  const trackingUrl = cleanNullable(order.trackingUrl);
+  if (!parcelNo && !trackingUrl) return null;
+
+  const shipmentStatus = cleanNullable(order.shipmentStatus || order.status);
+  const message = parcelNo
+    ? `Vendre visar spårningsnummer ${parcelNo} för order ${order.orderId}.`
+    : `Vendre har en spårningslänk för order ${order.orderId}.`;
+
+  return {
+    orderId: order.orderId,
+    deliveryMethod: null,
+    deliveryType: 'other',
+    carrier: null,
+    shipmentStatus,
+    trackingUrl,
+    parcelNo,
+    available: true,
+    message,
+  };
+}
+
+function cleanNullable(value: string): string | null {
+  const normalized = String(value || '').trim();
+  return normalized || null;
 }
