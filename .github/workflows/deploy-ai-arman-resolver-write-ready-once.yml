@@ -1,0 +1,201 @@
+name: Deploy AI Arman resolver write ready candidate once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  candidate:
+    if: github.event.head_commit.message == 'Deploy AI Arman resolver write ready candidate'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      PROJECT_ID: harmoniq-210513
+      REGION: europe-north1
+      SERVICE_NAME: harmoniq-ai-arman-beta0
+      RETURNS_SERVICE_NAME: harmoniq-returns-api
+      RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+      SOURCE_SHA: 3298af83deea3d186f4295e4637b20e62badb0a5
+      SOURCE_TAG: resolver-ai-3298af83
+      CANDIDATE_TAG: resolver-ready-3298af83
+      CASE_ID: HQR-2493614
+      RESULT_PATH: docs/ai-arman/ADMIN_RESOLVER_WRITE_READY_CANDIDATE.md
+      WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+      DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+          fetch-depth: 1
+
+      - name: Guard actor and branch
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTOR" = 'arman573'
+          test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Snapshot live AI boundary and recover exact verified image plus Returns gateway config
+        id: before
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/ai.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam.json" >/dev/null; then exit 1; fi
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/ai.json" > "$RUNNER_TEMP/positive-before.json"
+          SOURCE_REV="$(jq -r --arg tag "$SOURCE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/ai.json" | head -n1)"
+          AI_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/ai.json")"
+          test -n "$SOURCE_REV"; test -n "$AI_URL"
+          gcloud run revisions describe "$SOURCE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/source.json"
+          IMAGE="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/source.json")"
+          test -n "$IMAGE"
+
+          gcloud run services describe "$RETURNS_SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns.json"
+          RETURNS_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/returns.json")"
+          RETURNS_REV="$(jq -r '[.status.traffic[]? | select((.percent // 0)>0)] | sort_by(.percent) | last | .revisionName // empty' "$RUNNER_TEMP/returns.json")"
+          test -n "$RETURNS_URL"; test -n "$RETURNS_REV"
+          gcloud run revisions describe "$RETURNS_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/returns-rev.json"
+          envr(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/returns-rev.json"; }
+          FULL_TOKEN="$(envr AI_ARMAN_FULL_ADMIN_ACCESS_TOKEN)"
+          test "$(envr AI_ARMAN_FULL_ADMIN_ENABLED)" = 'true'
+          test "${#FULL_TOKEN}" -ge 32
+          echo "::add-mask::$FULL_TOKEN"
+          echo "::add-mask::$RETURNS_URL"
+          echo "FULL_TOKEN=$FULL_TOKEN" >> "$GITHUB_ENV"
+          echo "RETURNS_URL=$RETURNS_URL" >> "$GITHUB_ENV"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "ai_url=$AI_URL" >> "$GITHUB_OUTPUT"
+          echo "returns_rev=$RETURNS_REV" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy zero traffic write-ready AI resolver candidate
+        id: deploy
+        env:
+          IMAGE: ${{ steps.before.outputs.image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_TOKEN="$(printf 'resolver:%s' "$SOURCE_SHA" | sha256sum | awk '{print $1}')"
+          echo "::add-mask::$APP_TOKEN"
+          gcloud run deploy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --platform managed \
+            --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --revision-suffix "resolverready-${SOURCE_SHA:0:8}-${GITHUB_RUN_NUMBER}" \
+            --tag "$CANDIDATE_TAG" --no-traffic \
+            --update-env-vars "AI_ARMAN_ADMIN_RESOLVER_ENABLED=true,AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN=$APP_TOKEN,AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED=true,AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED=true,AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL=$RETURNS_URL,AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE=$RETURNS_URL,AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN=$FULL_TOKEN,AI_ARMAN_RETURNS_ADMIN_GATEWAY_TIMEOUT_MS=20000,AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED=true,AI_ARMAN_MODEL_PROMOTION_ENABLED=false" \
+            --quiet
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/after.json"
+          REV="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/after.json" | head -n1)"
+          URL="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/after.json" | head -n1)"
+          test -n "$REV"; test -n "$URL"
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/after.json")" = '0'
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Verify write-ready config, private IAM and unchanged live traffic
+        env:
+          REV: ${{ steps.deploy.outputs.revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/final.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-after.json" >/dev/null; then exit 1; fi
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/final.json" > "$RUNNER_TEMP/positive-after.json"
+          cmp "$RUNNER_TEMP/positive-before.json" "$RUNNER_TEMP/positive-after.json"
+          gcloud run revisions describe "$REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/rev.json"
+          envc(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/rev.json"; }
+          test "$(envc AI_ARMAN_ADMIN_RESOLVER_ENABLED)" = 'true'
+          test "$(envc AI_ARMAN_ADMIN_REPLY_DRAFT_ENABLED)" = 'true'
+          test "$(envc AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED)" = 'true'
+          test "$(envc AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED)" = 'true'
+          test "$(envc AI_ARMAN_MODEL_PROMOTION_ENABLED)" = 'false'
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/final.json")" = '0'
+
+      - name: Mint private identity token
+        id: idtoken
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ steps.before.outputs.ai_url }}
+          id_token_include_email: true
+          create_credentials_file: false
+
+      - name: Verify prepare and fail-closed execute paths without performing a write
+        id: probe
+        env:
+          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+          TAG_URL: ${{ steps.deploy.outputs.url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ID_TOKEN"
+          APP_TOKEN="$(printf 'resolver:%s' "$SOURCE_SHA" | sha256sum | awk '{print $1}')"
+          echo "::add-mask::$APP_TOKEN"
+
+          PREPARE_CODE="$(curl --max-time 70 -sS -o "$RUNNER_TEMP/prepare.json" -w '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $APP_TOKEN" --header 'Content-Type: application/json' --data "{\"caseId\":\"$CASE_ID\"}" "$TAG_URL/ai-arman/internal/admin-resolver/prepare" || true)"
+          [[ "$PREPARE_CODE" == '200' || "$PREPARE_CODE" == '201' ]]
+          jq -e --arg id "$CASE_ID" '.ok==true and .mode=="prepare" and .caseId==$id and .verifiedCase==true and .verifiedOrderContext==true and .analysisStatus=="available" and .draftStatus=="available" and .executesWrites==false and .sendsCustomerMessage==false' "$RUNNER_TEMP/prepare.json" >/dev/null
+
+          DENIED_CODE="$(curl --max-time 20 -sS -o "$RUNNER_TEMP/denied.json" -w '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $APP_TOKEN" --header 'Content-Type: application/json' --data "{\"caseId\":\"$CASE_ID\",\"approved\":false,\"action\":\"case.complete\"}" "$TAG_URL/ai-arman/internal/admin-resolver/execute" || true)"
+          [[ "$DENIED_CODE" == '200' || "$DENIED_CODE" == '201' ]]
+          jq -e '.ok==false and .code=="resolver_explicit_approval_required" and .writeExecuted==false' "$RUNNER_TEMP/denied.json" >/dev/null
+
+          UNSUPPORTED_CODE="$(curl --max-time 20 -sS -o "$RUNNER_TEMP/unsupported.json" -w '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $APP_TOKEN" --header 'Content-Type: application/json' --data "{\"caseId\":\"$CASE_ID\",\"approved\":true,\"action\":\"refund.issue\"}" "$TAG_URL/ai-arman/internal/admin-resolver/execute" || true)"
+          [[ "$UNSUPPORTED_CODE" == '200' || "$UNSUPPORTED_CODE" == '201' ]]
+          jq -e '.ok==false and .code=="invalid_resolver_execute_request" and .writeExecuted==false' "$RUNNER_TEMP/unsupported.json" >/dev/null
+
+      - name: Record write-ready PASS
+        env:
+          REV: ${{ steps.deploy.outputs.revision }}
+          URL: ${{ steps.deploy.outputs.url }}
+          RETURNS_REV: ${{ steps.before.outputs.returns_rev }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin feature/ai-arman-foundation-v1
+          git checkout -B result origin/feature/ai-arman-foundation-v1
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman resolver write-ready candidate
+
+          - Verified at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Frozen resolver source: \`$SOURCE_SHA\`
+          - Overall: **PASS**
+          - Candidate revision: \`$REV\`
+          - Candidate URL: \`$URL\`
+          - Candidate traffic: **0%**
+          - Production positive traffic: **unchanged**
+          - Private IAM: **PASS**
+          - Resolver enabled: **true**
+          - Reply draft enabled and real draft available: **true**
+          - Admin gateway source Returns revision: \`$RETURNS_REV\`
+          - AI admin write gate configured: **true**
+          - Model promotion: **false**
+          - Real prepare with verified case/order/analysis/draft: **PASS**
+          - Execute with approved=false: **blocked**
+          - Unsupported approved action: **blocked**
+          - Real supported write executed during candidate verification: **false**
+          - Customer message sent during candidate verification: **false**
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record AI Arman resolver write ready candidate'
+          git push origin HEAD:feature/ai-arman-foundation-v1

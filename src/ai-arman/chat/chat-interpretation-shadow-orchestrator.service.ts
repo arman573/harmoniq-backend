@@ -1,0 +1,473 @@
+import { Injectable, Optional } from '@nestjs/common';
+import {
+  ChatInterpretationProvider,
+  ChatInterpretationProviderError,
+  type AiArmanInterpretationProviderErrorCode,
+  type AiArmanInterpretationProviderInput,
+  type AiArmanInterpretationProviderMetadata,
+  type AiArmanInterpretationProviderResult,
+} from './chat-interpretation.provider';
+import {
+  ChatInterpretationPromotionService,
+  type ChatInterpretationPromotionDecision,
+} from './chat-interpretation-promotion.service';
+import {
+  ChatInterpretationShadowAuditSink,
+  type ChatInterpretationShadowAuditRecord,
+} from './chat-interpretation-shadow-audit.store';
+import { ChatInterpretationShadowConfig } from './chat-interpretation-shadow.config';
+import {
+  ChatInterpretationShadowService,
+  type ChatInterpretationShadowComparison,
+} from './chat-interpretation-shadow.service';
+import type { AiArmanInterpretation } from './chat-messages.types';
+
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const MAX_METADATA_LENGTH = 120;
+
+type ProviderUsageWindowEntry = {
+  recordedAt: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+};
+
+type ClassifiedProviderStatus =
+  | 'provider_authentication'
+  | 'provider_quota'
+  | 'provider_unavailable'
+  | 'provider_invalid_response';
+
+export type ChatInterpretationShadowUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number | null;
+};
+
+export type ChatInterpretationShadowRunResult =
+  | {
+      status: 'disabled';
+      comparison: null;
+    }
+  | {
+      status: 'provider_not_configured';
+      comparison: null;
+    }
+  | {
+      status: 'completed';
+      comparison: ChatInterpretationShadowComparison;
+      promotion: ChatInterpretationPromotionDecision | null;
+      usage: ChatInterpretationShadowUsage;
+    }
+  | {
+      status: 'provider_rate_limited';
+      comparison: null;
+    }
+  | {
+      status: 'provider_concurrency_limited';
+      comparison: null;
+    }
+  | {
+      status: 'provider_budget_exceeded';
+      comparison: null;
+      usage: ChatInterpretationShadowUsage | null;
+    }
+  | {
+      status: 'provider_timeout';
+      comparison: null;
+    }
+  | {
+      status: ClassifiedProviderStatus;
+      comparison: null;
+    }
+  | {
+      status: 'provider_error';
+      comparison: null;
+    };
+
+@Injectable()
+export class ChatInterpretationShadowOrchestrator {
+  private readonly providerCallTimes: number[] = [];
+  private readonly providerUsageWindow: ProviderUsageWindowEntry[] = [];
+  private activeProviderCalls = 0;
+
+  constructor(
+    private readonly config: ChatInterpretationShadowConfig,
+    private readonly shadow: ChatInterpretationShadowService,
+    @Optional()
+    private readonly provider?: ChatInterpretationProvider,
+    @Optional()
+    private readonly auditSink?: ChatInterpretationShadowAuditSink,
+    @Optional()
+    private readonly promotionService?: ChatInterpretationPromotionService,
+  ) {}
+
+  async run(
+    deterministic: AiArmanInterpretation,
+    input: AiArmanInterpretationProviderInput,
+  ): Promise<ChatInterpretationShadowRunResult> {
+    if (!this.config.isEnabled()) {
+      return { status: 'disabled', comparison: null };
+    }
+
+    if (!this.provider) {
+      return { status: 'provider_not_configured', comparison: null };
+    }
+
+    let metadata: AiArmanInterpretationProviderMetadata;
+    try {
+      metadata = normalizeMetadata(this.provider.metadata());
+    } catch {
+      return { status: 'provider_error', comparison: null };
+    }
+
+    const now = Date.now();
+    if (this.minuteBudgetExhausted(now)) {
+      this.recordAudit(metadata, {
+        status: 'provider_budget_exceeded',
+        latencyMs: null,
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        estimatedCostUsd: null,
+        candidateValid: null,
+        primaryIntentMatch: null,
+      });
+      return {
+        status: 'provider_budget_exceeded',
+        comparison: null,
+        usage: null,
+      };
+    }
+
+    if (!this.acquireProviderSlot()) {
+      this.recordAudit(metadata, {
+        status: 'provider_concurrency_limited',
+        latencyMs: null,
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        estimatedCostUsd: null,
+        candidateValid: null,
+        primaryIntentMatch: null,
+      });
+      return { status: 'provider_concurrency_limited', comparison: null };
+    }
+
+    if (!this.reserveProviderCall(now)) {
+      this.releaseProviderSlot();
+      this.recordAudit(metadata, {
+        status: 'provider_rate_limited',
+        latencyMs: null,
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        estimatedCostUsd: null,
+        candidateValid: null,
+        primaryIntentMatch: null,
+      });
+      return { status: 'provider_rate_limited', comparison: null };
+    }
+
+    const startedAt = Date.now();
+
+    try {
+      const result = await withTimeout(
+        this.provider.interpret(input),
+        this.config.providerTimeoutMs(),
+      );
+      const usage = normalizeUsage(result);
+      const completedAt = Date.now();
+      this.recordProviderUsage(completedAt, usage);
+
+      if (this.usageExceedsBudget(completedAt, usage)) {
+        this.recordAudit(metadata, {
+          status: 'provider_budget_exceeded',
+          latencyMs: Math.max(0, completedAt - startedAt),
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          totalTokens: usage.totalTokens,
+          estimatedCostUsd: usage.estimatedCostUsd,
+          candidateValid: null,
+          primaryIntentMatch: null,
+        });
+        return {
+          status: 'provider_budget_exceeded',
+          comparison: null,
+          usage,
+        };
+      }
+
+      const comparison = this.shadow.compare(deterministic, result.candidate);
+      const promotion =
+        comparison.status === 'valid_candidate' && this.promotionService
+          ? this.promotionService.evaluate(deterministic, result.candidate)
+          : null;
+
+      this.recordAudit(metadata, {
+        status: 'completed',
+        latencyMs: Math.max(0, completedAt - startedAt),
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+        estimatedCostUsd: usage.estimatedCostUsd,
+        candidateValid: comparison.status === 'valid_candidate',
+        primaryIntentMatch: comparison.primaryIntentMatch,
+      });
+
+      return {
+        status: 'completed',
+        comparison,
+        promotion,
+        usage,
+      };
+    } catch (error) {
+      const latencyMs = Math.max(0, Date.now() - startedAt);
+
+      if (error instanceof ShadowProviderTimeoutError) {
+        this.recordAudit(metadata, {
+          status: 'provider_timeout',
+          latencyMs,
+          inputTokens: null,
+          outputTokens: null,
+          totalTokens: null,
+          estimatedCostUsd: null,
+          candidateValid: null,
+          primaryIntentMatch: null,
+        });
+        return { status: 'provider_timeout', comparison: null };
+      }
+
+      if (error instanceof ChatInterpretationProviderError) {
+        const status = mapProviderErrorStatus(error.code);
+        this.recordAudit(metadata, {
+          status,
+          latencyMs,
+          inputTokens: null,
+          outputTokens: null,
+          totalTokens: null,
+          estimatedCostUsd: null,
+          candidateValid: null,
+          primaryIntentMatch: null,
+        });
+        return { status, comparison: null };
+      }
+
+      this.recordAudit(metadata, {
+        status: 'provider_error',
+        latencyMs,
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        estimatedCostUsd: null,
+        candidateValid: null,
+        primaryIntentMatch: null,
+      });
+      return { status: 'provider_error', comparison: null };
+    } finally {
+      this.releaseProviderSlot();
+    }
+  }
+
+  private acquireProviderSlot(): boolean {
+    if (
+      this.activeProviderCalls >= this.config.maxConcurrentProviderCalls()
+    ) {
+      return false;
+    }
+
+    this.activeProviderCalls += 1;
+    return true;
+  }
+
+  private releaseProviderSlot(): void {
+    this.activeProviderCalls = Math.max(0, this.activeProviderCalls - 1);
+  }
+
+  private reserveProviderCall(now: number): boolean {
+    const cutoff = now - RATE_LIMIT_WINDOW_MS;
+    while (
+      this.providerCallTimes.length > 0 &&
+      this.providerCallTimes[0] <= cutoff
+    ) {
+      this.providerCallTimes.shift();
+    }
+
+    if (
+      this.providerCallTimes.length >= this.config.maxProviderCallsPerMinute()
+    ) {
+      return false;
+    }
+
+    this.providerCallTimes.push(now);
+    return true;
+  }
+
+  private pruneUsageWindow(now: number): void {
+    const cutoff = now - RATE_LIMIT_WINDOW_MS;
+    while (
+      this.providerUsageWindow.length > 0 &&
+      this.providerUsageWindow[0].recordedAt <= cutoff
+    ) {
+      this.providerUsageWindow.shift();
+    }
+  }
+
+  private minuteBudgetExhausted(now: number): boolean {
+    this.pruneUsageWindow(now);
+    const totals = this.currentUsageTotals();
+    return (
+      totals.tokens >= this.config.maxProviderTokensPerMinute() ||
+      totals.costUsd >= this.config.maxEstimatedCostUsdPerMinute()
+    );
+  }
+
+  private usageExceedsBudget(
+    now: number,
+    usage: ChatInterpretationShadowUsage,
+  ): boolean {
+    this.pruneUsageWindow(now);
+    const totals = this.currentUsageTotals();
+    return (
+      usage.totalTokens > this.config.maxProviderTokensPerCall() ||
+      (usage.estimatedCostUsd !== null &&
+        usage.estimatedCostUsd > this.config.maxEstimatedCostUsdPerCall()) ||
+      totals.tokens > this.config.maxProviderTokensPerMinute() ||
+      totals.costUsd > this.config.maxEstimatedCostUsdPerMinute()
+    );
+  }
+
+  private recordProviderUsage(
+    now: number,
+    usage: ChatInterpretationShadowUsage,
+  ): void {
+    this.pruneUsageWindow(now);
+    this.providerUsageWindow.push({
+      recordedAt: now,
+      totalTokens: usage.totalTokens,
+      estimatedCostUsd: usage.estimatedCostUsd ?? 0,
+    });
+  }
+
+  private currentUsageTotals(): { tokens: number; costUsd: number } {
+    return this.providerUsageWindow.reduce(
+      (total, entry) => ({
+        tokens: total.tokens + entry.totalTokens,
+        costUsd: total.costUsd + entry.estimatedCostUsd,
+      }),
+      { tokens: 0, costUsd: 0 },
+    );
+  }
+
+  private recordAudit(
+    metadata: AiArmanInterpretationProviderMetadata,
+    record: Omit<
+      ChatInterpretationShadowAuditRecord,
+      'recordedAt' | 'provider' | 'modelVersion' | 'promptVersion'
+    >,
+  ): void {
+    if (!this.auditSink) return;
+
+    try {
+      this.auditSink.record({
+        recordedAt: new Date().toISOString(),
+        provider: metadata.provider,
+        modelVersion: metadata.modelVersion,
+        promptVersion: metadata.promptVersion,
+        ...record,
+      });
+    } catch {
+      // Audit must never affect the customer-facing deterministic path.
+    }
+  }
+}
+
+class ShadowProviderTimeoutError extends Error {
+  constructor() {
+    super('shadow_provider_timeout');
+  }
+}
+
+function mapProviderErrorStatus(
+  code: AiArmanInterpretationProviderErrorCode,
+): ClassifiedProviderStatus {
+  switch (code) {
+    case 'authentication':
+      return 'provider_authentication';
+    case 'quota':
+      return 'provider_quota';
+    case 'unavailable':
+      return 'provider_unavailable';
+    case 'invalid_response':
+      return 'provider_invalid_response';
+  }
+}
+
+function normalizeMetadata(
+  metadata: AiArmanInterpretationProviderMetadata,
+): AiArmanInterpretationProviderMetadata {
+  return {
+    provider: normalizeMetadataValue(metadata.provider),
+    modelVersion: normalizeMetadataValue(metadata.modelVersion),
+    promptVersion: normalizeMetadataValue(metadata.promptVersion),
+  };
+}
+
+function normalizeMetadataValue(value: string): string {
+  if (typeof value !== 'string') {
+    throw new Error('shadow_provider_metadata_invalid');
+  }
+
+  const normalized = value.trim();
+  if (!normalized || normalized.length > MAX_METADATA_LENGTH) {
+    throw new Error('shadow_provider_metadata_invalid');
+  }
+  return normalized;
+}
+
+function normalizeUsage(
+  result: AiArmanInterpretationProviderResult,
+): ChatInterpretationShadowUsage {
+  const usage = result.usage;
+  assertNonNegativeInteger(usage.inputTokens);
+  assertNonNegativeInteger(usage.outputTokens);
+
+  if (
+    usage.estimatedCostUsd !== undefined &&
+    (!Number.isFinite(usage.estimatedCostUsd) || usage.estimatedCostUsd < 0)
+  ) {
+    throw new Error('shadow_provider_usage_invalid');
+  }
+
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.inputTokens + usage.outputTokens,
+    estimatedCostUsd: usage.estimatedCostUsd ?? null,
+  };
+}
+
+function assertNonNegativeInteger(value: number) {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error('shadow_provider_usage_invalid');
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new ShadowProviderTimeoutError());
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}

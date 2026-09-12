@@ -1,0 +1,255 @@
+name: AI Arman customer gateway private candidate v3 once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: ai-arman-customer-gateway-private-candidate-v3-once
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: harmoniq-210513
+  REGION: europe-north1
+  ARTIFACT_REPOSITORY: harmoniq-containers
+  SERVICE_NAME: harmoniq-ai-arman-customer-gateway-candidate
+  LIVE_AI_SERVICE: harmoniq-ai-arman-beta0
+  RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+  RESULT_PATH: docs/ai-arman/CUSTOMER_GATEWAY_PRIVATE_CANDIDATE_LATEST.md
+
+jobs:
+  deploy-private-candidate:
+    if: github.event.head_commit.message == 'Deploy private customer gateway candidate v3 once'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Re-run source gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test -- --runInBand
+          npm run build
+          docker build -f Dockerfile.ai-arman-customer-gateway -t ai-arman-customer-gateway:private-v3 .
+
+          CONTAINER_ID="$(docker run -d \
+            -p 18081:8080 \
+            -e PORT=8080 \
+            -e AI_ARMAN_CUSTOMER_WIDGET_ENABLED=true \
+            -e AI_ARMAN_CUSTOMER_IDENTITY_ENABLED=false \
+            -e AI_ARMAN_CUSTOMER_OTP_EMAIL_ENABLED=false \
+            -e AI_ARMAN_VENDRE_CUSTOMER_DIRECTORY_ENABLED=false \
+            -e AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false \
+            -e AI_ARMAN_MODEL_SHADOW_ENABLED=false \
+            -e AI_ARMAN_MODEL_PROMOTION_ENABLED=false \
+            ai-arman-customer-gateway:private-v3)"
+          cleanup() { docker logs "$CONTAINER_ID" || true; docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          for attempt in {1..30}; do
+            if curl --silent --fail http://127.0.0.1:18081/health > "$RUNNER_TEMP/local-health.json"; then break; fi
+            sleep 1
+          done
+          jq -e '.ok == true and .productionActionsEnabled == false' "$RUNNER_TEMP/local-health.json" >/dev/null
+          test "$(curl --silent --output "$RUNNER_TEMP/local-widget.js" --write-out '%{http_code}' http://127.0.0.1:18081/ai-arman/customer/widget.js)" = "200"
+          grep -F "const apiBase = '/ai-arman/customer'" "$RUNNER_TEMP/local-widget.js" >/dev/null
+          grep -F "apiBase + '/identity/start'" "$RUNNER_TEMP/local-widget.js" >/dev/null
+          grep -F 'sessionStorage' "$RUNNER_TEMP/local-widget.js" >/dev/null
+          if grep -Eqi '\.innerHTML|eval\(|localStorage|window\.customer|customerId' "$RUNNER_TEMP/local-widget.js"; then
+            echo 'Unsafe widget marker found.' >&2
+            exit 1
+          fi
+
+      - name: Authenticate deployer
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Snapshot live AI boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' | head -n 1)"
+          test "$ACTIVE_ACCOUNT" = "$DEPLOY_SERVICE_ACCOUNT"
+          gcloud run services describe "$LIVE_AI_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/live-before.json"
+          jq -S '[.status.traffic[]? | select((.percent // 0) > 0) | {revisionName,percent:(.percent // 0),tag:(.tag // "")} ] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/live-before.json" > "$RUNNER_TEMP/live-traffic-before.json"
+          test "$(jq '[.[].percent] | sort == [1,99]' "$RUNNER_TEMP/live-traffic-before.json")" = "true"
+          test "$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/live-before.json")" = "2"
+
+      - name: Build and push unique image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA:0:12}"
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:private-v3-$SHORT_SHA-$GITHUB_RUN_ID"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build --pull -f Dockerfile.ai-arman-customer-gateway --tag "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy separate private gateway candidate
+        id: deploy
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA:0:8}"
+          gcloud run deploy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --platform managed \
+            --image "$IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --revision-suffix "private-v3-${SHORT_SHA}-${GITHUB_RUN_NUMBER}" \
+            --ingress all \
+            --port 8080 \
+            --cpu 1 \
+            --memory 256Mi \
+            --cpu-throttling \
+            --no-cpu-boost \
+            --min 0 \
+            --max 1 \
+            --concurrency 10 \
+            --timeout 30 \
+            --set-env-vars "NODE_ENV=production,AI_ARMAN_CUSTOMER_WIDGET_ENABLED=true,AI_ARMAN_CUSTOMER_IDENTITY_ENABLED=false,AI_ARMAN_CUSTOMER_OTP_EMAIL_ENABLED=false,AI_ARMAN_VENDRE_CUSTOMER_DIRECTORY_ENABLED=false,AI_ARMAN_WIDGET_PREVIEW_ENABLED=false,AI_ARMAN_MODEL_INTERPRETATION_ENABLED=false,AI_ARMAN_MODEL_SHADOW_ENABLED=false,AI_ARMAN_MODEL_PROMOTION_ENABLED=false" \
+            --labels "release=customer-gateway-private-candidate-v3,source-sha=$SHORT_SHA,identity=off,public=off" \
+            --quiet
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/gateway.json"
+          REVISION="$(jq -r '.status.latestReadyRevisionName // empty' "$RUNNER_TEMP/gateway.json")"
+          SERVICE_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/gateway.json")"
+          test -n "$REVISION"
+          test -n "$SERVICE_URL"
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+          echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Verify gateway config privacy and unchanged live AI
+        id: verify
+        shell: bash
+        env:
+          REVISION: ${{ steps.deploy.outputs.revision }}
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/gateway-after.json"
+          gcloud run revisions describe "$REVISION" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/gateway-revision.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/gateway-iam.json"
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/gateway-iam.json" >/dev/null; then
+            echo 'Gateway candidate unexpectedly has public IAM.' >&2
+            exit 1
+          fi
+          test "$(jq -r '.spec.template.spec.serviceAccountName // empty' "$RUNNER_TEMP/gateway-after.json")" = "$RUNTIME_SERVICE_ACCOUNT"
+          test "$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/gateway-after.json")" = "1"
+          test "$(jq -r '.spec.containerConcurrency' "$RUNNER_TEMP/gateway-revision.json")" = "10"
+          IMAGE_RESOLVED="$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/gateway-revision.json")"
+          test -n "$IMAGE_RESOLVED"
+          env_value() { jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name == $n) | .value // empty' "$RUNNER_TEMP/gateway-revision.json"; }
+          test "$(env_value AI_ARMAN_CUSTOMER_WIDGET_ENABLED)" = "true"
+          test "$(env_value AI_ARMAN_CUSTOMER_IDENTITY_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_CUSTOMER_OTP_EMAIL_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_VENDRE_CUSTOMER_DIRECTORY_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_MODEL_SHADOW_ENABLED)" = "false"
+          test "$(env_value AI_ARMAN_MODEL_PROMOTION_ENABLED)" = "false"
+
+          gcloud run services describe "$LIVE_AI_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/live-after.json"
+          jq -S '[.status.traffic[]? | select((.percent // 0) > 0) | {revisionName,percent:(.percent // 0),tag:(.tag // "")} ] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/live-after.json" > "$RUNNER_TEMP/live-traffic-after.json"
+          diff -u "$RUNNER_TEMP/live-traffic-before.json" "$RUNNER_TEMP/live-traffic-after.json"
+          test "$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' "$RUNNER_TEMP/live-after.json")" = "2"
+          echo "resolved_image=$IMAGE_RESOLVED" >> "$GITHUB_OUTPUT"
+
+      - name: Probe private invocation without changing IAM
+        id: probe
+        continue-on-error: true
+        shell: bash
+        env:
+          SERVICE_URL: ${{ steps.deploy.outputs.service_url }}
+        run: |
+          set -u
+          TOKEN_STATUS=unavailable
+          HEALTH_HTTP='-'
+          WIDGET_HTTP='-'
+          INTERNAL_HTTP='-'
+          ID_TOKEN="$(gcloud auth print-identity-token --audiences="$SERVICE_URL" 2>/dev/null || true)"
+          if [ -n "$ID_TOKEN" ]; then
+            TOKEN_STATUS=minted
+            echo "::add-mask::$ID_TOKEN"
+            HEALTH_HTTP="$(curl --silent --show-error --max-time 15 --output "$RUNNER_TEMP/health.json" --write-out '%{http_code}' --header "Authorization: Bearer $ID_TOKEN" "$SERVICE_URL/health" 2>/dev/null || true)"
+            WIDGET_HTTP="$(curl --silent --show-error --max-time 15 --output "$RUNNER_TEMP/widget.js" --write-out '%{http_code}' --header "Authorization: Bearer $ID_TOKEN" "$SERVICE_URL/ai-arman/customer/widget.js" 2>/dev/null || true)"
+            INTERNAL_HTTP="$(curl --silent --show-error --max-time 15 --output "$RUNNER_TEMP/internal.json" --write-out '%{http_code}' --header "Authorization: Bearer $ID_TOKEN" "$SERVICE_URL/ai-arman/foundation" 2>/dev/null || true)"
+          fi
+          echo "token_status=$TOKEN_STATUS" >> "$GITHUB_OUTPUT"
+          echo "health_http=$HEALTH_HTTP" >> "$GITHUB_OUTPUT"
+          echo "widget_http=$WIDGET_HTTP" >> "$GITHUB_OUTPUT"
+          echo "internal_http=$INTERNAL_HTTP" >> "$GITHUB_OUTPUT"
+
+      - name: Write candidate checkpoint
+        shell: bash
+        env:
+          REVISION: ${{ steps.deploy.outputs.revision }}
+          SERVICE_URL: ${{ steps.deploy.outputs.service_url }}
+          RESOLVED_IMAGE: ${{ steps.verify.outputs.resolved_image }}
+          TOKEN_STATUS: ${{ steps.probe.outputs.token_status }}
+          HEALTH_HTTP: ${{ steps.probe.outputs.health_http }}
+          WIDGET_HTTP: ${{ steps.probe.outputs.widget_http }}
+          INTERNAL_HTTP: ${{ steps.probe.outputs.internal_http }}
+        run: |
+          set -euo pipefail
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman – customer gateway private candidate latest
+
+          - Verified at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Overall configuration: **PASS**
+          - Source commit: \`$GITHUB_SHA\`
+          - Revision: \`$REVISION\`
+          - Service URL: \`$SERVICE_URL\`
+          - Resolved image configured: **yes**
+          - Service visibility: **private; no allUsers/allAuthenticatedUsers IAM**
+          - Customer widget: **enabled**
+          - Customer identity: **disabled**
+          - Gmail OTP: **disabled**
+          - Vendre customer directory: **disabled**
+          - Model interpretation/shadow/promotion: **disabled**
+          - Production actions: **disabled**
+          - Live AI traffic: **unchanged 1/99**
+          - Live AI max instances: **unchanged 2**
+          - Gateway max instances: **1**
+          - Private ID token: \`$TOKEN_STATUS\`
+          - Private /health HTTP probe: \`$HEALTH_HTTP\`
+          - Private widget HTTP probe: \`$WIDGET_HTTP\`
+          - Private internal-route HTTP probe: \`$INTERNAL_HTTP\`
+
+          A 403 invocation result is acceptable for this private candidate when the deploy identity has no Cloud Run Invoker grant. No public IAM is added by this workflow.
+          EOF
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record private customer gateway candidate v3' || exit 0
+          git push origin HEAD:feature/ai-arman-foundation-v1

@@ -44,7 +44,6 @@ export class TicketsService {
 
     const saved = await this.ticketRepository.save(ticket);
 
-    // system event
     await this.eventRepository.save(
       this.eventRepository.create({
         type: 'ticket_created',
@@ -58,7 +57,7 @@ export class TicketsService {
 
   getTickets() {
     return this.ticketRepository.find({
-      relations: { messages: true, customer: true, owner: true },
+      relations: { messages: true, customer: true },
       order: { createdAt: 'DESC' },
     });
   }
@@ -66,7 +65,7 @@ export class TicketsService {
   async getTicket(id: number) {
     const ticket = await this.ticketRepository.findOne({
       where: { id },
-      relations: { messages: true, customer: true, owner: true },
+      relations: { messages: true, customer: true },
     });
 
     if (!ticket) {
@@ -103,7 +102,6 @@ export class TicketsService {
         }),
       );
 
-      // naive fact extraction
       if (data.content.toLowerCase().includes('känslig hud')) {
         await this.factRepository.save(
           this.factRepository.create({

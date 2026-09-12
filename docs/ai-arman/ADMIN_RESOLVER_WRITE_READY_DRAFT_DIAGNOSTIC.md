@@ -1,0 +1,22 @@
+# AI Arman write-ready draft diagnostic
+
+- Checked at: 2026-08-20T21:35:07Z
+- Run ID: 32420088507
+- Candidate revision: `harmoniq-ai-arman-beta0-resolverready-3298af83-1`
+- Candidate traffic: **0%**
+- Reply draft enabled: `true`
+- Model interpretation enabled: `true`
+- Model: `gpt-5-mini`
+- Reply timeout ms: `15000`
+- Model timeout ms: `10000`
+- Reply access token configured: **false**
+- Resolver access token configured: **true**
+- OpenAI Secret Manager reference present: **true**
+- Isolated synthetic draft HTTP: `not-run`
+- Isolated synthetic draft ok: **false**
+- Isolated synthetic draft code: `reply_token_missing`
+- Real resolver prepare HTTP: `201`
+- Resolver analysis status: `available`
+- Resolver draft status: `available`
+- Customer message sent: **false**
+- Resolver write executed: **false**

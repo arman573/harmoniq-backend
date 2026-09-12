@@ -1,0 +1,144 @@
+name: Diagnose AI Arman resolver gateway once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  diagnose:
+    if: github.event.head_commit.message == 'Diagnose AI Arman resolver gateway'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    env:
+      PROJECT_ID: harmoniq-210513
+      REGION: europe-north1
+      SERVICE_NAME: harmoniq-ai-arman-beta0
+      CANDIDATE_TAG: resolver-ai-3298af83
+      SOURCE_SHA: 3298af83deea3d186f4295e4637b20e62badb0a5
+      CASE_ID: HQR-2493614
+      RESULT_PATH: docs/ai-arman/ADMIN_RESOLVER_GATEWAY_DIAGNOSTIC.md
+      WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+      DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+          fetch-depth: 1
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Inspect candidate gateway config safely
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service.json"
+          REV="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/service.json" | head -n1)"
+          URL="$(jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/service.json" | head -n1)"
+          SERVICE_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/service.json")"
+          test -n "$REV"; test -n "$URL"; test -n "$SERVICE_URL"
+          gcloud run revisions describe "$REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/revision.json"
+          envv(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/revision.json"; }
+          ENABLED="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED)"
+          BASE="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL)"
+          AUDIENCE="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE)"
+          TOKEN="$(envv AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN)"
+          WRITE="$(envv AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED)"
+          TOKEN_LEN="${#TOKEN}"
+          [[ -n "$TOKEN" ]] && echo "::add-mask::$TOKEN"
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
+          echo "gateway_enabled=${ENABLED:-missing}" >> "$GITHUB_OUTPUT"
+          echo "base_present=$([[ -n "$BASE" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "audience_present=$([[ -n "$AUDIENCE" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "token_len=$TOKEN_LEN" >> "$GITHUB_OUTPUT"
+          echo "write_enabled=${WRITE:-missing}" >> "$GITHUB_OUTPUT"
+
+      - name: Mint private identity token
+        id: idtoken
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ steps.config.outputs.service_url }}
+          id_token_include_email: true
+          create_credentials_file: false
+
+      - name: Probe resolver prepare directly and capture system error only
+        id: probe
+        env:
+          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+          TAG_URL: ${{ steps.config.outputs.url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ID_TOKEN"
+          APP_TOKEN="$(printf 'resolver:%s' "$SOURCE_SHA" | sha256sum | awk '{print $1}')"
+          echo "::add-mask::$APP_TOKEN"
+          CODE="$(curl --max-time 60 -sS -o "$RUNNER_TEMP/prepare.json" -w '%{http_code}' --request POST --header "Authorization: Bearer $ID_TOKEN" --header "X-AI-Arman-Admin-Token: $APP_TOKEN" --header 'Content-Type: application/json' --data "{\"caseId\":\"$CASE_ID\"}" "$TAG_URL/ai-arman/internal/admin-resolver/prepare" || true)"
+          OK="$(jq -r '.ok // false' "$RUNNER_TEMP/prepare.json" 2>/dev/null || true)"
+          RESPONSE_CODE="$(jq -r '.code // empty' "$RUNNER_TEMP/prepare.json" 2>/dev/null || true)"
+          ERROR_CODE="$(jq -r '.error // empty' "$RUNNER_TEMP/prepare.json" 2>/dev/null || true)"
+          VERIFIED_CASE="$(jq -r '.verifiedCase // false' "$RUNNER_TEMP/prepare.json" 2>/dev/null || true)"
+          echo "http=$CODE" >> "$GITHUB_OUTPUT"
+          echo "ok=$OK" >> "$GITHUB_OUTPUT"
+          echo "response_code=$RESPONSE_CODE" >> "$GITHUB_OUTPUT"
+          echo "error_code=$ERROR_CODE" >> "$GITHUB_OUTPUT"
+          echo "verified_case=$VERIFIED_CASE" >> "$GITHUB_OUTPUT"
+          rm -f "$RUNNER_TEMP/prepare.json"
+
+      - name: Record safe gateway diagnostic
+        env:
+          REV: ${{ steps.config.outputs.revision }}
+          GATEWAY_ENABLED: ${{ steps.config.outputs.gateway_enabled }}
+          BASE_PRESENT: ${{ steps.config.outputs.base_present }}
+          AUDIENCE_PRESENT: ${{ steps.config.outputs.audience_present }}
+          TOKEN_LEN: ${{ steps.config.outputs.token_len }}
+          WRITE_ENABLED: ${{ steps.config.outputs.write_enabled }}
+          HTTP: ${{ steps.probe.outputs.http }}
+          OK: ${{ steps.probe.outputs.ok }}
+          RESPONSE_CODE: ${{ steps.probe.outputs.response_code }}
+          ERROR_CODE: ${{ steps.probe.outputs.error_code }}
+          VERIFIED_CASE: ${{ steps.probe.outputs.verified_case }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin feature/ai-arman-foundation-v1
+          git checkout -B result origin/feature/ai-arman-foundation-v1
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman resolver gateway diagnostic
+
+          - Checked at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Candidate revision: \`$REV\`
+          - Gateway enabled: \`$GATEWAY_ENABLED\`
+          - Gateway base URL present: **$BASE_PRESENT**
+          - Gateway audience present: **$AUDIENCE_PRESENT**
+          - Gateway token length: \`$TOKEN_LEN\` (value not recorded)
+          - Gateway writes enabled on candidate: \`$WRITE_ENABLED\`
+          - Direct prepare HTTP: \`$HTTP\`
+          - Direct prepare ok: **$OK**
+          - Resolver response code: \`${RESPONSE_CODE:-none}\`
+          - Gateway error code: \`${ERROR_CODE:-none}\`
+          - Verified case: **$VERIFIED_CASE**
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record AI Arman resolver gateway diagnostic'
+          git push origin HEAD:feature/ai-arman-foundation-v1

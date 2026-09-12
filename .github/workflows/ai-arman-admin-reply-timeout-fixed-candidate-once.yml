@@ -1,0 +1,371 @@
+name: AI Arman timeout fixed admin candidate once
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: ai-arman-fast-resolver-trusted-registered
+  cancel-in-progress: false
+
+jobs:
+  deploy-verify:
+    if: github.event.head_commit.message == 'Deploy AI Arman timeout fixed admin candidate once'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PROJECT_ID: harmoniq-210513
+      REGION: europe-north1
+      SERVICE_NAME: harmoniq-ai-arman-beta0
+      RUNTIME_SERVICE_ACCOUNT: ai-arman-beta0-runtime@harmoniq-210513.iam.gserviceaccount.com
+      WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+      DEPLOY_SERVICE_ACCOUNT: github-ai-arman-deployer@harmoniq-210513.iam.gserviceaccount.com
+      ARTIFACT_REPOSITORY: harmoniq-containers
+      SOURCE_SHA: c7374c21708869d4c893bbd09b3f20865db8f547
+      STABLE_TAG: resolver-ready-3298af83
+      CASE_ID: HQR-2493614
+      RESULT_PATH: docs/ai-arman/AI_ARMAN_FAST_RESOLVER_REGISTERED_TRUSTED_20260821.md
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+
+      - name: Guard frozen optimized source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTOR" = 'arman573'
+          test "$GITHUB_REF" = 'refs/heads/feature/ai-arman-foundation-v1'
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          grep -Fq 'Promise.all([' src/ai-arman/admin/admin-case-resolver.service.ts
+          grep -Fq 'replyDraft: REPLY_DRAFT_SCHEMA' src/ai-arman/admin/admin-case-assistant-fast.service.ts
+          grep -Fq "reasoning: { effort: 'minimal' }" src/ai-arman/admin/admin-case-assistant-fast.service.ts
+          grep -Fq 'Skriv aldrig Hej' src/ai-arman/admin/admin-case-assistant-fast.service.ts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Test and build frozen optimized source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test -- --runInBand
+          npm run build
+          docker build -f Dockerfile.ai-arman-candidate -t ai-arman-fast-resolver:verify .
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Snapshot private stable resolver boundary
+        id: before
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud run services get-iam-policy "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+
+          if jq -e '[.bindings[]?.members[]?] | any(. == "allUsers" or . == "allAuthenticatedUsers")' "$RUNNER_TEMP/iam-before.json" >/dev/null; then
+            echo 'AI Arman service is unexpectedly public; refusing deploy.' >&2
+            exit 1
+          fi
+
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/service-before.json" > "$RUNNER_TEMP/positive-before.json"
+
+          STABLE_REV="$(jq -r --arg tag "$STABLE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/service-before.json" | head -n1)"
+          STABLE_URL="$(jq -r --arg tag "$STABLE_TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/service-before.json" | head -n1)"
+          CANONICAL_URL="$(jq -r '.status.url // empty' "$RUNNER_TEMP/service-before.json")"
+          test -n "$STABLE_REV"; test -n "$STABLE_URL"; test -n "$CANONICAL_URL"
+
+          gcloud run revisions describe "$STABLE_REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/stable-rev.json"
+
+          stable_env(){ jq -r --arg n "$1" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/stable-rev.json" | head -n1; }
+          template_env(){ jq -r --arg n "$1" '.spec.template.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/service-before.json" | head -n1; }
+
+          for name in \
+            AI_ARMAN_ADMIN_RESOLVER_ENABLED \
+            AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN \
+            AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED \
+            AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL \
+            AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE \
+            AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN \
+            AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED \
+            AI_ARMAN_ADMIN_ASSISTANT_ENABLED \
+            AI_ARMAN_MODEL_INTERPRETATION_ENABLED \
+            AI_ARMAN_OPENAI_MODEL \
+            AI_ARMAN_MODEL_PROMOTION_ENABLED; do
+            OLD="$(stable_env "$name")"
+            CURRENT="$(template_env "$name")"
+            if [ "$OLD" != "$CURRENT" ]; then
+              echo "Current service template differs from the proven stable resolver for $name; refusing implicit config change." >&2
+              exit 1
+            fi
+          done
+
+          test "$(stable_env AI_ARMAN_ADMIN_RESOLVER_ENABLED)" = 'true'
+          test "$(stable_env AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED)" = 'true'
+          test "$(stable_env AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED)" = 'true'
+          test "$(stable_env AI_ARMAN_ADMIN_ASSISTANT_ENABLED)" = 'true'
+          test "$(stable_env AI_ARMAN_MODEL_INTERPRETATION_ENABLED)" = 'true'
+          test "$(stable_env AI_ARMAN_MODEL_PROMOTION_ENABLED)" = 'false'
+
+          APP_TOKEN="$(stable_env AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN)"
+          test -n "$APP_TOKEN"
+          echo "::add-mask::$APP_TOKEN"
+          echo "AI_ADMIN_APP_TOKEN=$APP_TOKEN" >> "$GITHUB_ENV"
+          echo "stable_revision=$STABLE_REV" >> "$GITHUB_OUTPUT"
+          echo "stable_url=$STABLE_URL" >> "$GITHUB_OUTPUT"
+          echo "canonical_url=$CANONICAL_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Mint private service identity token
+        id: idtoken
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ steps.before.outputs.canonical_url }}
+          id_token_include_email: true
+          create_credentials_file: false
+
+      - name: Measure current stable resolver read-only baseline
+        id: baseline
+        env:
+          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+          URL: ${{ steps.before.outputs.stable_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ID_TOKEN"
+          T="$(curl --max-time 40 -sS -o "$RUNNER_TEMP/baseline.json" -w '%{time_total}' \
+            --request POST \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            --header "X-AI-Arman-Admin-Token: $AI_ADMIN_APP_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "{\"caseId\":\"$CASE_ID\"}" \
+            "$URL/ai-arman/internal/admin-resolver/prepare")"
+          jq -e '.ok==true and .verifiedCase==true and .verifiedOrderContext==true and .executesWrites==false and .sendsCustomerMessage==false' "$RUNNER_TEMP/baseline.json" >/dev/null
+          echo "seconds=$T" >> "$GITHUB_OUTPUT"
+          echo "Current stable prepare: ${T}s"
+
+      - name: Build immutable optimized image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME:resolver-fast-${SOURCE_SHA:0:12}-$GITHUB_RUN_ID"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build --pull -f Dockerfile.ai-arman-candidate -t "$IMAGE" .
+          docker push "$IMAGE"
+          DIGEST="$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" --format='value(image_summary.digest)')"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image=$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$SERVICE_NAME@$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy private zero-traffic optimized candidate
+        id: deploy
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT="${SOURCE_SHA:0:8}"
+          TEMP_TAG="resolver-speed-$SHORT"
+          gcloud run deploy "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" --platform managed \
+            --image "$IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --revision-suffix "resfast-$SHORT-${GITHUB_RUN_NUMBER}" \
+            --tag "$TEMP_TAG" --no-traffic --quiet
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-candidate.json"
+          REV="$(jq -r --arg tag "$TEMP_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/service-candidate.json" | head -n1)"
+          URL="$(jq -r --arg tag "$TEMP_TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/service-candidate.json" | head -n1)"
+          test -n "$REV"; test -n "$URL"
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-candidate.json")" = '0'
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Verify candidate config parity
+        env:
+          REV: ${{ steps.deploy.outputs.revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run revisions describe "$REV" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/new-rev.json"
+
+          for name in \
+            AI_ARMAN_ADMIN_RESOLVER_ENABLED \
+            AI_ARMAN_ADMIN_RESOLVER_ACCESS_TOKEN \
+            AI_ARMAN_RETURNS_ADMIN_GATEWAY_ENABLED \
+            AI_ARMAN_RETURNS_ADMIN_GATEWAY_BASE_URL \
+            AI_ARMAN_RETURNS_ADMIN_GATEWAY_AUDIENCE \
+            AI_ARMAN_RETURNS_ADMIN_GATEWAY_ACCESS_TOKEN \
+            AI_ARMAN_RETURNS_ADMIN_WRITE_ENABLED \
+            AI_ARMAN_ADMIN_ASSISTANT_ENABLED \
+            AI_ARMAN_MODEL_INTERPRETATION_ENABLED \
+            AI_ARMAN_OPENAI_MODEL \
+            AI_ARMAN_MODEL_PROMOTION_ENABLED; do
+            OLD="$(jq -r --arg n "$name" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/stable-rev.json" | head -n1)"
+            NEW="$(jq -r --arg n "$name" '.spec.containers[0].env[]? | select(.name==$n) | .value // empty' "$RUNNER_TEMP/new-rev.json" | head -n1)"
+            test "$OLD" = "$NEW"
+          done
+
+      - name: Verify optimized real prepare, tone contract and speed
+        id: probe
+        env:
+          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+          URL: ${{ steps.deploy.outputs.url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ID_TOKEN"
+
+          prepare() {
+            local out="$1"
+            curl --max-time 35 -sS -o "$out" -w '%{time_total}' \
+              --request POST \
+              --header "Authorization: Bearer $ID_TOKEN" \
+              --header "X-AI-Arman-Admin-Token: $AI_ADMIN_APP_TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data "{\"caseId\":\"$CASE_ID\"}" \
+              "$URL/ai-arman/internal/admin-resolver/prepare"
+          }
+
+          T1="$(prepare "$RUNNER_TEMP/prepare1.json")"
+          jq -e --arg id "$CASE_ID" '.ok==true and .mode=="prepare" and .caseId==$id and .verifiedCase==true and .verifiedOrderContext==true and .analysisStatus=="available" and .draftStatus=="available" and .executesWrites==false and .sendsCustomerMessage==false and (.draft.message|type=="string" and length>0)' "$RUNNER_TEMP/prepare1.json" >/dev/null
+
+          DRAFT="$(jq -r '.draft.message' "$RUNNER_TEMP/prepare1.json")"
+          if printf '%s\n' "$DRAFT" | grep -Eiq '^(Hej|Hallå)([ ,!]|$)'; then
+            echo 'Optimized draft contains a greeting wrapper.' >&2
+            exit 1
+          fi
+          if printf '%s\n' "$DRAFT" | grep -Eiq '(Vänliga hälsningar|Med vänliga hälsningar|HARMONIQ Kundservice|^HARMONIQ$)'; then
+            echo 'Optimized draft contains a legacy signature wrapper.' >&2
+            exit 1
+          fi
+
+          DENIED="$(curl --max-time 20 -sS -o "$RUNNER_TEMP/denied.json" -w '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            --header "X-AI-Arman-Admin-Token: $AI_ADMIN_APP_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "{\"caseId\":\"$CASE_ID\",\"approved\":false,\"action\":\"case.complete\"}" \
+            "$URL/ai-arman/internal/admin-resolver/execute" || true)"
+          case "$DENIED" in 200|201|400|403) ;; *) exit 1 ;; esac
+          jq -e '.ok==false and .writeExecuted==false' "$RUNNER_TEMP/denied.json" >/dev/null
+
+          T2="$(prepare "$RUNNER_TEMP/prepare2.json")"
+          jq -e '.ok==true and .analysisStatus=="available" and .draftStatus=="available" and .executesWrites==false and .sendsCustomerMessage==false' "$RUNNER_TEMP/prepare2.json" >/dev/null
+
+          awk -v t="$T2" 'BEGIN { if (t > 12.0) exit 1 }'
+
+          echo "cold_seconds=$T1" >> "$GITHUB_OUTPUT"
+          echo "warm_seconds=$T2" >> "$GITHUB_OUTPUT"
+          echo "Optimized candidate prepare: first=${T1}s warm=${T2}s"
+
+      - name: Move existing stable resolver tag only after PASS
+        id: retag
+        env:
+          REV: ${{ steps.deploy.outputs.revision }}
+          OLD_URL: ${{ steps.before.outputs.stable_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "$SERVICE_NAME" \
+            --project "$PROJECT_ID" --region "$REGION" \
+            --update-tags "$STABLE_TAG=$REV" --quiet
+
+          gcloud run services describe "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" --format=json > "$RUNNER_TEMP/service-final.json"
+          jq -cS '[.status.traffic[]? | select((.percent // 0)>0) | {revisionName,percent,tag}] | sort_by(.revisionName,.tag)' "$RUNNER_TEMP/service-final.json" > "$RUNNER_TEMP/positive-after.json"
+          cmp "$RUNNER_TEMP/positive-before.json" "$RUNNER_TEMP/positive-after.json"
+
+          FINAL_REV="$(jq -r --arg tag "$STABLE_TAG" '.status.traffic[]? | select(.tag==$tag) | .revisionName // empty' "$RUNNER_TEMP/service-final.json" | head -n1)"
+          FINAL_URL="$(jq -r --arg tag "$STABLE_TAG" '.status.traffic[]? | select(.tag==$tag) | .url // empty' "$RUNNER_TEMP/service-final.json" | head -n1)"
+          test "$FINAL_REV" = "$REV"
+          test "$FINAL_URL" = "$OLD_URL"
+          test "$(jq -r --arg r "$REV" '[.status.traffic[]? | select(.revisionName==$r) | (.percent // 0)] | add // 0' "$RUNNER_TEMP/service-final.json")" = '0'
+          echo "revision=$FINAL_REV" >> "$GITHUB_OUTPUT"
+          echo "url=$FINAL_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Verify stable resolver URL after retag
+        id: stable
+        env:
+          ID_TOKEN: ${{ steps.idtoken.outputs.id_token }}
+          URL: ${{ steps.retag.outputs.url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ID_TOKEN"
+          T="$(curl --max-time 35 -sS -o "$RUNNER_TEMP/stable-final.json" -w '%{time_total}' \
+            --request POST \
+            --header "Authorization: Bearer $ID_TOKEN" \
+            --header "X-AI-Arman-Admin-Token: $AI_ADMIN_APP_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "{\"caseId\":\"$CASE_ID\"}" \
+            "$URL/ai-arman/internal/admin-resolver/prepare")"
+          jq -e '.ok==true and .verifiedCase==true and .verifiedOrderContext==true and .analysisStatus=="available" and .draftStatus=="available" and .executesWrites==false and .sendsCustomerMessage==false' "$RUNNER_TEMP/stable-final.json" >/dev/null
+          awk -v t="$T" 'BEGIN { if (t > 12.0) exit 1 }'
+          echo "seconds=$T" >> "$GITHUB_OUTPUT"
+
+      - name: Record PASS checkpoint
+        env:
+          OLD_REV: ${{ steps.before.outputs.stable_revision }}
+          NEW_REV: ${{ steps.retag.outputs.revision }}
+          URL: ${{ steps.retag.outputs.url }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+          BASELINE: ${{ steps.baseline.outputs.seconds }}
+          COLD: ${{ steps.probe.outputs.cold_seconds }}
+          WARM: ${{ steps.probe.outputs.warm_seconds }}
+          STABLE_SECONDS: ${{ steps.stable.outputs.seconds }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin feature/ai-arman-foundation-v1
+          git checkout -B result origin/feature/ai-arman-foundation-v1
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman fast resolver — registered trusted deployment
+
+          - Verified at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Overall: **PASS**
+          - Frozen source SHA: \`$SOURCE_SHA\`
+          - Previous stable revision: \`$OLD_REV\`
+          - New stable revision: \`$NEW_REV\`
+          - Stable resolver URL: \`$URL\`
+          - Image digest: \`$DIGEST\`
+          - New revision traffic: **0%**
+          - Positive production traffic: **unchanged**
+          - Real verified case/order prepare: **PASS**
+          - Combined analysis + reply path: **PASS**
+          - Legacy greeting/signature wrapper absent: **PASS**
+          - Execute without explicit approval: **blocked**
+          - Supported real write executed: **false**
+          - Customer message sent: **false**
+          - Autonomous sending enabled: **false**
+          - Previous stable prepare: **${BASELINE}s**
+          - Optimized first prepare: **${COLD}s**
+          - Optimized warm prepare: **${WARM}s**
+          - Stable tagged prepare after retag: **${STABLE_SECONDS}s**
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$RESULT_PATH"
+          git commit -m 'Record registered trusted fast resolver deployment'
+          git push origin HEAD:feature/ai-arman-foundation-v1

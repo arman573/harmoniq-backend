@@ -1,0 +1,166 @@
+name: AI Arman durable audit logging IAM preflight
+
+on:
+  push:
+    branches:
+      - feature/ai-arman-foundation-v1
+    paths:
+      - .github/workflows/ai-arman-durable-audit-logging-preflight.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  PROJECT_ID: harmoniq-210513
+  WIF_PROVIDER: projects/222024985388/locations/global/workloadIdentityPools/github-actions/providers/github-harmoniq
+  TELEMETRY_SERVICE_ACCOUNT: github-ai-arman-telemetry@harmoniq-210513.iam.gserviceaccount.com
+  REQUIRED_REF: refs/heads/feature/ai-arman-foundation-v1
+  RESULT_PATH: docs/ai-arman/DURABLE_AUDIT_LOGGING_IAM_PREFLIGHT_LATEST.md
+
+jobs:
+  durable-audit-log-reader-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Enforce exact branch and actor
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "$REQUIRED_REF"
+          test "$GITHUB_ACTOR" = "arman573"
+
+      - name: Check out exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ai-arman-foundation-v1
+
+      - name: Authenticate dedicated telemetry reader
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.TELEMETRY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Test logging read permission without mutation
+        id: permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GOOGLE_APPLICATION_CREDENTIALS:-}"
+          test -f "$GOOGLE_APPLICATION_CREDENTIALS"
+          ACCESS_TOKEN="$(gcloud auth application-default print-access-token)"
+          test -n "$ACCESS_TOKEN"
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          cat > "$RUNNER_TEMP/permissions-request.json" <<'JSON'
+          {
+            "permissions": [
+              "logging.logEntries.list",
+              "logging.logEntries.create",
+              "logging.sinks.create",
+              "run.services.update",
+              "run.services.setIamPolicy",
+              "secretmanager.versions.access"
+            ]
+          }
+          JSON
+
+          HTTP_CODE="$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/permissions-response.json" \
+            --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data-binary @"$RUNNER_TEMP/permissions-request.json" \
+            "https://cloudresourcemanager.googleapis.com/v1/projects/$PROJECT_ID:testIamPermissions")"
+          test "$HTTP_CODE" = "200"
+
+          has_permission() {
+            jq -e --arg p "$1" '.permissions // [] | index($p) != null' "$RUNNER_TEMP/permissions-response.json" >/dev/null
+          }
+          flag() {
+            if has_permission "$1"; then printf 'YES'; else printf 'NO'; fi
+          }
+
+          LOG_READ="$(flag logging.logEntries.list)"
+          LOG_WRITE="$(flag logging.logEntries.create)"
+          SINK_CREATE="$(flag logging.sinks.create)"
+          RUN_UPDATE="$(flag run.services.update)"
+          RUN_SET_IAM="$(flag run.services.setIamPolicy)"
+          SECRET_ACCESS="$(flag secretmanager.versions.access)"
+
+          READY=NO
+          if [ "$LOG_READ" = YES ] && [ "$LOG_WRITE" = NO ] && [ "$SINK_CREATE" = NO ] && [ "$RUN_UPDATE" = NO ] && [ "$RUN_SET_IAM" = NO ] && [ "$SECRET_ACCESS" = NO ]; then
+            READY=YES
+          fi
+
+          {
+            echo "log_read=$LOG_READ"
+            echo "log_write=$LOG_WRITE"
+            echo "sink_create=$SINK_CREATE"
+            echo "run_update=$RUN_UPDATE"
+            echo "run_set_iam=$RUN_SET_IAM"
+            echo "secret_access=$SECRET_ACCESS"
+            echo "ready=$READY"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "DURABLE_AUDIT_LOGGING_PERMISSION_TEST=PASS"
+          echo "DURABLE_AUDIT_LOG_READER_READY=$READY"
+
+      - name: Persist preflight result
+        if: always()
+        shell: bash
+        env:
+          LOG_READ: ${{ steps.permissions.outputs.log_read }}
+          LOG_WRITE: ${{ steps.permissions.outputs.log_write }}
+          SINK_CREATE: ${{ steps.permissions.outputs.sink_create }}
+          RUN_UPDATE: ${{ steps.permissions.outputs.run_update }}
+          RUN_SET_IAM: ${{ steps.permissions.outputs.run_set_iam }}
+          SECRET_ACCESS: ${{ steps.permissions.outputs.secret_access }}
+          READY: ${{ steps.permissions.outputs.ready }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$RESULT_PATH")"
+          cat > "$RESULT_PATH" <<EOF
+          # AI Arman durable audit logging IAM preflight - latest
+
+          Generated by GitHub Actions run ${GITHUB_RUN_ID} from commit ${GITHUB_SHA}.
+
+          This workflow is read-only in GCP. It only tests IAM permissions and does not enable durable audit logging, mutate Cloud Run, alter traffic, change IAM, access secrets or write Cloud Logging entries.
+
+          ## Dedicated telemetry identity
+
+          - Service account: ${TELEMETRY_SERVICE_ACCOUNT}
+          - logging.logEntries.list: ${LOG_READ}
+          - logging.logEntries.create: ${LOG_WRITE}
+          - logging.sinks.create: ${SINK_CREATE}
+          - run.services.update: ${RUN_UPDATE}
+          - run.services.setIamPolicy: ${RUN_SET_IAM}
+          - secretmanager.versions.access: ${SECRET_ACCESS}
+
+          ## Decision
+
+          - Can the current dedicated telemetry identity read future durable model-shadow audit entries while lacking the obvious write/secret permissions above: ${READY}
+          - Durable audit runtime flag changed by this workflow: NO
+          - Cloud Run traffic/config changed by this workflow: NO
+          - IAM changed by this workflow: NO
+          - Model promotion/widget state changed by this workflow: NO
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$RESULT_PATH"
+          if git diff --cached --quiet; then
+            echo "DURABLE_AUDIT_LOGGING_IAM_PREFLIGHT_RESULT_UNCHANGED=PASS"
+          else
+            git commit -m "Record durable audit logging IAM preflight"
+            git push origin HEAD:feature/ai-arman-foundation-v1
+            echo "DURABLE_AUDIT_LOGGING_IAM_PREFLIGHT_RESULT_PERSISTED=PASS"
+          fi
