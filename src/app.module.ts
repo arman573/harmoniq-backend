@@ -11,6 +11,7 @@ import { CustomerEvent } from './intelligence/customer-event.entity';
 import { CustomerFact } from './intelligence/customer-fact.entity';
 import { MailAgentModule } from './mail-agent/mail-agent.module';
 import { MailAgentMessage } from './mail-agent/mail-agent-message.entity';
+import { MailAgentWorkstyle } from './mail-agent/mail-agent-workstyle.entity';
 
 @Module({
   imports: [
@@ -21,7 +22,7 @@ import { MailAgentMessage } from './mail-agent/mail-agent-message.entity';
       username: 'harmoniq',
       password: 'password',
       database: 'harmoniq',
-      entities: [User, Ticket, Message, Customer, CustomerEvent, CustomerFact, MailAgentMessage],
+      entities: [User, Ticket, Message, Customer, CustomerEvent, CustomerFact, MailAgentMessage, MailAgentWorkstyle],
       synchronize: true,
     }),
     AuthModule,
