@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
+import crypto from 'node:crypto';
 import { classifyMail } from './mail-agent.classifier';
 import { MailAgentMessage } from './mail-agent-message.entity';
 import { MailEnvelope } from './mail-agent.types';
@@ -34,16 +35,42 @@ export class MailAgentService {
       return { ok: false, code: 'missing_provider_message_id' };
     }
 
-    const existing = await this.messageRepository.findOne({
+    const rfcMessageId = normalizeRfcMessageId(normalized.rfcMessageId);
+    const dedupeKey = String(normalized.dedupeKey || '').trim()
+      || buildDedupeKey(normalized, rfcMessageId);
+
+    const existingByProvider = await this.messageRepository.findOne({
       where: { mailbox, providerMessageId },
     });
 
-    if (existing) {
+    if (existingByProvider) {
       return {
         ok: true,
         duplicate: true,
-        id: existing.id,
-        item: existing,
+        duplicateScope: 'same_mailbox_provider_id',
+        id: existingByProvider.id,
+        item: existingByProvider,
+      };
+    }
+
+    const existingGlobal = dedupeKey
+      ? await this.messageRepository.findOne({ where: { dedupeKey } })
+      : null;
+
+    if (existingGlobal) {
+      const seen = new Set(existingGlobal.seenInMailboxes || [existingGlobal.mailbox]);
+      seen.add(mailbox);
+      existingGlobal.seenInMailboxes = [...seen].sort();
+      if (!existingGlobal.rfcMessageId && rfcMessageId) {
+        existingGlobal.rfcMessageId = rfcMessageId;
+      }
+      const saved = await this.messageRepository.save(existingGlobal);
+      return {
+        ok: true,
+        duplicate: true,
+        duplicateScope: 'cross_mailbox',
+        id: saved.id,
+        item: saved,
       };
     }
 
@@ -53,6 +80,9 @@ export class MailAgentService {
     const entity = this.messageRepository.create({
       mailbox,
       providerMessageId,
+      rfcMessageId: rfcMessageId || undefined,
+      dedupeKey: dedupeKey || undefined,
+      seenInMailboxes: [mailbox],
       threadId: normalized.threadId || '',
       provider: 'gmail',
       direction: normalized.direction || 'inbound',
@@ -134,6 +164,8 @@ function sanitizeEnvelope(message: MailEnvelope): MailEnvelope {
     ...message,
     mailbox: String(message.mailbox || '').trim().toLowerCase(),
     providerMessageId: String(message.providerMessageId || message.id || '').trim(),
+    rfcMessageId: String(message.rfcMessageId || '').trim(),
+    dedupeKey: String(message.dedupeKey || '').trim(),
     from: String(message.from || '').trim(),
     to: (message.to || []).map((value) => String(value).trim()).filter(Boolean),
     cc: (message.cc || []).map((value) => String(value).trim()).filter(Boolean),
@@ -185,4 +217,44 @@ function getAttentionReason(item: MailAgentMessage) {
   if (item.category === 'returns_claims') return 'customer_case';
   if (item.category === 'order_purchase' || item.category === 'supplier') return 'supplier_or_order';
   return 'important_review';
+}
+
+
+function normalizeRfcMessageId(value?: string) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.replace(/^<|>$/g, '').trim().toLowerCase();
+}
+
+function buildDedupeKey(message: MailEnvelope, rfcMessageId: string) {
+  if (rfcMessageId) return `rfc:${rfcMessageId}`;
+
+  const normalizedSubject = String(message.subject || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^((re|fw|fwd):\s*)+/i, '')
+    .replace(/\s+/g, ' ');
+
+  const normalizedFrom = String(message.from || '')
+    .trim()
+    .toLowerCase();
+
+  const received = parseDate(message.receivedAt);
+  const minuteBucket = new Date(
+    Math.floor(received.getTime() / 60000) * 60000,
+  ).toISOString();
+
+  const bodyFingerprint = String(message.body || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 1200);
+
+  const basis = [
+    normalizedFrom,
+    normalizedSubject,
+    minuteBucket,
+    bodyFingerprint,
+  ].join('\n');
+
+  return `sha256:${crypto.createHash('sha256').update(basis, 'utf8').digest('hex')}`;
 }
