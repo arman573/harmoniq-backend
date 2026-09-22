@@ -90,3 +90,30 @@ After ingestion is proven, add:
 - audit log
 - learned sender/vendor rules
 - morning priority view
+
+
+## Monitored mailboxes
+
+The canonical business inbox scope is:
+
+- `arman@harmoniq.se` — broad executive/business inbox.
+- `inkop@harmoniq.se` — purchasing, suppliers, orders, deliveries, price lists and backorders.
+- `ekonomi@harmoniq.se` — invoices, credit notes, payment reminders, collections and finance exceptions.
+
+The ingestion layer must deduplicate cross-forwarded messages so one supplier invoice forwarded between inboxes does not become several independent cases.
+
+### No-miss finance policy
+
+Any message matching invoice/payment/collections concepts is never an automatic archive candidate.
+
+Finance-critical examples include:
+
+- invoice / faktura
+- credit note / kreditfaktura
+- due date / förfaller
+- reminder / påminnelse
+- collections / inkasso
+- payment mismatch
+- account statement
+
+These messages must surface in the approval/attention queue even if the sender looks automated or the message is otherwise newsletter-like.
