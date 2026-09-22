@@ -20,6 +20,16 @@ export class MailAgentMessage {
   providerMessageId!: string;
 
   @Column({ nullable: true })
+  rfcMessageId?: string;
+
+  @Index()
+  @Column({ nullable: true })
+  dedupeKey?: string;
+
+  @Column({ type: 'simple-json', nullable: true })
+  seenInMailboxes?: string[];
+
+  @Column({ nullable: true })
   threadId?: string;
 
   @Column({ default: 'gmail' })
