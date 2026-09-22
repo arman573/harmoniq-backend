@@ -35,6 +35,8 @@ export type MailAgentSpecialist =
 export interface MailEnvelope {
   mailbox?: string;
   providerMessageId?: string;
+  rfcMessageId?: string;
+  dedupeKey?: string;
   direction?: 'inbound' | 'outbound';
   id?: string;
   threadId?: string;
