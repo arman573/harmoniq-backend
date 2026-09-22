@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
 import { MailAgentService } from './mail-agent.service';
+import { getConfiguredMailboxes } from './mail-agent.config';
 import { MailEnvelope } from './mail-agent.types';
 
 @Controller('mail-agent')
@@ -14,6 +15,7 @@ export class MailAgentController {
       mode: 'observe',
       outboundEnabled: false,
       humanApprovalRequired: true,
+      monitoredMailboxes: getConfiguredMailboxes(),
     };
   }
 
