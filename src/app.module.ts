@@ -9,6 +9,7 @@ import { UsersModule } from './users/users.module';
 import { Customer } from './customers/customer.entity';
 import { CustomerEvent } from './intelligence/customer-event.entity';
 import { CustomerFact } from './intelligence/customer-fact.entity';
+import { MailAgentModule } from './mail-agent/mail-agent.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { CustomerFact } from './intelligence/customer-fact.entity';
     AuthModule,
     TicketsModule,
     UsersModule,
+    MailAgentModule,
   ],
 })
 export class AppModule {}
